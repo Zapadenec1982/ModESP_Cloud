@@ -13,7 +13,9 @@ const pushSvc     = require('./services/push');
 const telegramSvc = require('./services/telegram');
 const fcmSvc      = require('./services/fcm');
 const tenantMw    = require('./middleware/tenant');
+const { authenticate, authorize } = require('./middleware/auth');
 
+const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'info' : 'debug' });
 
@@ -46,8 +48,20 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-// ── Tenant middleware (dev: header, Phase 4: JWT) ──────────
-app.use('/api', tenantMw);
+// ── Auth / Tenant middleware ────────────────────────────────
+if (AUTH_ENABLED) {
+  // Public auth routes (no JWT required)
+  app.use('/api/auth', require('./routes/auth'));
+
+  // All other /api routes require JWT
+  app.use('/api', authenticate);
+
+  // Admin-only routes
+  app.use('/api/users', authorize('admin'), require('./routes/users'));
+} else {
+  // Dev fallback: tenant from header
+  app.use('/api', tenantMw);
+}
 
 // ── Routes ────────────────────────────────────────────────
 app.use('/api/devices',  require('./routes/devices'));
@@ -89,7 +103,7 @@ async function main() {
 
   // 5. HTTP
   server.listen(PORT, '0.0.0.0', () => {
-    logger.info({ port: PORT }, 'HTTP server listening');
+    logger.info({ port: PORT, auth: AUTH_ENABLED }, 'HTTP server listening');
   });
 }
 

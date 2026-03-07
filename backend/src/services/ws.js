@@ -2,6 +2,9 @@
 
 const { WebSocketServer } = require('ws');
 const mqttSvc = require('./mqtt');
+const { verifyAccessToken } = require('./auth');
+
+const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
 let wss    = null;
 let logger = null;
@@ -20,7 +23,11 @@ const subscriptions = new Map();
 function attach(server, log) {
   logger = log;
 
-  wss = new WebSocketServer({ server, path: '/ws' });
+  wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    verifyClient: AUTH_ENABLED ? verifyWsClient : undefined,
+  });
 
   wss.on('connection', onConnection);
 
@@ -32,9 +39,39 @@ function attach(server, log) {
   logger.info('WebSocket server attached on /ws');
 }
 
+// ── JWT verification for WS handshake ────────────────────
+
+function verifyWsClient(info, cb) {
+  try {
+    const reqUrl = new URL(info.req.url, 'http://localhost');
+    const token  = reqUrl.searchParams.get('token');
+    if (!token) {
+      cb(false, 401, 'Missing token');
+      return;
+    }
+    const payload = verifyAccessToken(token);
+    // Attach user info to the request for onConnection
+    info.req._user = {
+      id:       payload.sub,
+      email:    payload.email,
+      role:     payload.role,
+      tenantId: payload.tenantId,
+    };
+    cb(true);
+  } catch (err) {
+    logger.warn({ err: err.message }, 'WS auth failed');
+    cb(false, 401, 'Invalid token');
+  }
+}
+
 // ── Connection handling ──────────────────────────────────
 
-function onConnection(ws) {
+function onConnection(ws, req) {
+  // Attach user info from JWT verification
+  if (AUTH_ENABLED && req._user) {
+    ws._user = req._user;
+  }
+
   ws._subscriptions = new Set();   // track which devices this client follows
 
   ws.on('message', (raw) => {

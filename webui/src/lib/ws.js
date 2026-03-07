@@ -4,6 +4,8 @@
  * In dev mode, Vite proxies /ws → ws://localhost:3000/ws.
  */
 
+import { getAccessToken } from './api.js';
+
 /** @type {WebSocket | null} */
 let socket = null;
 let reconnectTimer = null;
@@ -25,7 +27,13 @@ export function connect() {
   }
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws`;
+  let url = `${proto}//${location.host}/ws`;
+
+  // Append JWT token if available (for AUTH_ENABLED mode)
+  const token = getAccessToken();
+  if (token) {
+    url += `?token=${encodeURIComponent(token)}`;
+  }
 
   socket = new WebSocket(url);
 
@@ -55,6 +63,20 @@ export function connect() {
   socket.onerror = () => {
     // onclose will fire after this
   };
+}
+
+/**
+ * Reconnect WebSocket (e.g. after token refresh).
+ */
+export function reconnect() {
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+    socket = null;
+  }
+  clearTimeout(reconnectTimer);
+  reconnectDelay = 1000;
+  connect();
 }
 
 /**

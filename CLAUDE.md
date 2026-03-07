@@ -314,7 +314,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 3: Push Notifications** — реалізовано
+**Фаза 4: User Management & Auth** — реалізовано
 
 | Компонент | Статус |
 |-----------|--------|
@@ -327,8 +327,8 @@ git push origin main
 | WebSocket (Phase 2) | ✅ real-time state_delta, alarm, device_status |
 | Svelte WebUI (Phase 2) | ✅ Dashboard, DeviceDetail, PendingDevices |
 | Push Notifications (Phase 3) | ✅ push.js, telegram.js, fcm.js, REST API, WebUI |
+| Auth (Phase 4) | ✅ auth.js service, JWT middleware, login/refresh/logout, users CRUD, WebUI Login/Users |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
-| Auth (Phase 4) | ⬜ Не розпочато |
 | VPS розгортання | ⬜ Не розпочато |
 
 ---
@@ -351,3 +351,4 @@ git push origin main
 - 2026-03-07 — Phase 1 backend: db.js, mqtt.js, index.js, schema.sql, state_meta.json, unit tests. Git commit requirements додано.
 - 2026-03-07 — Phase 2: REST API, WebSocket, Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Статус таблицю оновлено.
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js bot, fcm.js, notifications REST API, Notifications WebUI page.
+- 2026-03-07 — Phase 4: Auth & User Management — auth.js service (bcrypt/JWT), auth middleware, auth/users routes, seed-admin script, WebSocket JWT auth, WebUI Login/Users pages, AUTH_ENABLED toggle.

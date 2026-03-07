@@ -47,3 +47,21 @@ if (typeof window !== 'undefined') {
 export function navigate(path) {
   window.location.hash = path;
 }
+
+// ── Auth stores ──────────────────────────────────────────
+
+/**
+ * Whether auth is enabled on the backend.
+ * Set after first API call or from config.
+ */
+export const authEnabled = writable(false);
+
+/**
+ * Current authenticated user ({id, email, role} or null).
+ */
+export const authUser = writable(null);
+
+/**
+ * Derived: is the user authenticated?
+ */
+export const isAuthenticated = derived(authUser, $u => $u !== null);

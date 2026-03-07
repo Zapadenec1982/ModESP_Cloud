@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 3: Push Notifications — реалізовано (Telegram + FCM)**
+**Фаза 4: User Management & Auth — реалізовано**
 
 ---
 
@@ -72,12 +72,15 @@
 ### Фаза 4: User Management
 **Ціль:** Кілька техніків, кілька організацій, контроль доступу.
 
-- [ ] Node.js: JWT авторизація (login, refresh, logout)
-- [ ] Node.js: CRUD користувачів
-- [ ] Ролі: admin / technician / viewer
-- [ ] Прив'язка пристроїв до користувачів
+- [x] Node.js: JWT авторизація (login, refresh token rotation, logout)
+- [x] Node.js: CRUD користувачів (admin-only + self-service /me)
+- [x] Ролі: admin / technician / viewer
+- [x] Прив'язка пристроїв до користувачів (user_devices)
+- [x] WebSocket: JWT auth через `?token=` query param
+- [x] WebUI: Login page, protected routing, Users page (admin)
+- [x] AUTH_ENABLED toggle (backward-compatible, default: false)
+- [x] seed-admin.js script
 - [ ] Mosquitto: mosquitto-go-auth з PostgreSQL backend (замість static ACL)
-- [ ] WebUI: сторінка управління користувачами (тільки admin)
 
 **Результат:** Мультитенантна система з ізольованим доступом.
 
@@ -145,3 +148,4 @@
 - 2026-03-07 — Phase 1 cloud code: backend scaffolding, schema.sql, db.js, mqtt.js, index.js, state_meta.json, unit tests (20/20). Firmware changes позначено [x].
 - 2026-03-07 — Phase 2: REST API (devices, telemetry, alarms, commands), WebSocket (real-time state), Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Протестовано з ESP32 F27FCD.
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js (UA), fcm.js, notifications REST API, WebUI Notifications page. Graceful skip when tokens not configured.
+- 2026-03-07 — Phase 4: Auth & User Management — auth.js service, JWT middleware, login/refresh/logout routes, users CRUD, seed-admin script, WebSocket JWT, WebUI Login/Users pages, AUTH_ENABLED toggle.
