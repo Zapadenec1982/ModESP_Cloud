@@ -383,20 +383,24 @@ function ensureDevice(tenantSlug, deviceId) {
   if (deviceRegistry.has(deviceId)) return;
 
   const tenantInfo = resolveTenant(tenantSlug);
+  const status = tenantSlug === 'pending' ? 'pending' : 'active';
+
+  // Add to registry SYNCHRONOUSLY to prevent duplicate logs from concurrent messages
+  deviceRegistry.set(deviceId, {
+    id:       null,  // will be resolved on next registry refresh
+    tenantId: tenantInfo.id,
+    status,
+  });
+
   logger.info({ tenantSlug, deviceId }, 'Auto-discovery: new device');
 
   db.query(
     `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
      VALUES ($1, $2, $3, true, NOW())
      ON CONFLICT (mqtt_device_id) DO NOTHING`,
-    [tenantInfo.id, deviceId, tenantSlug === 'pending' ? 'pending' : 'active']
-  ).then(result => {
-    // Add to local registry
-    deviceRegistry.set(deviceId, {
-      id:       null,  // will be resolved on next registry refresh
-      tenantId: tenantInfo.id,
-      status:   tenantSlug === 'pending' ? 'pending' : 'active',
-    });
+    [tenantInfo.id, deviceId, status]
+  ).then(() => {
+    // DB confirmed — id will be resolved on next registry refresh
   }).catch(err => {
     logger.error({ err, deviceId }, 'Failed to auto-discover device');
   });
