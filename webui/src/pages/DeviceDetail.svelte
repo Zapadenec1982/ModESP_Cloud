@@ -8,12 +8,50 @@
 
   export let deviceId;
 
+  /** Writable keys grouped by category for the command dropdown */
+  const COMMAND_KEYS = [
+    { group: 'Thermostat', keys: [
+      'thermostat.setpoint', 'thermostat.differential', 'thermostat.min_off_time',
+      'thermostat.min_on_time', 'thermostat.startup_delay', 'thermostat.evap_fan_mode',
+      'thermostat.fan_stop_temp', 'thermostat.fan_stop_hyst', 'thermostat.cond_fan_delay',
+      'thermostat.safety_run_on', 'thermostat.safety_run_off', 'thermostat.night_setback',
+      'thermostat.night_mode', 'thermostat.night_start', 'thermostat.night_end',
+      'thermostat.night_active', 'thermostat.display_defrost',
+    ]},
+    { group: 'Protection', keys: [
+      'protection.high_limit', 'protection.low_limit', 'protection.high_alarm_delay',
+      'protection.low_alarm_delay', 'protection.door_delay', 'protection.manual_reset',
+      'protection.post_defrost_delay', 'protection.reset_alarms',
+      'protection.min_compressor_run', 'protection.max_starts_hour',
+      'protection.max_continuous_run', 'protection.pulldown_timeout',
+      'protection.pulldown_min_drop', 'protection.max_rise_rate', 'protection.rate_duration',
+      'protection.compressor_hours',
+    ]},
+    { group: 'Defrost', keys: [
+      'defrost.manual_start', 'defrost.manual_stop', 'defrost.type', 'defrost.interval',
+      'defrost.counter_mode', 'defrost.initiation', 'defrost.termination',
+      'defrost.end_temp', 'defrost.max_duration', 'defrost.demand_temp',
+      'defrost.drip_time', 'defrost.fan_delay', 'defrost.fad_temp',
+      'defrost.stabilize_time', 'defrost.valve_delay', 'defrost.equalize_time',
+    ]},
+    { group: 'Equipment', keys: [
+      'equipment.filter_coeff', 'equipment.ntc_beta', 'equipment.ntc_r_series',
+      'equipment.ntc_r_nominal', 'equipment.ds18b20_offset',
+    ]},
+    { group: 'Datalogger', keys: [
+      'datalogger.enabled', 'datalogger.retention_hours', 'datalogger.sample_interval',
+      'datalogger.log_evap', 'datalogger.log_cond', 'datalogger.log_setpoint',
+      'datalogger.log_humidity',
+    ]},
+  ];
+
   let device = null;
   let loading = true;
   let error = null;
-  let commandKey = '';
+  let commandKey = 'thermostat.setpoint';
   let commandValue = '';
   let commandStatus = '';
+  let sending = false;
 
   // WS listener unsubscribers
   let unsubs = [];
@@ -59,14 +97,24 @@
   }
 
   async function handleCommand() {
-    if (!commandKey) return;
+    if (!commandKey) {
+      commandStatus = 'Select a parameter';
+      return;
+    }
+    if (commandValue === '') {
+      commandStatus = 'Enter a value';
+      return;
+    }
+    sending = true;
     commandStatus = 'Sending...';
     try {
       await apiSendCommand(deviceId, commandKey, parseCommandValue(commandValue));
       commandStatus = 'Sent!';
-      setTimeout(() => { commandStatus = ''; }, 2000);
+      setTimeout(() => { commandStatus = ''; }, 3000);
     } catch (e) {
       commandStatus = `Error: ${e.message}`;
+    } finally {
+      sending = false;
     }
   }
 
@@ -127,21 +175,29 @@
     <div class="command-panel">
       <h3>Send Command</h3>
       <form on:submit|preventDefault={handleCommand} class="command-form">
-        <input
-          type="text"
-          bind:value={commandKey}
-          placeholder="thermostat.setpoint"
-          class="input"
-        />
+        <select bind:value={commandKey} class="input select-key">
+          {#each COMMAND_KEYS as group}
+            <optgroup label={group.group}>
+              {#each group.keys as key}
+                <option value={key}>{key}</option>
+              {/each}
+            </optgroup>
+          {/each}
+        </select>
         <input
           type="text"
           bind:value={commandValue}
-          placeholder="3.5"
-          class="input input-sm"
+          placeholder="value"
+          class="input input-value"
         />
-        <button type="submit" class="btn">Send</button>
+        <button type="submit" class="btn" disabled={sending}>
+          {sending ? 'Sending...' : 'Send'}
+        </button>
         {#if commandStatus}
-          <span class="command-status">{commandStatus}</span>
+          <span class="command-status" class:error={commandStatus.startsWith('Error')}
+                class:success={commandStatus === 'Sent!'}>
+            {commandStatus}
+          </span>
         {/if}
       </form>
     </div>
@@ -258,7 +314,12 @@
     border-color: #0984e3;
   }
 
-  .input-sm {
+  .select-key {
+    min-width: 220px;
+    cursor: pointer;
+  }
+
+  .input-value {
     width: 100px;
   }
 
@@ -280,6 +341,15 @@
   .command-status {
     font-size: 0.85rem;
     color: #636e72;
+    font-weight: 600;
+  }
+
+  .command-status.success {
+    color: #00b894;
+  }
+
+  .command-status.error {
+    color: #e17055;
   }
 
   .state-section {
