@@ -1,0 +1,8 @@
+[Unit]
+Description=Create next month telemetry partition
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=modesp
+ExecStart=/usr/bin/psql -U modesp_cloud -d modesp_cloud -c "SELECT create_telemetry_partition(EXTRACT(YEAR FROM NOW() + INTERVAL '2 months')::INT, EXTRACT(MONTH FROM NOW() + INTERVAL '2 months')::INT)"

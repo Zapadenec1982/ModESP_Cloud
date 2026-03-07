@@ -20,8 +20,8 @@
 - [x] Тестування: compile, flash, verify MQTT topics
 
 **Cloud infrastructure:**
-- [ ] VPS налаштування (Ubuntu 24, firewall, fail2ban)
-- [ ] Mosquitto broker з ACL і TLS
+- [ ] VPS налаштування (Ubuntu 24, firewall, fail2ban) — setup.sh готовий
+- [x] Mosquitto broker з ACL і TLS — конфіги готові
 - [x] PostgreSQL: базова схема (tenants, devices, alarms, telemetry, events)
 - [x] Node.js: MqttService (підписка, topic parsing, state aggregation)
 - [x] Node.js: State Map (in-memory accumulation 48 keys per device)
@@ -30,8 +30,8 @@
 - [x] Node.js: Event Detector (compressor on/off, defrost transitions)
 - [x] Node.js: healthcheck endpoint
 - [x] State metadata registry (state_meta.json з ModESP_v4)
-- [ ] Nginx: HTTPS термінація
-- [ ] systemd юніти для всіх сервісів
+- [x] Nginx: HTTPS термінація — конфіг готовий
+- [x] systemd юніти для всіх сервісів
 - [ ] Базовий моніторинг (journald + cron backup)
 
 **Результат:** ESP32 публікує individual keys, cloud агрегує, зберігає в БД.

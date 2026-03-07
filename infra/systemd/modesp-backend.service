@@ -1,0 +1,36 @@
+[Unit]
+Description=ModESP Cloud Backend
+Documentation=https://github.com/Zapadenec1982/ModESP_Cloud
+After=network.target postgresql.service mosquitto.service
+Requires=postgresql.service mosquitto.service
+
+[Service]
+Type=simple
+User=modesp
+Group=modesp
+WorkingDirectory=/opt/modesp-cloud/backend
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=5s
+
+# Environment
+EnvironmentFile=/opt/modesp-cloud/backend/.env
+
+# Limits
+LimitNOFILE=65536
+MemoryMax=256M
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/modesp-cloud/backend
+PrivateTmp=true
+
+# Logging (journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-backend
+
+[Install]
+WantedBy=multi-user.target
