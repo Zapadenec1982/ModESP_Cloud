@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep -l \"device_id\\\\|tenant_id\\\\|ota\\\\|OTA\")",
+      "Bash(xargs grep -l \"firmware\\\\|OTA\\\\|update\")"
+    ]
+  }
+}
