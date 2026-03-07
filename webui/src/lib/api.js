@@ -75,3 +75,33 @@ export function getDeviceAlarms(deviceId, { active } = {}) {
   const qs = params.toString();
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
 }
+
+// ── Notifications ───────────────────────────────────────
+
+export function getSubscribers() {
+  return request('/notifications/subscribers');
+}
+
+export function createSubscriber({ channel, address, label, device_filter }) {
+  return request('/notifications/subscribers', {
+    method: 'POST',
+    body: JSON.stringify({ channel, address, label, device_filter }),
+  });
+}
+
+export function deleteSubscriber(id) {
+  return request(`/notifications/subscribers/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export function testNotification(subscriberId) {
+  return request('/notifications/test', {
+    method: 'POST',
+    body: JSON.stringify({ subscriber_id: subscriberId }),
+  });
+}
+
+export function getNotificationLog({ limit = 50 } = {}) {
+  return request(`/notifications/log?limit=${limit}`);
+}

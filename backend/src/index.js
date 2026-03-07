@@ -6,10 +6,13 @@ const http     = require('http');
 const express  = require('express');
 const cors     = require('cors');
 const pino     = require('pino');
-const db       = require('./services/db');
-const mqttSvc  = require('./services/mqtt');
-const wsSvc    = require('./services/ws');
-const tenantMw = require('./middleware/tenant');
+const db          = require('./services/db');
+const mqttSvc     = require('./services/mqtt');
+const wsSvc       = require('./services/ws');
+const pushSvc     = require('./services/push');
+const telegramSvc = require('./services/telegram');
+const fcmSvc      = require('./services/fcm');
+const tenantMw    = require('./middleware/tenant');
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'info' : 'debug' });
@@ -51,6 +54,7 @@ app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
+app.use('/api/notifications', require('./routes/notifications'));
 
 // ── Global error handler ──────────────────────────────────
 app.use((err, _req, res, _next) => {
@@ -76,7 +80,14 @@ async function main() {
   // 3. WebSocket
   wsSvc.attach(server, logger);
 
-  // 4. HTTP
+  // 4. Push notifications (Telegram + FCM)
+  const tgHandler  = telegramSvc.init(logger);
+  const fcmHandler = fcmSvc.init(logger);
+  if (tgHandler)  pushSvc.registerChannel('telegram', tgHandler);
+  if (fcmHandler) pushSvc.registerChannel('fcm', fcmHandler);
+  pushSvc.start(logger);
+
+  // 5. HTTP
   server.listen(PORT, '0.0.0.0', () => {
     logger.info({ port: PORT }, 'HTTP server listening');
   });
@@ -85,6 +96,9 @@ async function main() {
 // ── Graceful shutdown ─────────────────────────────────────
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
+  pushSvc.shutdown();
+  telegramSvc.shutdown();
+  fcmSvc.shutdown();
   wsSvc.shutdown();
   await mqttSvc.shutdown();
   await db.shutdown();

@@ -5,6 +5,7 @@
   import Dashboard from './pages/Dashboard.svelte';
   import DeviceDetail from './pages/DeviceDetail.svelte';
   import PendingDevices from './pages/PendingDevices.svelte';
+  import Notifications from './pages/Notifications.svelte';
 
   let currentRoute = '/';
   let routeParams = {};
@@ -19,6 +20,7 @@
     const match = r.match(/^\/device\/(.+)$/);
     if (match) return { page: 'device', id: match[1] };
     if (r === '/pending') return { page: 'pending' };
+    if (r === '/notifications') return { page: 'notifications' };
     return { page: 'dashboard' };
   }
 
@@ -38,6 +40,7 @@
     <div class="nav-links">
       <a href="#/" class:active={routeParams.page === 'dashboard'}>Dashboard</a>
       <a href="#/pending" class:active={routeParams.page === 'pending'}>Pending</a>
+      <a href="#/notifications" class:active={routeParams.page === 'notifications'}>Notifications</a>
     </div>
   </nav>
 
@@ -46,6 +49,8 @@
       <DeviceDetail deviceId={routeParams.id} />
     {:else if routeParams.page === 'pending'}
       <PendingDevices />
+    {:else if routeParams.page === 'notifications'}
+      <Notifications />
     {:else}
       <Dashboard />
     {/if}

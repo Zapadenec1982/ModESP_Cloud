@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 2: Remote Monitoring WebUI — реалізовано (backend + WebUI)**
+**Фаза 3: Push Notifications — реалізовано (Telegram + FCM)**
 
 ---
 
@@ -57,11 +57,13 @@
 ### Фаза 3: Push Notifications
 **Ціль:** Технік отримує сповіщення про аварії миттєво.
 
-- [ ] Node.js: FCM інтеграція (Firebase Cloud Messaging)
-- [ ] Node.js: Telegram Bot
-- [ ] Маршрутизація: alarm transition → підписники цього пристрою
-- [ ] REST API: реєстрація FCM токена і Telegram ID
-- [ ] WebUI: налаштування підписок на сповіщення
+- [x] Node.js: Push orchestrator (push.js) з debouncing і channel registry
+- [x] Node.js: FCM інтеграція (firebase-admin, stale token auto-cleanup)
+- [x] Node.js: Telegram Bot (long-polling, /start /stop /status /devices, UA messages)
+- [x] Маршрутизація: alarm transition → підписники цього пристрою (tenant-scoped)
+- [x] REST API: CRUD /api/notifications/subscribers, test send, delivery log
+- [x] DB: notification_subscribers + notification_log tables (migration 002)
+- [x] WebUI: Notifications page (subscribers table, add form, delivery log)
 
 **Результат:** Push на телефон і Telegram при будь-якій аварії.
 
@@ -142,3 +144,4 @@
 - 2026-03-07 — Оновлено. Phase 1 деталізовано під реальний MQTT протокол (individual keys, state aggregation, server-side sampling). Firmware changes як prerequisite.
 - 2026-03-07 — Phase 1 cloud code: backend scaffolding, schema.sql, db.js, mqtt.js, index.js, state_meta.json, unit tests (20/20). Firmware changes позначено [x].
 - 2026-03-07 — Phase 2: REST API (devices, telemetry, alarms, commands), WebSocket (real-time state), Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Протестовано з ESP32 F27FCD.
+- 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js (UA), fcm.js, notifications REST API, WebUI Notifications page. Graceful skip when tokens not configured.
