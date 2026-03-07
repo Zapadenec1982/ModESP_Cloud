@@ -614,12 +614,27 @@ function sendCommand(tenantSlug, deviceId, key, value) {
   logger.info({ tenantSlug, deviceId, key, value }, 'Command sent');
 }
 
+/**
+ * Send a JSON command to a device via MQTT (QoS 1).
+ * Used for special commands like _ota where payload is JSON, not scalar.
+ * @param {string} tenantSlug
+ * @param {string} deviceId
+ * @param {string} key     e.g. "_ota"
+ * @param {object} payload JSON-serialisable object
+ */
+function sendJsonCommand(tenantSlug, deviceId, key, payload) {
+  if (!client || !connected) throw new Error('MQTT not connected');
+  const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/${key}`;
+  client.publish(topic, JSON.stringify(payload), { qos: 1 });
+  logger.info({ tenantSlug, deviceId, key }, 'JSON command sent (QoS 1)');
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
-  getDeviceState, getDeviceMeta, sendCommand,
+  getDeviceState, getDeviceMeta, sendCommand, sendJsonCommand,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

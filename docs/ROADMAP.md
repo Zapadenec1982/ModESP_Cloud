@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 5: History & Analytics — реалізовано**
+**Фаза 6: Fleet OTA — реалізовано (cloud side)**
 
 ---
 
@@ -106,12 +106,12 @@
 **Ціль:** Оновлення прошивки на всіх пристроях без виїзду на об'єкт.
 
 - [ ] **ModESP_v4:** додати MQTT OTA handler (підписка на `cmd/_ota`, download firmware by URL)
-- [ ] REST API: завантаження firmware файлів
-- [ ] REST API: запуск OTA на окремому пристрої
-- [ ] Груповий rollout з batch_size і інтервалом
-- [ ] Відстеження статусу OTA по парку
-- [ ] Автоматичний rollback при масовому збої
-- [ ] WebUI: сторінка управління firmware
+- [x] REST API: завантаження firmware файлів (multer, SHA256 checksum)
+- [x] REST API: запуск OTA на окремому пристрої
+- [x] Груповий rollout з batch_size і інтервалом
+- [x] Відстеження статусу OTA по парку (periodic checker, heartbeat version detection)
+- [x] Автоматичний rollback при масовому збої (auto-pause on fail threshold)
+- [x] WebUI: сторінка управління firmware (upload, deploy, rollout monitoring)
 
 **Результат:** Zero-touch оновлення парку з будь-якої точки світу.
 
@@ -152,3 +152,4 @@
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js (UA), fcm.js, notifications REST API, WebUI Notifications page. Graceful skip when tokens not configured.
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service, JWT middleware, login/refresh/logout routes, users CRUD, seed-admin script, WebSocket JWT, WebUI Login/Users pages, AUTH_ENABLED toggle.
 - 2026-03-07 — Phase 5: History & Analytics — telemetry stats (bucketed aggregation), alarm stats, fleet summary API, uPlot TelemetryChart, AlarmHistory table, Dashboard fleet summary bar, ensure-partitions.js.
+- 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete, OTA deploy + group rollout with batching, ota.js service (status checker, auto-pause), sendJsonCommand QoS 1, Firmware WebUI page, migration 003.

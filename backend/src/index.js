@@ -6,12 +6,14 @@ const http     = require('http');
 const express  = require('express');
 const cors     = require('cors');
 const pino     = require('pino');
+const path        = require('path');
 const db          = require('./services/db');
 const mqttSvc     = require('./services/mqtt');
 const wsSvc       = require('./services/ws');
 const pushSvc     = require('./services/push');
 const telegramSvc = require('./services/telegram');
 const fcmSvc      = require('./services/fcm');
+const otaSvc      = require('./services/ota');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize } = require('./middleware/auth');
 
@@ -48,6 +50,11 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+// ── Firmware binary download (no auth — ESP32 downloads directly) ───
+const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
+  || path.join(__dirname, '../firmware');
+app.use('/firmware', express.static(firmwareDir));
+
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
   // Public auth routes (no JWT required)
@@ -57,7 +64,9 @@ if (AUTH_ENABLED) {
   app.use('/api', authenticate);
 
   // Admin-only routes
-  app.use('/api/users', authorize('admin'), require('./routes/users'));
+  app.use('/api/users',    authorize('admin'), require('./routes/users'));
+  app.use('/api/firmware', authorize('admin'), require('./routes/firmware'));
+  app.use('/api/ota',      authorize('admin'), require('./routes/ota'));
 } else {
   // Dev fallback: tenant from header
   app.use('/api', tenantMw);
@@ -69,7 +78,13 @@ app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
 app.use('/api/notifications', require('./routes/notifications'));
-app.use('/api/fleet',   require('./routes/fleet'));
+app.use('/api/fleet',    require('./routes/fleet'));
+
+// Firmware/OTA routes (admin-only when AUTH_ENABLED, mounted above; dev fallback below)
+if (!AUTH_ENABLED) {
+  app.use('/api/firmware', require('./routes/firmware'));
+  app.use('/api/ota',      require('./routes/ota'));
+}
 
 // ── Global error handler ──────────────────────────────────
 app.use((err, _req, res, _next) => {
@@ -102,7 +117,10 @@ async function main() {
   if (fcmHandler) pushSvc.registerChannel('fcm', fcmHandler);
   pushSvc.start(logger);
 
-  // 5. HTTP
+  // 5. OTA service (periodic status checker + rollout scheduler)
+  otaSvc.start(logger);
+
+  // 6. HTTP
   server.listen(PORT, '0.0.0.0', () => {
     logger.info({ port: PORT, auth: AUTH_ENABLED }, 'HTTP server listening');
   });
@@ -111,6 +129,7 @@ async function main() {
 // ── Graceful shutdown ─────────────────────────────────────
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
+  otaSvc.shutdown();
   pushSvc.shutdown();
   telegramSvc.shutdown();
   fcmSvc.shutdown();

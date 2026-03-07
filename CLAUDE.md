@@ -314,13 +314,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 5: History & Analytics** — реалізовано
+**Фаза 6: Fleet OTA** — реалізовано (cloud side)
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-003) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -329,6 +329,7 @@ git push origin main
 | Push Notifications (Phase 3) | ✅ push.js, telegram.js, fcm.js, REST API, WebUI |
 | Auth (Phase 4) | ✅ auth.js service, JWT middleware, login/refresh/logout, users CRUD, WebUI Login/Users |
 | History & Analytics (Phase 5) | ✅ telemetry stats, alarm stats, fleet summary, uPlot chart, AlarmHistory, Dashboard fleet bar |
+| Fleet OTA (Phase 6) | ✅ firmware upload/list/delete, OTA deploy/rollout, batch scheduling, status checker, Firmware WebUI page |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | ⬜ Не розпочато |
 
@@ -354,3 +355,4 @@ git push origin main
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js bot, fcm.js, notifications REST API, Notifications WebUI page.
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service (bcrypt/JWT), auth middleware, auth/users routes, seed-admin script, WebSocket JWT auth, WebUI Login/Users pages, AUTH_ENABLED toggle.
 - 2026-03-07 — Phase 5: History & Analytics — telemetry from/to + bucketed stats API, alarm stats API, fleet summary API, uPlot TelemetryChart, AlarmHistory component, Dashboard fleet summary bar, ensure-partitions.js script.
+- 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete API (multer), OTA deploy + group rollout API, ota.js service (batch scheduling, periodic status checker, auto-pause on failure threshold), sendJsonCommand (QoS 1), Firmware.svelte WebUI page with deploy modal.

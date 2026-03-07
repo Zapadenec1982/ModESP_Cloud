@@ -16,6 +16,7 @@
     "firebase-admin": "^13.7.0",
     "jsonwebtoken": "^9.0.2",
     "mqtt": "^5.10.4",
+    "multer": "^2.1.1",
     "node-telegram-bot-api": "^0.67.0",
     "pg": "^8.13.1",
     "pino": "^9.6.0",

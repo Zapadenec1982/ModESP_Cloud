@@ -326,33 +326,100 @@ Max range: 31 day.
 
 ## Firmware (OTA)
 
-### `POST /firmware`
-Завантажити новий firmware (тільки admin).
+### `POST /firmware/upload`
+Завантажити новий firmware binary (тільки admin).
 
 **Content-Type:** multipart/form-data
-**Fields:** `file`, `version`, `board`
+**Fields:** `file` (.bin, ≤ 4MB), `version` (string), `notes` (optional)
 
-### `GET /firmware`
-Список доступних версій.
-
-### `POST /devices/:id/ota`
-Запустити OTA на конкретному пристрої.
-
+**Response 201:**
 ```json
-{ "firmware_id": "uuid" }
+{
+  "data": {
+    "id": "uuid",
+    "version": "1.2.3",
+    "filename": "tenant_1.2.3_1709827200.bin",
+    "original_name": "modesp_v4_1.2.3.bin",
+    "size_bytes": 1548288,
+    "checksum": "sha256:a1b2c3d4...",
+    "notes": "Fix sensor calibration",
+    "created_at": "2026-03-08T10:00:00Z"
+  }
+}
 ```
 
-### `POST /devices/ota/group`
-Груповий OTA rollout.
+### `GET /firmware`
+Список доступних версій для тенанта.
+
+### `DELETE /firmware/:id`
+Видалити firmware (тільки якщо немає активних OTA jobs).
+
+### `POST /ota/deploy`
+Запустити OTA на одному пристрої.
+
+**Ролі:** admin
+
+```json
+{ "firmware_id": "uuid", "device_id": "F27FCD" }
+```
+
+**Response 201:**
+```json
+{
+  "data": {
+    "job_id": "uuid",
+    "device_id": "F27FCD",
+    "firmware_version": "1.2.3",
+    "status": "sent"
+  }
+}
+```
+
+### `POST /ota/rollout`
+Груповий OTA rollout з batching.
+
+**Ролі:** admin
 
 ```json
 {
   "firmware_id": "uuid",
-  "device_ids": ["uuid1", "uuid2"],
-  "batch_size": 5,
-  "interval_minutes": 10
+  "device_ids": ["F27FCD", "A4CF12"],
+  "batch_size": 2,
+  "batch_interval_s": 300,
+  "fail_threshold_pct": 50
 }
 ```
+
+**Response 201:**
+```json
+{
+  "data": {
+    "rollout_id": "uuid",
+    "firmware_version": "1.2.3",
+    "total_devices": 2,
+    "batch_size": 2,
+    "status": "running"
+  }
+}
+```
+
+### `GET /ota/jobs`
+Список OTA jobs. Query: `?status=sent&rollout_id=uuid&device_id=F27FCD`
+
+### `GET /ota/rollouts`
+Список rollouts з агрегованими count (succeeded/failed/queued).
+
+### `GET /ota/rollouts/:id`
+Деталі rollout з per-device breakdown.
+
+### `POST /ota/rollouts/:id/pause`
+Призупинити running rollout.
+
+### `POST /ota/rollouts/:id/resume`
+Продовжити paused rollout.
+
+### `POST /ota/rollouts/:id/cancel`
+Скасувати rollout, всі queued jobs → cancelled.
 
 ---
 
@@ -458,3 +525,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 - 2026-03-07 — Створено. Авторизація, пристрої, телеметрія, аварії, користувачі, OTA, WebSocket.
 - 2026-03-07 — Оновлено. Command translation (REST→MQTT individual keys), auto-discovery endpoints, set_parameter generic command.
 - 2026-03-07 — Phase 5: telemetry from/to + stats (bucketed), alarm stats, fleet summary endpoints.
+- 2026-03-07 — Phase 6: firmware upload/list/delete, OTA deploy + group rollout, rollout pause/resume/cancel, jobs listing.

@@ -321,3 +321,86 @@ export function deleteUser(id) {
     method: 'DELETE',
   });
 }
+
+// ── Firmware (Phase 6) ─────────────────────────────────
+
+export function getFirmwares() {
+  return request('/firmware');
+}
+
+export async function uploadFirmware(file, version, notes) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('version', version);
+  if (notes) formData.append('notes', notes);
+
+  const headers = {};
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+  const res = await fetch(`${BASE}/firmware/upload`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `HTTP ${res.status}`);
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export function deleteFirmware(id) {
+  return request(`/firmware/${id}`, { method: 'DELETE' });
+}
+
+// ── OTA (Phase 6) ──────────────────────────────────────
+
+export function deployOta(firmwareId, deviceId) {
+  return request('/ota/deploy', {
+    method: 'POST',
+    body: JSON.stringify({ firmware_id: firmwareId, device_id: deviceId }),
+  });
+}
+
+export function createRollout({ firmwareId, deviceIds, batchSize, batchIntervalS, failThresholdPct }) {
+  return request('/ota/rollout', {
+    method: 'POST',
+    body: JSON.stringify({
+      firmware_id: firmwareId,
+      device_ids: deviceIds,
+      batch_size: batchSize,
+      batch_interval_s: batchIntervalS,
+      fail_threshold_pct: failThresholdPct,
+    }),
+  });
+}
+
+export function getOtaJobs({ status, rolloutId } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (rolloutId) params.set('rollout_id', rolloutId);
+  const qs = params.toString();
+  return request(`/ota/jobs${qs ? '?' + qs : ''}`);
+}
+
+export function getRollouts() {
+  return request('/ota/rollouts');
+}
+
+export function getRollout(id) {
+  return request(`/ota/rollouts/${id}`);
+}
+
+export function pauseRollout(id) {
+  return request(`/ota/rollouts/${id}/pause`, { method: 'POST' });
+}
+
+export function resumeRollout(id) {
+  return request(`/ota/rollouts/${id}/resume`, { method: 'POST' });
+}
+
+export function cancelRollout(id) {
+  return request(`/ota/rollouts/${id}/cancel`, { method: 'POST' });
+}

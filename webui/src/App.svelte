@@ -9,6 +9,7 @@
   import Notifications from './pages/Notifications.svelte';
   import Login from './pages/Login.svelte';
   import Users from './pages/Users.svelte';
+  import Firmware from './pages/Firmware.svelte';
 
   let currentRoute = '/';
   let routeParams = {};
@@ -26,6 +27,7 @@
     if (r === '/pending') return { page: 'pending' };
     if (r === '/notifications') return { page: 'notifications' };
     if (r === '/users') return { page: 'users' };
+    if (r === '/firmware') return { page: 'firmware' };
     return { page: 'dashboard' };
   }
 
@@ -73,6 +75,9 @@
         <a href="#/" class:active={routeParams.page === 'dashboard'}>Dashboard</a>
         <a href="#/pending" class:active={routeParams.page === 'pending'}>Pending</a>
         <a href="#/notifications" class:active={routeParams.page === 'notifications'}>Notifications</a>
+        {#if !$authEnabled || $authUser?.role === 'admin'}
+          <a href="#/firmware" class:active={routeParams.page === 'firmware'}>Firmware</a>
+        {/if}
         {#if $authEnabled && $authUser?.role === 'admin'}
           <a href="#/users" class:active={routeParams.page === 'users'}>Users</a>
         {/if}
@@ -94,6 +99,8 @@
         <Notifications />
       {:else if routeParams.page === 'users'}
         <Users />
+      {:else if routeParams.page === 'firmware'}
+        <Firmware />
       {:else}
         <Dashboard />
       {/if}
