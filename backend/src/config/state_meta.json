@@ -166,6 +166,7 @@
     "defrost.valve_delay",
     "defrost.equalize_time",
     "defrost.manual_start",
+    "defrost.manual_stop",
     "datalogger.enabled",
     "datalogger.retention_hours",
     "datalogger.sample_interval",
