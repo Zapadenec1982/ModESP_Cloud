@@ -293,6 +293,17 @@ docs: update API_REFERENCE with firmware endpoints
 3. Оновити `docs/API_REFERENCE.md` якщо змінилось API
 4. Git commit + push
 
+### Git commits — обов'язкові
+Кожна сесія ЗОБОВ'ЯЗАНА закінчуватися git commit + push.
+Формат: conventional commits (див. вище).
+```bash
+# Типовий workflow в кінці сесії:
+git add -A
+git commit -m "feat(scope): опис змін"
+git push origin main
+```
+Якщо зміни стосуються кількох скоупів — робити окремі коміти.
+
 ### Changelog в кінці кожного документа
 ```
 ## Changelog
@@ -307,12 +318,13 @@ docs: update API_REFERENCE with firmware endpoints
 
 | Компонент | Статус |
 |-----------|--------|
-| Документація | 🔄 Оновлюється під реальний MQTT протокол |
-| Firmware changes (ModESP_v4) | ⬜ Не розпочато |
-| PostgreSQL схема | ⬜ Не розпочато |
+| Документація | ✅ Готово |
+| Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
+| PostgreSQL схема | ✅ schema.sql готовий |
+| Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
+| Unit tests | ✅ 20/20 pass |
 | Mosquitto конфіг | ⬜ Не розпочато |
-| Node.js backend | ⬜ Не розпочато |
-| Svelte WebUI | ⬜ Не розпочато |
+| Svelte WebUI | ⬜ Не розпочато (Phase 2) |
 | VPS розгортання | ⬜ Не розпочато |
 
 ---
@@ -332,3 +344,4 @@ docs: update API_REFERENCE with firmware endpoints
 
 - 2026-03-07 — Створено. Повна інструкція для Claude Code: архітектура, правила, структура проекту.
 - 2026-03-07 — Оновлено. MQTT секція: individual scalar keys + cloud adapter pattern, реальна topic structure.
+- 2026-03-07 — Phase 1 backend: db.js, mqtt.js, index.js, schema.sql, state_meta.json, unit tests. Git commit requirements додано.

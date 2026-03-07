@@ -1,0 +1,25 @@
+{
+  "name": "modesp-cloud-backend",
+  "version": "0.1.0",
+  "description": "ModESP Cloud backend — MQTT ingestion and state aggregation",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "node test/test_mqtt_logic.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mqtt": "^5.10.4",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

@@ -12,24 +12,24 @@
 **Ціль:** Базова інфраструктура. ESP32 підключається до хмари, дані зберігаються.
 
 **Firmware changes (ModESP_v4) — prerequisite:**
-- [ ] NVS config: tenant_slug field
-- [ ] Prefix builder: `modesp/v1/{tenant}/{device}` format
-- [ ] Heartbeat publish (JSON metadata, кожні 30с)
-- [ ] `_set_tenant` command handler (auto-discovery)
-- [ ] HTTP API `/api/mqtt`: tenant field
-- [ ] Тестування: compile, flash, verify MQTT topics
+- [x] NVS config: tenant_slug field
+- [x] Prefix builder: `modesp/v1/{tenant}/{device}` format
+- [x] Heartbeat publish (JSON metadata, кожні 30с)
+- [x] `_set_tenant` command handler (auto-discovery)
+- [x] HTTP API `/api/mqtt`: tenant field
+- [x] Тестування: compile, flash, verify MQTT topics
 
 **Cloud infrastructure:**
 - [ ] VPS налаштування (Ubuntu 24, firewall, fail2ban)
 - [ ] Mosquitto broker з ACL і TLS
-- [ ] PostgreSQL: базова схема (tenants, devices, alarms, telemetry, events)
-- [ ] Node.js: MqttService (підписка, topic parsing, state aggregation)
-- [ ] Node.js: State Map (in-memory accumulation 48 keys per device)
-- [ ] Node.js: Alarm Detector (protection.* transition detection)
-- [ ] Node.js: Telemetry Sampler (5хв server-side sampling → DB)
-- [ ] Node.js: Event Detector (compressor on/off, defrost transitions)
-- [ ] Node.js: healthcheck endpoint
-- [ ] State metadata registry (state_meta.json з ModESP_v4)
+- [x] PostgreSQL: базова схема (tenants, devices, alarms, telemetry, events)
+- [x] Node.js: MqttService (підписка, topic parsing, state aggregation)
+- [x] Node.js: State Map (in-memory accumulation 48 keys per device)
+- [x] Node.js: Alarm Detector (protection.* transition detection)
+- [x] Node.js: Telemetry Sampler (5хв server-side sampling → DB)
+- [x] Node.js: Event Detector (compressor on/off, defrost transitions)
+- [x] Node.js: healthcheck endpoint
+- [x] State metadata registry (state_meta.json з ModESP_v4)
 - [ ] Nginx: HTTPS термінація
 - [ ] systemd юніти для всіх сервісів
 - [ ] Базовий моніторинг (journald + cron backup)
@@ -122,12 +122,12 @@
 ## Залежності між проектами
 
 ### ModESP_v4 → Phase 1 (firmware changes)
-- [ ] NVS: `tenant` field (string, max 32)
-- [ ] Prefix: `modesp/v1/{tenant}/{device}` (або `modesp/v1/pending/{device}`)
-- [ ] Heartbeat: JSON metadata кожні 30с (~100 bytes, stack buffer)
-- [ ] `_set_tenant` command: save to NVS → reconnect
-- [ ] HTTP API: tenant field в GET/POST `/api/mqtt`
-- [ ] RAM overhead: ≤ 2KB (80KB вільної залишиться ≥ 78KB)
+- [x] NVS: `tenant` field (string, max 32)
+- [x] Prefix: `modesp/v1/{tenant}/{device}` (або `modesp/v1/pending/{device}`)
+- [x] Heartbeat: JSON metadata кожні 30с (~100 bytes, stack buffer)
+- [x] `_set_tenant` command: save to NVS → reconnect
+- [x] HTTP API: tenant field в GET/POST `/api/mqtt`
+- [x] RAM overhead: ≤ 2KB (80KB вільної залишиться ≥ 78KB)
 
 ### ModESP_v4 → Phase 6 (MQTT OTA)
 - [ ] Підписка на `cmd/_ota` з URL firmware
@@ -140,3 +140,4 @@
 
 - 2026-03-07 — Створено. 7 фаз розробки, залежності з ModESP_v4.
 - 2026-03-07 — Оновлено. Phase 1 деталізовано під реальний MQTT протокол (individual keys, state aggregation, server-side sampling). Firmware changes як prerequisite.
+- 2026-03-07 — Phase 1 cloud code: backend scaffolding, schema.sql, db.js, mqtt.js, index.js, state_meta.json, unit tests (20/20). Firmware changes позначено [x].
