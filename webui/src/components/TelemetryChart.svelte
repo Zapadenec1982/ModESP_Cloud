@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
   import { getTelemetry } from '../lib/api.js';
@@ -14,7 +14,7 @@
   ];
 
   const SERIES_CONFIG = {
-    air:      { label: 'Air',      stroke: '#0984e3', width: 2 },
+    air:      { label: 'Air',        stroke: '#0984e3', width: 2 },
     evap:     { label: 'Evaporator', stroke: '#00b894', width: 2 },
     cond:     { label: 'Condenser',  stroke: '#e17055', width: 2 },
     setpoint: { label: 'Setpoint',   stroke: '#fdcb6e', width: 2, dash: [5, 5] },
@@ -27,9 +27,25 @@
   let chart = null;
   let resizeObserver;
 
-  function transformToUplot(rows) {
+  /**
+   * Determine which channels actually have data (non-null, non-zero values).
+   */
+  function getActiveChannels(rows) {
+    const seen = new Set();
+    for (const row of rows) {
+      if (row.value !== null && row.value !== 0) {
+        seen.add(row.channel);
+      }
+    }
+    // Always include air; include others only if they have real data
+    const active = CHANNELS.filter(ch => ch === 'air' || seen.has(ch));
+    return active.length > 0 ? active : CHANNELS;
+  }
+
+  function transformToUplot(rows, channels) {
     const timeMap = new Map();
     for (const row of rows) {
+      if (!channels.includes(row.channel)) continue;
       const ts = Math.floor(new Date(row.time).getTime() / 1000);
       if (!timeMap.has(ts)) timeMap.set(ts, {});
       timeMap.get(ts)[row.channel] = row.value;
@@ -40,41 +56,63 @@
 
     const data = [
       sortedTimes,
-      ...CHANNELS.map(ch => sortedTimes.map(t => timeMap.get(t)?.[ch] ?? null)),
+      ...channels.map(ch => sortedTimes.map(t => timeMap.get(t)?.[ch] ?? null)),
     ];
 
-    return data;
+    return { data, channels };
   }
 
-  function createChart(data) {
+  function createChart(uData, channels) {
     if (chart) { chart.destroy(); chart = null; }
-    if (!chartEl || !data) return;
+    if (!chartEl || !uData) return;
 
-    const width = chartEl.clientWidth || 600;
+    const width = chartEl.clientWidth;
+    if (width < 50) return; // DOM not ready
 
     const opts = {
       width,
       height: 300,
       cursor: { show: true, drag: { x: true, y: false } },
-      scales: { x: { time: true } },
+      scales: {
+        x: { time: true },
+        y: { auto: true },
+      },
       axes: [
-        { stroke: '#636e72', grid: { stroke: '#f1f2f6' } },
-        { stroke: '#636e72', grid: { stroke: '#f1f2f6' }, size: 55, label: '°C' },
+        {
+          stroke: '#636e72',
+          grid: { stroke: '#f1f2f6' },
+          font: '11px system-ui',
+          ticks: { stroke: '#f1f2f6' },
+        },
+        {
+          stroke: '#636e72',
+          grid: { stroke: '#f1f2f6' },
+          size: 55,
+          label: '°C',
+          font: '11px system-ui',
+          labelFont: 'bold 12px system-ui',
+          ticks: { stroke: '#f1f2f6' },
+        },
       ],
       series: [
         {},
-        ...CHANNELS.map(ch => ({
-          label:  SERIES_CONFIG[ch].label,
-          stroke: SERIES_CONFIG[ch].stroke,
-          width:  SERIES_CONFIG[ch].width,
-          dash:   SERIES_CONFIG[ch].dash,
+        ...channels.map(ch => ({
+          label:    SERIES_CONFIG[ch].label,
+          stroke:   SERIES_CONFIG[ch].stroke,
+          width:    SERIES_CONFIG[ch].width,
+          dash:     SERIES_CONFIG[ch].dash,
           spanGaps: true,
+          points:   { show: uData[0].length < 100 },
         })),
       ],
     };
 
-    chart = new uPlot(opts, data, chartEl);
+    chart = new uPlot(opts, uData, chartEl);
   }
+
+  // Store last fetched data for resize recreation
+  let lastData = null;
+  let lastChannels = null;
 
   async function loadData() {
     loading = true;
@@ -84,18 +122,32 @@
         hours: selectedRange.hours,
         channels: CHANNELS,
       });
-      const data = transformToUplot(rows);
-      if (!data) {
+
+      const activeChannels = getActiveChannels(rows);
+      const result = transformToUplot(rows, activeChannels);
+
+      if (!result) {
         noData = true;
+        lastData = null;
+        lastChannels = null;
         if (chart) { chart.destroy(); chart = null; }
       } else {
-        createChart(data);
+        lastData = result.data;
+        lastChannels = result.channels;
       }
     } catch (e) {
       console.error('[TelemetryChart] Load failed:', e);
       noData = true;
+      lastData = null;
+      lastChannels = null;
     } finally {
       loading = false;
+    }
+
+    // Wait for Svelte to remove the loading overlay, then create chart
+    if (lastData) {
+      await tick();
+      createChart(lastData, lastChannels);
     }
   }
 
@@ -109,7 +161,10 @@
 
     resizeObserver = new ResizeObserver(() => {
       if (chart && chartEl) {
-        chart.setSize({ width: chartEl.clientWidth, height: 300 });
+        const w = chartEl.clientWidth;
+        if (w > 50) {
+          chart.setSize({ width: w, height: 300 });
+        }
       }
     });
     resizeObserver.observe(chartEl);
@@ -135,7 +190,8 @@
     </div>
   </div>
 
-  <div class="chart-container" bind:this={chartEl}>
+  <div class="chart-wrap">
+    <div class="chart-container" bind:this={chartEl}></div>
     {#if loading}
       <div class="chart-overlay">Loading...</div>
     {:else if noData}
@@ -191,10 +247,13 @@
 
   .range-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .chart-container {
+  .chart-wrap {
     position: relative;
     min-height: 300px;
-    overflow: hidden;
+  }
+
+  .chart-container {
+    width: 100%;
   }
 
   .chart-overlay {
@@ -206,11 +265,7 @@
     color: #636e72;
     font-size: 0.9rem;
     background: rgba(255, 255, 255, 0.8);
-  }
-
-  /* uPlot global overrides */
-  .telemetry-chart :global(.u-wrap) {
-    width: 100% !important;
+    z-index: 1;
   }
 
   .telemetry-chart :global(.u-legend) {
