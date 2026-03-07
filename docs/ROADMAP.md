@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза: Документація оновлена під реальний MQTT протокол. Код не написаний.**
+**Фаза 2: Remote Monitoring WebUI — реалізовано (backend + WebUI)**
 
 ---
 
@@ -41,13 +41,13 @@
 ### Фаза 2: Remote Monitoring WebUI
 **Ціль:** Технік бачить стан всіх контролерів з будь-якої точки світу.
 
-- [ ] Node.js: WebSocket сервер (real-time delta broadcasts per tenant)
-- [ ] Node.js: REST API (GET /devices, GET /devices/:id)
-- [ ] Node.js: Command translation (REST → MQTT individual keys)
-- [ ] Svelte: хмарний WebUI (окремий від ESP32 WebUI)
-- [ ] Svelte: список пристроїв з online/offline статусом
-- [ ] Svelte: перегляд стану контролера в реальному часі
-- [ ] Svelte: auto-discovery UI (pending devices list, assign to tenant)
+- [x] Node.js: WebSocket сервер (real-time delta broadcasts per tenant)
+- [x] Node.js: REST API (GET /devices, GET /devices/:id, telemetry, alarms)
+- [x] Node.js: Command translation (REST → MQTT individual keys)
+- [x] Svelte: хмарний WebUI (окремий від ESP32 WebUI)
+- [x] Svelte: список пристроїв з online/offline статусом
+- [x] Svelte: перегляд стану контролера в реальному часі
+- [x] Svelte: auto-discovery UI (pending devices list, assign to tenant)
 - [ ] Svelte: розгортання через Nginx
 
 **Результат:** Повноцінний віддалений моніторинг без додаткового обладнання.
@@ -141,3 +141,4 @@
 - 2026-03-07 — Створено. 7 фаз розробки, залежності з ModESP_v4.
 - 2026-03-07 — Оновлено. Phase 1 деталізовано під реальний MQTT протокол (individual keys, state aggregation, server-side sampling). Firmware changes як prerequisite.
 - 2026-03-07 — Phase 1 cloud code: backend scaffolding, schema.sql, db.js, mqtt.js, index.js, state_meta.json, unit tests (20/20). Firmware changes позначено [x].
+- 2026-03-07 — Phase 2: REST API (devices, telemetry, alarms, commands), WebSocket (real-time state), Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Протестовано з ESP32 F27FCD.

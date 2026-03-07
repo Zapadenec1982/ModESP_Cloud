@@ -314,7 +314,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 1: Cloud Foundation** — в процесі
+**Фаза 2: Remote Monitoring WebUI** — реалізовано
 
 | Компонент | Статус |
 |-----------|--------|
@@ -323,8 +323,10 @@ git push origin main
 | PostgreSQL схема | ✅ schema.sql готовий |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
-| Mosquitto конфіг | ⬜ Не розпочато |
-| Svelte WebUI | ⬜ Не розпочато (Phase 2) |
+| REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
+| WebSocket (Phase 2) | ✅ real-time state_delta, alarm, device_status |
+| Svelte WebUI (Phase 2) | ✅ Dashboard, DeviceDetail, PendingDevices |
+| Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | ⬜ Не розпочато |
 
 ---
@@ -345,3 +347,4 @@ git push origin main
 - 2026-03-07 — Створено. Повна інструкція для Claude Code: архітектура, правила, структура проекту.
 - 2026-03-07 — Оновлено. MQTT секція: individual scalar keys + cloud adapter pattern, реальна topic structure.
 - 2026-03-07 — Phase 1 backend: db.js, mqtt.js, index.js, schema.sql, state_meta.json, unit tests. Git commit requirements додано.
+- 2026-03-07 — Phase 2: REST API, WebSocket, Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Статус таблицю оновлено.
