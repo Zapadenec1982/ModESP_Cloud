@@ -2,17 +2,33 @@
 
 require('dotenv').config();
 
+const http     = require('http');
 const express  = require('express');
+const cors     = require('cors');
 const pino     = require('pino');
 const db       = require('./services/db');
 const mqttSvc  = require('./services/mqtt');
+const wsSvc    = require('./services/ws');
+const tenantMw = require('./middleware/tenant');
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'info' : 'debug' });
 
 // ── Express ───────────────────────────────────────────────
-const app = express();
+const app    = express();
+const server = http.createServer(app);
 
+// Body parsing
+app.use(express.json());
+
+// CORS (dev: Vite on 5173, prod: same-origin via Nginx)
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+app.use(cors({
+  origin: corsOrigin,
+  credentials: true,
+}));
+
+// ── Health check (no auth / no tenant) ────────────────────
 app.get('/api/health', async (_req, res) => {
   const dbOk   = await db.healthy();
   const mqttOk = mqttSvc.isConnected();
@@ -27,7 +43,16 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-// Global error handler
+// ── Tenant middleware (dev: header, Phase 4: JWT) ──────────
+app.use('/api', tenantMw);
+
+// ── Routes ────────────────────────────────────────────────
+app.use('/api/devices',  require('./routes/devices'));
+app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
+app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
+app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
+
+// ── Global error handler ──────────────────────────────────
 app.use((err, _req, res, _next) => {
   logger.error({ err }, 'Unhandled Express error');
   res.status(500).json({ error: 'internal_error', message: 'Something went wrong', status: 500 });
@@ -48,8 +73,11 @@ async function main() {
   // 2. MQTT
   await mqttSvc.start(logger);
 
-  // 3. HTTP (listen on localhost only — behind Nginx)
-  app.listen(PORT, '127.0.0.1', () => {
+  // 3. WebSocket
+  wsSvc.attach(server, logger);
+
+  // 4. HTTP
+  server.listen(PORT, '0.0.0.0', () => {
     logger.info({ port: PORT }, 'HTTP server listening');
   });
 }
@@ -57,8 +85,10 @@ async function main() {
 // ── Graceful shutdown ─────────────────────────────────────
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
+  wsSvc.shutdown();
   await mqttSvc.shutdown();
   await db.shutdown();
+  server.close();
   process.exit(0);
 }
 
@@ -69,3 +99,6 @@ main().catch(err => {
   logger.fatal({ err }, 'Startup failed');
   process.exit(1);
 });
+
+// Export for WebSocket attachment in ws.js
+module.exports = { app, server };

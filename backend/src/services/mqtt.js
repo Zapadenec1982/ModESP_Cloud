@@ -1,7 +1,10 @@
 'use strict';
 
 const mqtt = require('mqtt');
+const { EventEmitter } = require('events');
 const db   = require('./db');
+
+const emitter = new EventEmitter();
 
 // ── Config ────────────────────────────────────────────────
 const TELEMETRY_INTERVAL = parseInt(process.env.TELEMETRY_INTERVAL_MS, 10) || 300000;
@@ -243,6 +246,9 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   state._online    = true;
   state._dirty     = true;
 
+  // Emit delta for WebSocket broadcast
+  emitter.emit('state_delta', { tenantSlug, deviceId, changes: { [key]: value } });
+
   // Ensure device exists in registry (auto-discovery for unknown devices)
   ensureDevice(tenantSlug, deviceId);
 }
@@ -286,6 +292,12 @@ function handleStatus(tenantSlug, deviceId, payload) {
 
   // Auto-discovery
   ensureDevice(tenantSlug, deviceId);
+
+  // Emit for WebSocket broadcast
+  emitter.emit('device_status', {
+    tenantSlug, deviceId, online,
+    lastSeen: new Date().toISOString(),
+  });
 
   logger.info({ tenantSlug, deviceId, online }, 'Device status');
 }
@@ -332,14 +344,17 @@ function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
   const alarmCode  = key.replace('protection.', '');
 
+  const severity = alarmSeverity(alarmCode);
+
   if (value === true) {
     // Alarm raised
     logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
     db.query(
       `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
        VALUES ($1, $2, $3, $4, true, NOW())`,
-      [tenantInfo.id, deviceId, alarmCode, alarmSeverity(alarmCode)]
+      [tenantInfo.id, deviceId, alarmCode, severity]
     ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm'));
+    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
   } else if (value === false) {
     // Alarm cleared
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
@@ -348,6 +363,7 @@ function detectAlarm(tenantSlug, deviceId, key, value, state) {
        WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
       [tenantInfo.id, deviceId, alarmCode]
     ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm'));
+    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
   }
 }
 
@@ -508,6 +524,11 @@ async function offlineDetector() {
     ).catch(err => logger.error({ err, deviceId }, 'Failed to mark device offline'));
 
     insertEvent(state._tenantId, deviceId, 'device_offline');
+
+    emitter.emit('device_status', {
+      tenantSlug: state._tenantSlug, deviceId, online: false,
+      lastSeen: new Date(state._lastSeen).toISOString(),
+    });
   }
 }
 
@@ -546,6 +567,60 @@ async function loadRegistries() {
   }
 }
 
+// ── Public API (for REST routes and WebSocket) ────────────
+
+/**
+ * Get accumulated state for a device (without internal _ keys).
+ * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
+ * @returns {Object|null}
+ */
+function getDeviceState(deviceId) {
+  const state = stateMap.get(deviceId);
+  if (!state) return null;
+  const result = {};
+  for (const [k, v] of Object.entries(state)) {
+    if (!k.startsWith('_')) result[k] = v;
+  }
+  return result;
+}
+
+/**
+ * Get device metadata (online, lastSeen, tenantId).
+ * @param {string} deviceId
+ * @returns {Object|null}
+ */
+function getDeviceMeta(deviceId) {
+  const state = stateMap.get(deviceId);
+  if (!state) return null;
+  return {
+    tenantId:   state._tenantId,
+    tenantSlug: state._tenantSlug,
+    online:     state._online,
+    lastSeen:   state._lastSeen,
+  };
+}
+
+/**
+ * Send a command to a device via MQTT.
+ * @param {string} tenantSlug
+ * @param {string} deviceId
+ * @param {string} key     e.g. "thermostat.setpoint"
+ * @param {*}      value   scalar value
+ */
+function sendCommand(tenantSlug, deviceId, key, value) {
+  if (!client || !connected) throw new Error('MQTT not connected');
+  const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/${key}`;
+  client.publish(topic, String(value), { qos: 0 });
+  logger.info({ tenantSlug, deviceId, key, value }, 'Command sent');
+}
+
 // ── Exports ───────────────────────────────────────────────
 
-module.exports = { start, shutdown, isConnected, parseTopic, parseScalar };
+module.exports = {
+  start, shutdown, isConnected,
+  parseTopic, parseScalar,
+  getDeviceState, getDeviceMeta, sendCommand,
+  on:   emitter.on.bind(emitter),
+  off:  emitter.off.bind(emitter),
+  once: emitter.once.bind(emitter),
+};
