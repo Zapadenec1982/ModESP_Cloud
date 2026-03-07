@@ -7,7 +7,8 @@
   export let deviceId;
 
   const CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
-  const RANGES = [
+
+  const PRESETS = [
     { label: '24h', hours: 24 },
     { label: '7d',  hours: 168 },
     { label: '30d', hours: 720 },
@@ -20,16 +21,35 @@
     setpoint: { label: 'Setpoint',   stroke: '#fdcb6e', width: 2, dash: [5, 5] },
   };
 
-  let selectedRange = RANGES[0];
+  // ── Date range state ─────────────────────────────────────
+  // datetime-local inputs use "YYYY-MM-DDThh:mm" format (no seconds, no TZ)
+
+  function toLocalInput(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const h = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d}T${h}:${min}`;
+  }
+
+  function initRange(hoursAgo) {
+    const now = new Date();
+    const from = new Date(now.getTime() - hoursAgo * 3600 * 1000);
+    return { from: toLocalInput(from), to: toLocalInput(now) };
+  }
+
+  let range = initRange(24);
+  let activePreset = '24h';
+
   let loading = false;
   let noData = false;
   let chartEl;
   let chart = null;
   let resizeObserver;
 
-  /**
-   * Determine which channels actually have data (non-null, non-zero values).
-   */
+  // ── Data helpers ──────────────────────────────────────────
+
   function getActiveChannels(rows) {
     const seen = new Set();
     for (const row of rows) {
@@ -37,7 +57,6 @@
         seen.add(row.channel);
       }
     }
-    // Always include air; include others only if they have real data
     const active = CHANNELS.filter(ch => ch === 'air' || seen.has(ch));
     return active.length > 0 ? active : CHANNELS;
   }
@@ -67,7 +86,7 @@
     if (!chartEl || !uData) return;
 
     const width = chartEl.clientWidth;
-    if (width < 50) return; // DOM not ready
+    if (width < 50) return;
 
     const opts = {
       width,
@@ -88,7 +107,7 @@
           stroke: '#636e72',
           grid: { stroke: '#f1f2f6' },
           size: 55,
-          label: '°C',
+          label: '\u00B0C',
           font: '11px system-ui',
           labelFont: 'bold 12px system-ui',
           ticks: { stroke: '#f1f2f6' },
@@ -110,7 +129,8 @@
     chart = new uPlot(opts, uData, chartEl);
   }
 
-  // Store last fetched data for resize recreation
+  // ── Load & render ─────────────────────────────────────────
+
   let lastData = null;
   let lastChannels = null;
 
@@ -118,8 +138,12 @@
     loading = true;
     noData = false;
     try {
+      const fromISO = new Date(range.from).toISOString();
+      const toISO   = new Date(range.to).toISOString();
+
       const rows = await getTelemetry(deviceId, {
-        hours: selectedRange.hours,
+        from: fromISO,
+        to: toISO,
         channels: CHANNELS,
       });
 
@@ -144,17 +168,40 @@
       loading = false;
     }
 
-    // Wait for Svelte to remove the loading overlay, then create chart
     if (lastData) {
       await tick();
       createChart(lastData, lastChannels);
     }
   }
 
-  function selectRange(range) {
-    selectedRange = range;
+  // ── UI actions ────────────────────────────────────────────
+
+  function applyPreset(preset) {
+    range = initRange(preset.hours);
+    activePreset = preset.label;
     loadData();
   }
+
+  function applyCustomRange() {
+    if (!range.from || !range.to) return;
+    // Validate: from < to, max 31 days
+    const f = new Date(range.from);
+    const t = new Date(range.to);
+    if (f >= t) return;
+    const maxMs = 31 * 24 * 3600 * 1000;
+    if (t - f > maxMs) {
+      range.from = toLocalInput(new Date(t.getTime() - maxMs));
+    }
+    activePreset = null;
+    loadData();
+  }
+
+  function handleDateChange() {
+    // Deselect preset when user manually changes dates
+    activePreset = null;
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────
 
   onMount(() => {
     loadData();
@@ -179,15 +226,39 @@
 <div class="telemetry-chart">
   <div class="chart-header">
     <h3>Temperature History</h3>
-    <div class="range-buttons">
-      {#each RANGES as range}
+    <div class="presets">
+      {#each PRESETS as preset}
         <button
-          class:active={selectedRange === range}
-          on:click={() => selectRange(range)}
+          class:active={activePreset === preset.label}
+          on:click={() => applyPreset(preset)}
           disabled={loading}
-        >{range.label}</button>
+        >{preset.label}</button>
       {/each}
     </div>
+  </div>
+
+  <div class="range-picker">
+    <label>
+      <span>From</span>
+      <input
+        type="datetime-local"
+        bind:value={range.from}
+        on:change={handleDateChange}
+        disabled={loading}
+      />
+    </label>
+    <label>
+      <span>To</span>
+      <input
+        type="datetime-local"
+        bind:value={range.to}
+        on:change={handleDateChange}
+        disabled={loading}
+      />
+    </label>
+    <button class="btn-apply" on:click={applyCustomRange} disabled={loading}>
+      Apply
+    </button>
   </div>
 
   <div class="chart-wrap">
@@ -212,7 +283,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
 
   h3 {
@@ -221,12 +292,12 @@
     margin: 0;
   }
 
-  .range-buttons {
+  .presets {
     display: flex;
     gap: 0.25rem;
   }
 
-  .range-buttons button {
+  .presets button {
     padding: 0.3rem 0.6rem;
     border: 1px solid #dfe6e9;
     border-radius: 4px;
@@ -237,15 +308,79 @@
     transition: all 0.2s;
   }
 
-  .range-buttons button:hover { background: #f8f9fa; }
+  .presets button:hover { background: #f8f9fa; }
 
-  .range-buttons button.active {
+  .presets button.active {
     background: #0984e3;
     color: white;
     border-color: #0984e3;
   }
 
-  .range-buttons button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .presets button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Range picker row ─────────────────────────── */
+
+  .range-picker {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .range-picker label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .range-picker span {
+    font-size: 0.7rem;
+    color: #636e72;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+
+  .range-picker input {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #dfe6e9;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #2d3436;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .range-picker input:focus {
+    border-color: #0984e3;
+  }
+
+  .range-picker input:disabled {
+    opacity: 0.5;
+  }
+
+  .btn-apply {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid #0984e3;
+    border-radius: 4px;
+    background: white;
+    color: #0984e3;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-apply:hover {
+    background: #0984e3;
+    color: white;
+  }
+
+  .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Chart area ───────────────────────────────── */
 
   .chart-wrap {
     position: relative;
