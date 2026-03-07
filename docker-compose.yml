@@ -1,0 +1,45 @@
+# ModESP Cloud — Local Development Stack
+# Prerequisites: Docker Desktop for Windows
+# Usage: docker compose up -d
+#        docker compose down
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: modesp-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: modesp_cloud
+      POSTGRES_USER: modesp_cloud
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modesp_cloud"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Mosquitto MQTT Broker ──────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: modesp-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  mosquitto_data:
