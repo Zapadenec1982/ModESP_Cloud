@@ -212,14 +212,14 @@ router.post('/:id/command', async (req, res, next) => {
       });
     }
 
-    // Look up device
+    // Look up device (including status to determine MQTT topic prefix)
     const isUuid = id.length > 8;
     const whereClause = isUuid
       ? 'id = $1 AND tenant_id = $2'
       : 'mqtt_device_id = $1 AND tenant_id = $2';
 
     const { rows } = await db.query(
-      `SELECT mqtt_device_id FROM devices WHERE ${whereClause}`,
+      `SELECT mqtt_device_id, status FROM devices WHERE ${whereClause}`,
       [id, req.tenantId]
     );
 
@@ -232,13 +232,21 @@ router.post('/:id/command', async (req, res, next) => {
     }
 
     const mqttId = rows[0].mqtt_device_id;
+    const deviceStatus = rows[0].status;
 
-    // Resolve tenant slug
-    const tenantRes = await db.query(
-      `SELECT slug FROM tenants WHERE id = $1`,
-      [req.tenantId]
-    );
-    const tenantSlug = tenantRes.rows[0]?.slug || 'pending';
+    // Resolve MQTT topic prefix:
+    // Pending devices listen on modesp/v1/pending/{id}/cmd/+
+    // Active devices listen on modesp/v1/{tenant_slug}/{id}/cmd/+
+    let tenantSlug;
+    if (deviceStatus === 'pending') {
+      tenantSlug = 'pending';
+    } else {
+      const tenantRes = await db.query(
+        `SELECT slug FROM tenants WHERE id = $1`,
+        [req.tenantId]
+      );
+      tenantSlug = tenantRes.rows[0]?.slug || 'pending';
+    }
 
     mqttSvc.sendCommand(tenantSlug, mqttId, key, value);
 
