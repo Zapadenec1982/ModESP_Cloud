@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 4: User Management & Auth — реалізовано**
+**Фаза 5: History & Analytics — реалізовано**
 
 ---
 
@@ -89,12 +89,14 @@
 ### Фаза 5: History & Analytics
 **Ціль:** Аналіз трендів, виявлення деградації обладнання.
 
-- [ ] REST API: телеметрія по часовому діапазону
-- [ ] REST API: агрегована статистика (min/max/avg, duty cycle)
-- [ ] WebUI: графіки температур (uPlot)
-- [ ] WebUI: історія аварій
-- [ ] WebUI: агрегований дашборд по всьому парку
-- [ ] Партиціонування телеметрії по місяцях (автоматизація)
+- [x] REST API: телеметрія по часовому діапазону (from/to ISO + hours)
+- [x] REST API: агрегована статистика (min/max/avg per bucket: 5m/15m/1h/6h/1d)
+- [x] REST API: статистика аварій (count, avg_duration per alarm_code)
+- [x] REST API: fleet summary (devices_total, online, alarms_active, alarms_24h)
+- [x] WebUI: графіки температур (uPlot — TelemetryChart.svelte)
+- [x] WebUI: історія аварій (AlarmHistory.svelte)
+- [x] WebUI: fleet summary bar на Dashboard
+- [x] Партиціонування телеметрії по місяцях (ensure-partitions.js)
 
 **Результат:** Аналітика для прийняття рішень про обслуговування.
 
@@ -149,3 +151,4 @@
 - 2026-03-07 — Phase 2: REST API (devices, telemetry, alarms, commands), WebSocket (real-time state), Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Протестовано з ESP32 F27FCD.
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js (UA), fcm.js, notifications REST API, WebUI Notifications page. Graceful skip when tokens not configured.
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service, JWT middleware, login/refresh/logout routes, users CRUD, seed-admin script, WebSocket JWT, WebUI Login/Users pages, AUTH_ENABLED toggle.
+- 2026-03-07 — Phase 5: History & Analytics — telemetry stats (bucketed aggregation), alarm stats, fleet summary API, uPlot TelemetryChart, AlarmHistory table, Dashboard fleet summary bar, ensure-partitions.js.

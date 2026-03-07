@@ -151,36 +151,49 @@ API команда транслюється в individual MQTT key зі скал
 ## Телеметрія
 
 ### `GET /devices/:id/telemetry`
-Часові ряди температур.
+Часові ряди температур (raw data).
 
 **Query params:**
-- `hours=24` — глибина в годинах (default: 24, max: 720)
-- `channels=air,evap` — фільтр каналів
+- `hours=24` — глибина в годинах (default: 24, max: 744)
+- `from=2026-03-01T00:00:00Z&to=2026-03-07T00:00:00Z` — ISO діапазон (альтернатива hours)
+- `channels=air,evap` — фільтр каналів (comma-separated)
+
+Max range: 31 day.
 
 **Response 200:**
 ```json
 {
-  "device_id": "a4cf1234abcd",
-  "channels": ["air", "evap", "setpoint"],
   "data": [
-    [1709812345, 4.5, -8.2, 4.0],
-    [1709812645, 4.3, -8.5, 4.0]
+    { "time": "2026-03-07T10:30:00Z", "channel": "air", "value": 4.5 },
+    { "time": "2026-03-07T10:30:00Z", "channel": "evap", "value": -8.2 }
   ]
 }
 ```
 
-### `GET /devices/:id/telemetry/summary`
-Агрегована статистика за період.
+### `GET /devices/:id/telemetry/stats`
+Агрегована статистика (bucketed min/max/avg).
 
-**Query params:** `hours=24`
+**Query params:**
+- `hours=24` або `from`/`to` — часовий діапазон
+- `channels=air,evap` — фільтр каналів
+- `bucket=1h` — розмір bucket: `5m`, `15m`, `1h`, `6h`, `1d` (default: `1h`)
 
 **Response 200:**
 ```json
 {
-  "air": { "min": 3.1, "max": 5.8, "avg": 4.4 },
-  "evap": { "min": -10.2, "max": -6.1, "avg": -8.3 },
-  "compressor_duty": 0.65,
-  "defrost_count": 2
+  "data": {
+    "buckets": [
+      {
+        "time": "2026-03-07T10:00:00Z",
+        "air": { "min": 3.8, "max": 5.2, "avg": 4.4, "samples": 12 },
+        "evap": { "min": -9.1, "max": -7.2, "avg": -8.3, "samples": 12 }
+      }
+    ],
+    "summary": {
+      "air": { "min": 3.1, "max": 5.8, "avg": 4.4 },
+      "evap": { "min": -10.2, "max": -6.1, "avg": -8.3 }
+    }
+  }
 }
 ```
 
@@ -216,7 +229,42 @@ API команда транслюється в individual MQTT key зі скал
 ### `GET /alarms` — всі аварії по тенанту
 Агрегований список аварій по всьому парку.
 
-**Query params:** `active=true&severity=critical`
+**Query params:** `active=true`, `from`, `to`, `limit`
+
+### `GET /alarms/stats`
+Статистика частоти аварій за період.
+
+**Query params:** `from`, `to` (default: last 30 days)
+
+**Response 200:**
+```json
+{
+  "data": [
+    { "alarm_code": "high_temp_alarm", "count": 12, "avg_duration_sec": 1800 },
+    { "alarm_code": "door_alarm", "count": 5, "avg_duration_sec": 300 }
+  ]
+}
+```
+
+---
+
+## Fleet
+
+### `GET /fleet/summary`
+Зведена інформація по всьому парку пристроїв тенанта.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "devices_total": 5,
+    "devices_online": 3,
+    "devices_active": 4,
+    "alarms_active": 1,
+    "alarms_24h": 3
+  }
+}
+```
 
 ---
 
@@ -409,3 +457,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 
 - 2026-03-07 — Створено. Авторизація, пристрої, телеметрія, аварії, користувачі, OTA, WebSocket.
 - 2026-03-07 — Оновлено. Command translation (REST→MQTT individual keys), auto-discovery endpoints, set_parameter generic command.
+- 2026-03-07 — Phase 5: telemetry from/to + stats (bucketed), alarm stats, fleet summary endpoints.

@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { getDevices } from '../lib/api.js';
+  import { getDevices, getFleetSummary } from '../lib/api.js';
   import { subscribe, unsubscribe, on } from '../lib/ws.js';
   import { devices } from '../lib/stores.js';
   import DeviceCard from '../components/DeviceCard.svelte';
@@ -9,14 +9,20 @@
   let error = null;
   let interval;
 
+  let fleet = null;
+
   /** Track which device IDs we've subscribed to via WS */
   let subscribedIds = new Set();
   let wsUnsubs = [];
 
   async function load() {
     try {
-      const data = await getDevices();
+      const [data, summary] = await Promise.all([
+        getDevices(),
+        getFleetSummary().catch(() => null),
+      ]);
       devices.set(data);
+      fleet = summary;
       error = null;
       // Subscribe to WS for all loaded devices
       syncWsSubscriptions(data);
@@ -128,6 +134,27 @@
     <button class="btn-refresh" on:click={load}>Refresh</button>
   </div>
 
+  {#if fleet}
+    <div class="fleet-summary">
+      <div class="fleet-stat">
+        <span class="fleet-value">{fleet.devices_online}</span>
+        <span class="fleet-label">Online</span>
+      </div>
+      <div class="fleet-stat">
+        <span class="fleet-value">{fleet.devices_total}</span>
+        <span class="fleet-label">Total Devices</span>
+      </div>
+      <div class="fleet-stat" class:alert={fleet.alarms_active > 0}>
+        <span class="fleet-value">{fleet.alarms_active}</span>
+        <span class="fleet-label">Active Alarms</span>
+      </div>
+      <div class="fleet-stat">
+        <span class="fleet-value">{fleet.alarms_24h}</span>
+        <span class="fleet-label">Alarms (24h)</span>
+      </div>
+    </div>
+  {/if}
+
   {#if loading}
     <p class="status-msg">Loading devices...</p>
   {:else if error}
@@ -191,5 +218,47 @@
 
   .status-msg.error {
     color: #e17055;
+  }
+
+  .fleet-summary {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .fleet-stat {
+    flex: 1;
+    min-width: 120px;
+    background: white;
+    border: 1px solid #dfe6e9;
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .fleet-stat.alert {
+    border-color: #d63031;
+    background: #fff5f5;
+  }
+
+  .fleet-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #2d3436;
+  }
+
+  .fleet-stat.alert .fleet-value {
+    color: #d63031;
+  }
+
+  .fleet-label {
+    font-size: 0.75rem;
+    color: #636e72;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
   }
 </style>

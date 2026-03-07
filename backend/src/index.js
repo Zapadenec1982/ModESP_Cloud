@@ -69,6 +69,7 @@ app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/fleet',   require('./routes/fleet'));
 
 // ── Global error handler ──────────────────────────────────
 app.use((err, _req, res, _next) => {

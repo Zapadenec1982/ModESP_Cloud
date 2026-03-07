@@ -5,6 +5,8 @@
   import { navigate, liveState } from '../lib/stores.js';
   import StateView from '../components/StateView.svelte';
   import AlarmBadge from '../components/AlarmBadge.svelte';
+  import TelemetryChart from '../components/TelemetryChart.svelte';
+  import AlarmHistory from '../components/AlarmHistory.svelte';
 
   export let deviceId;
 
@@ -201,6 +203,12 @@
         {/if}
       </form>
     </div>
+
+    <!-- Temperature chart -->
+    <TelemetryChart {deviceId} />
+
+    <!-- Alarm history -->
+    <AlarmHistory {deviceId} />
 
     <!-- Live state -->
     <div class="state-section">

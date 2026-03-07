@@ -314,7 +314,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 4: User Management & Auth** — реалізовано
+**Фаза 5: History & Analytics** — реалізовано
 
 | Компонент | Статус |
 |-----------|--------|
@@ -328,6 +328,7 @@ git push origin main
 | Svelte WebUI (Phase 2) | ✅ Dashboard, DeviceDetail, PendingDevices |
 | Push Notifications (Phase 3) | ✅ push.js, telegram.js, fcm.js, REST API, WebUI |
 | Auth (Phase 4) | ✅ auth.js service, JWT middleware, login/refresh/logout, users CRUD, WebUI Login/Users |
+| History & Analytics (Phase 5) | ✅ telemetry stats, alarm stats, fleet summary, uPlot chart, AlarmHistory, Dashboard fleet bar |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | ⬜ Не розпочато |
 
@@ -352,3 +353,4 @@ git push origin main
 - 2026-03-07 — Phase 2: REST API, WebSocket, Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Статус таблицю оновлено.
 - 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js bot, fcm.js, notifications REST API, Notifications WebUI page.
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service (bcrypt/JWT), auth middleware, auth/users routes, seed-admin script, WebSocket JWT auth, WebUI Login/Users pages, AUTH_ENABLED toggle.
+- 2026-03-07 — Phase 5: History & Analytics — telemetry from/to + bucketed stats API, alarm stats API, fleet summary API, uPlot TelemetryChart, AlarmHistory component, Dashboard fleet summary bar, ensure-partitions.js script.

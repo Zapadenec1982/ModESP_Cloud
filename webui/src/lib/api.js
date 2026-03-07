@@ -206,26 +206,64 @@ export function sendCommand(deviceId, key, value) {
 
 // ── Telemetry ────────────────────────────────────────────
 
-export function getTelemetry(deviceId, { hours = 24, channels } = {}) {
-  const params = new URLSearchParams({ hours });
+export function getTelemetry(deviceId, { hours, from, to, channels } = {}) {
+  const params = new URLSearchParams();
+  if (from && to) {
+    params.set('from', from);
+    params.set('to', to);
+  } else {
+    params.set('hours', hours || 24);
+  }
   if (channels) params.set('channels', channels.join(','));
   return request(`/devices/${deviceId}/telemetry?${params}`);
 }
 
+export function getTelemetryStats(deviceId, { hours, from, to, channels, bucket = '1h' } = {}) {
+  const params = new URLSearchParams({ bucket });
+  if (from && to) {
+    params.set('from', from);
+    params.set('to', to);
+  } else {
+    params.set('hours', hours || 24);
+  }
+  if (channels) params.set('channels', channels.join(','));
+  return request(`/devices/${deviceId}/telemetry/stats?${params}`);
+}
+
 // ── Alarms ───────────────────────────────────────────────
 
-export function getAlarms({ active } = {}) {
+export function getAlarms({ active, from, to, limit } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (limit) params.set('limit', limit);
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);
 }
 
-export function getDeviceAlarms(deviceId, { active } = {}) {
+export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (limit) params.set('limit', limit);
   const qs = params.toString();
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
+}
+
+export function getAlarmStats({ from, to } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return request(`/alarms/stats${qs ? '?' + qs : ''}`);
+}
+
+// ── Fleet ───────────────────────────────────────────────
+
+export function getFleetSummary() {
+  return request('/fleet/summary');
 }
 
 // ── Notifications ───────────────────────────────────────
