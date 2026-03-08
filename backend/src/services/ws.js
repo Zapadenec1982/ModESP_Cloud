@@ -235,15 +235,18 @@ function onDeviceStatus({ deviceId, online, lastSeen }) {
 
 // ── Utilities ────────────────────────────────────────────
 
+const WS_BACKPRESSURE_BYTES = 65536; // 64 KB
+
 function broadcast(deviceId, payload) {
   const clients = subscriptions.get(deviceId);
   if (!clients || clients.size === 0) return;
 
   const data = JSON.stringify(payload);
   for (const ws of clients) {
-    if (ws.readyState === 1) { // WebSocket.OPEN
+    if (ws.readyState === 1 && ws.bufferedAmount < WS_BACKPRESSURE_BYTES) {
       ws.send(data);
     }
+    // Skip slow clients to prevent memory buildup
   }
 }
 

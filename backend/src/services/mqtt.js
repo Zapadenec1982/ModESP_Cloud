@@ -101,6 +101,8 @@ async function start(log) {
   timers.push(setInterval(stateWriter,      STATE_CHECK_MS));
   timers.push(setInterval(offlineDetector,   OFFLINE_CHECK_MS));
   timers.push(setInterval(refreshRegistries, REGISTRY_REFRESH));
+  timers.push(setInterval(flushEvents,       1000));           // batch events every 1s
+  timers.push(setInterval(stateMapMonitor,   60000));          // log stateMap stats every 60s
 }
 
 function isConnected() { return connected; }
@@ -108,6 +110,13 @@ function isConnected() { return connected; }
 async function shutdown() {
   for (const t of timers) clearInterval(t);
   timers = [];
+
+  // Flush remaining buffered events before closing
+  if (eventBuffer.length > 0) {
+    logger.info({ count: eventBuffer.length }, 'Flushing event buffer on shutdown');
+    await flushEvents().catch(() => {});
+  }
+
   if (client) {
     logger.info('Closing MQTT connection');
     client.end(true);
@@ -345,8 +354,9 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
 
   try {
     const hb = JSON.parse(rawPayload);
-    // Update firmware_version in DB if present
-    if (hb.fw) {
+    // Only update firmware_version in DB when it changes (dedup ~167 writes/sec at 5000 devices)
+    if (hb.fw && state._lastFw !== hb.fw) {
+      state._lastFw = hb.fw;
       const tenantInfo = resolveTenant(tenantSlug);
       db.query(
         `UPDATE devices SET firmware_version = $1, last_seen = NOW()
@@ -407,12 +417,41 @@ function detectEvent(tenantSlug, deviceId, key, value, state) {
   insertEvent(tenantInfo.id, deviceId, eventType);
 }
 
+// ── Event buffer (batched INSERT every 1s) ──────────────
+const eventBuffer = [];
+
 function insertEvent(tenantId, deviceId, eventType, payload) {
-  db.query(
-    `INSERT INTO events (tenant_id, device_id, event_type, payload, time)
-     VALUES ($1, $2, $3, $4, NOW())`,
-    [tenantId, deviceId, eventType, payload ? JSON.stringify(payload) : null]
-  ).catch(err => logger.error({ err, deviceId, eventType }, 'Failed to insert event'));
+  eventBuffer.push({
+    tenantId,
+    deviceId,
+    eventType,
+    payload: payload ? JSON.stringify(payload) : null,
+  });
+}
+
+async function flushEvents() {
+  if (eventBuffer.length === 0) return;
+
+  const batch = eventBuffer.splice(0);
+  const values = [];
+  const placeholders = [];
+  let idx = 1;
+
+  for (const evt of batch) {
+    placeholders.push(`($${idx}, $${idx+1}, $${idx+2}, $${idx+3}, NOW())`);
+    values.push(evt.tenantId, evt.deviceId, evt.eventType, evt.payload);
+    idx += 4;
+  }
+
+  try {
+    await db.query(
+      `INSERT INTO events (tenant_id, device_id, event_type, payload, time)
+       VALUES ${placeholders.join(', ')}`,
+      values
+    );
+  } catch (err) {
+    logger.error({ err, count: batch.length }, 'Failed to flush event batch');
+  }
 }
 
 // ── Auto-discovery ────────────────────────────────────────
@@ -504,6 +543,8 @@ async function telemetrySampler() {
 async function stateWriter() {
   const now = Date.now();
 
+  // Collect all dirty devices that passed debounce threshold
+  const batch = [];
   for (const [deviceId, state] of stateMap) {
     if (!state._dirty) continue;
     if (now - state._lastDbWrite < STATE_DEBOUNCE) continue;
@@ -514,18 +555,76 @@ async function stateWriter() {
       if (!k.startsWith('_')) lastState[k] = v;
     }
 
+    batch.push({
+      deviceId,
+      tenantId: state._tenantId,
+      lastState: JSON.stringify(lastState),
+      online:    state._online,
+      state,      // ref for marking clean after success
+    });
+  }
+
+  if (batch.length === 0) return;
+
+  // Single multi-row UPDATE via VALUES (5000 queries → 1 query)
+  const CHUNK = 500;
+  for (let i = 0; i < batch.length; i += CHUNK) {
+    const chunk = batch.slice(i, i + CHUNK);
+    const values = [];
+    const placeholders = [];
+    let idx = 1;
+
+    for (const item of chunk) {
+      placeholders.push(`($${idx}::uuid, $${idx+1}, $${idx+2}::jsonb, $${idx+3}::boolean)`);
+      values.push(item.tenantId, item.deviceId, item.lastState, item.online);
+      idx += 4;
+    }
+
     try {
       await db.query(
-        `UPDATE devices SET last_state = $1, last_seen = NOW(), online = $2
-         WHERE tenant_id = $3 AND mqtt_device_id = $4`,
-        [JSON.stringify(lastState), state._online, state._tenantId, deviceId]
+        `UPDATE devices AS d
+         SET last_state = v.ls, online = v.on, last_seen = NOW()
+         FROM (VALUES ${placeholders.join(', ')}) AS v(tid, mid, ls, on)
+         WHERE d.tenant_id = v.tid AND d.mqtt_device_id = v.mid`,
+        values
       );
-      state._dirty      = false;
-      state._lastDbWrite = now;
+
+      // Mark all items in this chunk as clean
+      for (const item of chunk) {
+        item.state._dirty      = false;
+        item.state._lastDbWrite = now;
+      }
+
+      if (chunk.length >= 10) {
+        logger.info({ count: chunk.length }, 'Batch state write');
+      }
     } catch (err) {
-      logger.error({ err, deviceId }, 'Failed to write device state');
+      // On failure, leave all dirty — retry on next cycle
+      logger.error({ err, count: chunk.length }, 'Failed batch state write');
     }
   }
+}
+
+// ── Periodic: StateMap monitoring (every 60s) ─────────────
+
+function stateMapMonitor() {
+  let totalKeys = 0;
+  let onlineCount = 0;
+
+  for (const [, state] of stateMap) {
+    if (state._online) onlineCount++;
+    for (const k of Object.keys(state)) {
+      if (!k.startsWith('_')) totalKeys++;
+    }
+  }
+
+  // Rough memory estimate: ~200 bytes per state key (key string + value + overhead)
+  const approxMb = ((totalKeys * 200 + stateMap.size * 300) / 1048576).toFixed(1);
+
+  logger.info(
+    { devices: stateMap.size, online: onlineCount, totalKeys, approxMb: `${approxMb}MB`, eventBuf: eventBuffer.length },
+    'StateMap stats'
+  );
 }
 
 // ── Periodic: Offline detector (every 30s) ────────────────

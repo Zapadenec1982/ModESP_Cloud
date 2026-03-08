@@ -19,9 +19,10 @@ function init(log) {
     database:        process.env.DB_NAME || 'modesp_cloud',
     user:            process.env.DB_USER || 'modesp_cloud',
     password:        process.env.DB_PASS || '',
-    max:             10,
+    max:             parseInt(process.env.DB_POOL_MAX, 10) || 30,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
+    statement_timeout: 30000,   // 30s safety net per query
   });
 
   pool.on('error', (err) => {

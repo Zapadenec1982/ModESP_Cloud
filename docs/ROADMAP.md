@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 7a: Per-Device RBAC — реалізовано (backend)**
+**Фаза 7b: Backend Scalability — реалізовано**
 
 ---
 
@@ -152,14 +152,15 @@
 - [x] grant-all-devices.js: одноразовий скрипт для backward compatibility
 - [x] schema.sql: оновлено user_devices з audit columns + indexes
 
-#### 7b: Backend Scalability (заплановано)
-- [ ] DB Pool: max=30, statement_timeout=30s
-- [ ] Batch state writer (N queries → 1 multi-row UPDATE)
-- [ ] Heartbeat write dedup (firmware_version тільки при зміні)
-- [ ] Event INSERT batching (буфер + flush щосекунди)
-- [ ] Telemetry retention (cleanup партицій >90 днів)
-- [ ] Telemetry query LIMIT 10000 + X-Truncated header
-- [ ] WebSocket backpressure (bufferedAmount check)
+#### 7b: Backend Scalability ✅
+- [x] DB Pool: max=30 (env configurable), statement_timeout=30s
+- [x] Batch state writer (N queries → 1 multi-row UPDATE via VALUES)
+- [x] Heartbeat write dedup (firmware_version тільки при зміні, _lastFw cache)
+- [x] Event INSERT batching (буфер + flush щосекунди, flush on shutdown)
+- [x] Telemetry retention (cleanup-telemetry.js — drop партицій >90 днів)
+- [x] Telemetry query LIMIT 10000 + X-Truncated header
+- [x] WebSocket backpressure (bufferedAmount > 64KB → skip)
+- [x] StateMap monitoring (device count, total keys, approx MB, event buffer — every 60s)
 
 #### 7c: Frontend RBAC (заплановано)
 - [ ] Stores: isAdmin, canWrite derived stores
@@ -220,3 +221,4 @@
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler (ota_handler.cpp) — E2E verified. Partition table fix (otadata + ota_1 for rollback).
 - 2026-03-08 — Phase 6.5: WebUI polish — i18n (UK+EN), light/dark theme, device metadata (model, comment, manufactured_at), editing, service records, search by all fields.
 - 2026-03-08 — Phase 7a: Per-Device RBAC (backend) — migration 006, device-access middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users GET/PUT devices (bulk), grant-all-devices.js migration script.
+- 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout, batch state writer (N→1 query), heartbeat write dedup, event INSERT batching (1s flush), cleanup-telemetry.js (90-day retention), telemetry LIMIT 10000, WS backpressure (64KB), StateMap monitoring (60s stats).

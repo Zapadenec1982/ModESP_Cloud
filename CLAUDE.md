@@ -324,7 +324,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7a: Per-Device RBAC (backend)** — завершено
+**Фаза 7b: Backend Scalability** — завершено
 
 | Компонент | Статус |
 |-----------|--------|
@@ -342,6 +342,7 @@ git push origin main
 | Fleet OTA (Phase 6) | ✅ Cloud: firmware upload/list/delete, deploy/rollout, status checker. Firmware: OTA handler E2E verified (~8s) |
 | WebUI Polish (Phase 6.5) | ✅ i18n (UK+EN), light/dark theme, PATCH devices, service records, search by model/serial |
 | Per-Device RBAC (Phase 7a) | ✅ device-access middleware, all routes protected, WS per-device check, users device management, grant-all-devices script |
+| Backend Scalability (Phase 7b) | ✅ DB pool 30, batch state writer, heartbeat dedup, event batching, telemetry retention, query limit, WS backpressure, StateMap monitoring |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | 🔄 В процесі |
 
@@ -371,3 +372,4 @@ git push origin main
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler verified E2E (~8s). Partition table fix (otadata + ota_1 for rollback). ROADMAP оновлено.
 - 2026-03-08 — Phase 6.5: i18n (UK+EN), light/dark theme toggle, device metadata (model, comment, manufactured_at), PATCH /devices/:id, service records CRUD, search by model/serial, migration 005.
 - 2026-03-08 — Phase 7a: Per-Device RBAC — device-access.js middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users device management (GET/PUT bulk), grant-all-devices.js migration script, migration 006.
+- 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout 30s, batch state writer (N→1 multi-row UPDATE), heartbeat write dedup (_lastFw), event INSERT batching (1s flush), cleanup-telemetry.js (90-day partition retention), telemetry LIMIT 10000 + X-Truncated, WS backpressure (64KB), StateMap monitoring (60s stats).
