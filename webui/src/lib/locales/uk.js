@@ -314,6 +314,10 @@ export default {
     rollout_paused: 'Розгортання призупинено',
     rollout_resumed: 'Розгортання продовжено',
     rollout_cancelled: 'Розгортання скасовано',
+    board_type: 'Плата',
+    universal: 'Універсальна',
+    universal_hint: 'Універсальна прошивка — сумісна з усіма типами плат',
+    compatible: 'сумісних',
   },
 
   // ── Users ──

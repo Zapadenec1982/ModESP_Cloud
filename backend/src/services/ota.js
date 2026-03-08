@@ -41,6 +41,7 @@ async function sendOtaToDevice(tenantSlug, deviceId, firmware) {
     version:  firmware.version,
     checksum: firmware.checksum,
   };
+  if (firmware.board_type) payload.board_type = firmware.board_type;
 
   // Use observed MQTT slug (where device actually publishes) with DB slug fallback
   const routingSlug = mqttSvc.getDeviceRoutingSlug(deviceId, tenantSlug);
@@ -61,10 +62,22 @@ async function deploySingle(tenantId, tenantSlug, firmwareId, deviceId, userId) 
 
   // Check device exists and is active
   const devRes = await db.query(
-    "SELECT mqtt_device_id FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'",
+    "SELECT mqtt_device_id, model FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'",
     [tenantId, deviceId]
   );
   if (devRes.rows.length === 0) throw Object.assign(new Error('Device not found or not active'), { status: 404 });
+  const device = devRes.rows[0];
+
+  // Board compatibility check
+  if (firmware.board_type && device.model && firmware.board_type !== device.model) {
+    throw Object.assign(
+      new Error(`Board mismatch: firmware targets "${firmware.board_type}", device is "${device.model}"`),
+      { status: 400 }
+    );
+  }
+  if (firmware.board_type && !device.model) {
+    logger.warn({ deviceId, boardType: firmware.board_type }, 'Device has no model set — skipping board check');
+  }
 
   // Check no active OTA for this device
   const active = await db.query(
@@ -113,25 +126,45 @@ async function createRollout(tenantId, tenantSlug, opts) {
   if (fwRes.rows.length === 0) throw Object.assign(new Error('Firmware not found'), { status: 404 });
 
   // Resolve device list
-  let devices;
+  const firmware = fwRes.rows[0];
+  let devRows;
   if (deviceIds && deviceIds.length > 0) {
     const placeholders = deviceIds.map((_, i) => `$${i + 3}`).join(',');
     const devRes = await db.query(
-      `SELECT mqtt_device_id FROM devices
+      `SELECT mqtt_device_id, model FROM devices
        WHERE tenant_id = $1 AND status = 'active' AND mqtt_device_id IN (${placeholders})`,
       [tenantId, 'active', ...deviceIds]
     );
-    devices = devRes.rows.map(r => r.mqtt_device_id);
+    devRows = devRes.rows;
   } else {
     // All active devices
     const devRes = await db.query(
-      "SELECT mqtt_device_id FROM devices WHERE tenant_id = $1 AND status = 'active'",
+      "SELECT mqtt_device_id, model FROM devices WHERE tenant_id = $1 AND status = 'active'",
       [tenantId]
     );
-    devices = devRes.rows.map(r => r.mqtt_device_id);
+    devRows = devRes.rows;
   }
 
-  if (devices.length === 0) throw Object.assign(new Error('No active devices found'), { status: 400 });
+  // Board compatibility filter
+  let skippedBoard = 0;
+  if (firmware.board_type) {
+    const before = devRows.length;
+    devRows = devRows.filter(d => !d.model || d.model === firmware.board_type);
+    skippedBoard = before - devRows.length;
+    if (skippedBoard > 0) {
+      logger.info({ boardType: firmware.board_type, skipped: skippedBoard },
+        'Rollout: skipped incompatible devices');
+    }
+  }
+
+  const devices = devRows.map(r => r.mqtt_device_id);
+
+  if (devices.length === 0) {
+    const msg = skippedBoard > 0
+      ? `No compatible devices found (${skippedBoard} incompatible with board "${firmware.board_type}")`
+      : 'No active devices found';
+    throw Object.assign(new Error(msg), { status: 400 });
+  }
 
   // Filter out devices with active OTA jobs
   const activeRes = await db.query(
@@ -167,8 +200,9 @@ async function createRollout(tenantId, tenantSlug, opts) {
 
   return {
     rollout_id:       rolloutId,
-    firmware_version: fwRes.rows[0].version,
+    firmware_version: firmware.version,
     total_devices:    eligible.length,
+    skipped_incompatible: skippedBoard,
     batch_size:       batchSize,
     batch_interval_s: batchIntervalS,
     status:           'running',

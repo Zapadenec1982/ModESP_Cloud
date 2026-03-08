@@ -31,6 +31,7 @@
   let uploadFile = null
   let uploadVersion = ''
   let uploadNotes = ''
+  let uploadBoardType = ''
   let uploading = false
 
   // Deploy modal
@@ -105,11 +106,12 @@
     if (!uploadFile || !uploadVersion.trim()) return
     uploading = true
     try {
-      await uploadFirmware(uploadFile, uploadVersion.trim(), uploadNotes.trim())
+      await uploadFirmware(uploadFile, uploadVersion.trim(), uploadNotes.trim(), uploadBoardType || null)
       toast.success($t('firmware.firmware_uploaded', uploadVersion.trim()))
       uploadFile = null
       uploadVersion = ''
       uploadNotes = ''
+      uploadBoardType = ''
       const fileInput = document.querySelector('.upload-section input[type="file"]')
       if (fileInput) fileInput.value = ''
       await loadAll()
@@ -138,7 +140,9 @@
   function openDeploy(fw) {
     deployFirmware = fw
     deployMode = 'single'
-    deployDeviceId = devices.length > 0 ? devices[0].mqtt_device_id : ''
+    // Pre-select first compatible device
+    const compat = devices.filter(d => isDeviceCompatible(d, fw))
+    deployDeviceId = compat.length > 0 ? compat[0].mqtt_device_id : ''
     selectedDevices = new Set()
     deployBatchSize = 5
     deployIntervalS = 300
@@ -229,6 +233,24 @@
     return 'neutral'
   }
 
+  // Unique board types from devices (for upload form select)
+  $: boardTypes = [...new Set(devices.map(d => d.model).filter(Boolean))].sort()
+
+  // Board compatibility check for deploy modal
+  function isDeviceCompatible(device, fw) {
+    if (!fw?.board_type) return true  // universal firmware
+    if (!device.model) return true     // device without model — allow with warning
+    return device.model === fw.board_type
+  }
+
+  $: compatibleDevices = deployFirmware
+    ? devices.filter(d => isDeviceCompatible(d, deployFirmware))
+    : devices
+
+  $: incompatibleCount = deployFirmware?.board_type
+    ? devices.filter(d => d.model && d.model !== deployFirmware.board_type).length
+    : 0
+
   $: hasActiveJobs = jobs.some(j => j.status === 'queued' || j.status === 'sent')
   $: if (hasActiveJobs && !refreshTimer) startAutoRefresh()
   $: if (!hasActiveJobs && refreshTimer) stopAutoRefresh()
@@ -264,9 +286,18 @@
           <label class="field-label" for="fw-version">{$t('common.version')}</label>
           <input id="fw-version" type="text" bind:value={uploadVersion} placeholder={$t('firmware.version_placeholder')} disabled={uploading} class="input" />
         </div>
-        <div class="form-field flex-grow">
+        <div class="form-field">
           <label class="field-label" for="fw-notes">{$t('firmware.notes')}</label>
           <input id="fw-notes" type="text" bind:value={uploadNotes} placeholder={$t('firmware.notes_placeholder')} disabled={uploading} class="input" />
+        </div>
+        <div class="form-field">
+          <label class="field-label" for="fw-board">{$t('firmware.board_type')}</label>
+          <select id="fw-board" bind:value={uploadBoardType} disabled={uploading} class="input">
+            <option value="">{$t('firmware.universal')}</option>
+            {#each boardTypes as bt}
+              <option value={bt}>{bt}</option>
+            {/each}
+          </select>
         </div>
         <div class="form-field form-action">
           <Button variant="primary" icon="upload" on:click={handleUpload} loading={uploading}
@@ -291,6 +322,7 @@
             <thead>
               <tr>
                 <th>{$t('firmware.col_version')}</th>
+                <th>{$t('firmware.board_type')}</th>
                 <th>{$t('firmware.col_size')}</th>
                 <th>{$t('firmware.col_checksum')}</th>
                 <th>{$t('firmware.col_notes')}</th>
@@ -302,6 +334,13 @@
               {#each firmwares as fw}
                 <tr>
                   <td class="fw-version">{fw.version}</td>
+                  <td>
+                    {#if fw.board_type}
+                      <Badge variant="info" size="sm">{fw.board_type}</Badge>
+                    {:else}
+                      <span class="text-muted">{$t('firmware.universal')}</span>
+                    {/if}
+                  </td>
                   <td>{formatBytes(fw.size_bytes)}</td>
                   <td class="font-mono">{shortChecksum(fw.checksum)}</td>
                   <td class="notes-cell">{fw.notes || '—'}</td>
@@ -439,11 +478,26 @@
           </label>
         </div>
 
+        {#if deployFirmware?.board_type}
+          <div class="board-info">
+            <Icon name="cpu" size={14} />
+            <span>{$t('firmware.board_type')}: <strong>{deployFirmware.board_type}</strong></span>
+            {#if incompatibleCount > 0}
+              <Badge variant="warning" size="sm">{compatibleDevices.length} / {devices.length} {$t('firmware.compatible')}</Badge>
+            {/if}
+          </div>
+        {:else}
+          <div class="board-info board-universal">
+            <Icon name="info" size={14} />
+            <span>{$t('firmware.universal_hint')}</span>
+          </div>
+        {/if}
+
         {#if deployMode === 'single'}
           <div class="field">
-            <label class="field-label" for="deploy-device">Device</label>
+            <label class="field-label" for="deploy-device">{$t('common.device')}</label>
             <select id="deploy-device" bind:value={deployDeviceId} class="input">
-              {#each devices as d}
+              {#each compatibleDevices as d}
                 <option value={d.mqtt_device_id}>{d.name || d.mqtt_device_id} ({d.mqtt_device_id})</option>
               {/each}
             </select>
@@ -453,13 +507,18 @@
             <span class="field-label" id="device-select-label">{$t('firmware.select_devices')}</span>
             <div class="checklist-inner" role="group" aria-labelledby="device-select-label">
               {#each devices as d}
-                <label class="device-check">
+                {@const compatible = isDeviceCompatible(d, deployFirmware)}
+                <label class="device-check" class:incompatible={!compatible}>
                   <input type="checkbox" checked={selectedDevices.has(d.mqtt_device_id)}
-                    on:change={() => toggleDevice(d.mqtt_device_id)} />
+                    on:change={() => toggleDevice(d.mqtt_device_id)}
+                    disabled={!compatible} />
                   <span>{d.name || d.mqtt_device_id}</span>
                   <span class="font-mono text-muted">({d.mqtt_device_id})</span>
                   {#if d.firmware_version}
                     <Badge variant="neutral" size="sm">v{d.firmware_version}</Badge>
+                  {/if}
+                  {#if d.model && !compatible}
+                    <Badge variant="danger" size="sm">{d.model}</Badge>
                   {/if}
                 </label>
               {/each}
@@ -542,11 +601,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-  }
-
-  .form-field.flex-grow {
-    flex: 1;
-    min-width: 150px;
   }
 
   .form-action {
@@ -753,6 +807,29 @@
     gap: var(--space-3);
   }
 
+  .board-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent);
+  }
+
+  .board-info.board-universal {
+    background: color-mix(in srgb, var(--accent-yellow) 8%, transparent);
+    border-color: color-mix(in srgb, var(--accent-yellow) 20%, transparent);
+    color: var(--text-muted);
+  }
+
+  .device-check.incompatible {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   .deploy-error {
     display: flex;
     align-items: center;
@@ -776,10 +853,6 @@
   @media (max-width: 640px) {
     .upload-form {
       flex-direction: column;
-    }
-
-    .form-field.flex-grow {
-      min-width: auto;
     }
   }
 </style>

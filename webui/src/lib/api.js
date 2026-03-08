@@ -445,11 +445,12 @@ export function getFirmwares() {
   return request('/firmware');
 }
 
-export async function uploadFirmware(file, version, notes) {
+export async function uploadFirmware(file, version, notes, boardType) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('version', version);
   if (notes) formData.append('notes', notes);
+  if (boardType) formData.append('board_type', boardType);
 
   const headers = {};
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;

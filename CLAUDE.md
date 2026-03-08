@@ -324,13 +324,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7c: Frontend RBAC** — завершено
+**Фаза 7 (RBAC + Scalability) — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-006) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-007) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -344,6 +344,7 @@ git push origin main
 | Per-Device RBAC (Phase 7a) | ✅ device-access middleware, all routes protected, WS per-device check, users device management, grant-all-devices script |
 | Backend Scalability (Phase 7b) | ✅ DB pool 30, batch state writer, heartbeat dedup, event batching, telemetry retention, query limit, WS backpressure, StateMap monitoring |
 | Frontend RBAC (Phase 7c) | ✅ isAdmin/canWrite stores, conditional UI, route guards, device assignment modal, i18n |
+| OTA Board Compatibility (Phase 7d) | ✅ migration 007, board_type on upload/deploy, board validation, Firmware WebUI board awareness |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | 🔄 В процесі |
 
@@ -375,3 +376,4 @@ git push origin main
 - 2026-03-08 — Phase 7a: Per-Device RBAC — device-access.js middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users device management (GET/PUT bulk), grant-all-devices.js migration script, migration 006.
 - 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout 30s, batch state writer (N→1 multi-row UPDATE), heartbeat write dedup (_lastFw), event INSERT batching (1s flush), cleanup-telemetry.js (90-day partition retention), telemetry LIMIT 10000 + X-Truncated, WS backpressure (64KB), StateMap monitoring (60s stats).
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), admin-only route guards (wrap from svelte-spa-router), device assignment modal on Users page (search, select all/none, checklist, bulk PUT), i18n keys (uk+en).
+- 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal, incompatible devices disabled).

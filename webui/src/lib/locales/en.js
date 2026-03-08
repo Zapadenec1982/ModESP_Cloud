@@ -314,6 +314,10 @@ export default {
     rollout_paused: 'Rollout paused',
     rollout_resumed: 'Rollout resumed',
     rollout_cancelled: 'Rollout cancelled',
+    board_type: 'Board',
+    universal: 'Universal',
+    universal_hint: 'Universal firmware — compatible with all board types',
+    compatible: 'compatible',
   },
 
   // ── Users ──

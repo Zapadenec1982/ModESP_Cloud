@@ -42,7 +42,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       });
     }
 
-    const { version, notes } = req.body || {};
+    const { version, notes, board_type } = req.body || {};
 
     if (!version || !version.trim()) {
       return res.status(400).json({
@@ -77,10 +77,11 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
     fs.writeFileSync(filePath, req.file.buffer);
 
     // Insert DB record
+    const boardType = board_type?.trim() || null;
     const result = await db.query(
-      `INSERT INTO firmwares (tenant_id, version, filename, original_name, size_bytes, checksum, notes, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, version, filename, original_name, size_bytes, checksum, notes, created_at`,
+      `INSERT INTO firmwares (tenant_id, version, filename, original_name, size_bytes, checksum, notes, uploaded_by, board_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, version, filename, original_name, size_bytes, checksum, notes, board_type, created_at`,
       [
         req.tenantId,
         version.trim(),
@@ -90,6 +91,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
         checksum,
         notes || null,
         req.userId || null,
+        boardType,
       ]
     );
 
@@ -118,7 +120,7 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT id, version, filename, original_name, size_bytes, checksum, notes, created_at
+      `SELECT id, version, filename, original_name, size_bytes, checksum, notes, board_type, created_at
        FROM firmwares
        WHERE tenant_id = $1
        ORDER BY created_at DESC`,
@@ -134,7 +136,7 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const result = await db.query(
-      `SELECT id, version, filename, original_name, size_bytes, checksum, notes, created_at
+      `SELECT id, version, filename, original_name, size_bytes, checksum, notes, board_type, created_at
        FROM firmwares
        WHERE tenant_id = $1 AND id = $2`,
       [req.tenantId, req.params.id]

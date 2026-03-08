@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 7c: Frontend RBAC — реалізовано**
+**Фаза 7d: OTA Board Compatibility — реалізовано**
 
 ---
 
@@ -169,12 +169,13 @@
 - [x] Device Assignment UI: checklist modal на Users page (search, select all/none, bulk PUT)
 - [x] i18n: нові ключі для RBAC (uk.js + en.js)
 
-#### 7d: OTA Board Compatibility (заплановано)
-- [ ] Міграція 007: firmwares.board_type column
-- [ ] Firmware upload з board_type
-- [ ] OTA deploy: board validation (firmware.board_type vs device.model)
-- [ ] Rollout: фільтрація eligible devices по board
-- [ ] Firmware WebUI: board awareness, incompatible devices disabled
+#### 7d: OTA Board Compatibility ✅
+- [x] Міграція 007: firmwares.board_type column + index
+- [x] Firmware upload з board_type (optional, NULL = universal)
+- [x] OTA deploy: board validation (firmware.board_type vs device.model, 400 on mismatch)
+- [x] Rollout: фільтрація eligible devices по board (incompatible skipped)
+- [x] OTA command payload: includes board_type for device-side verification
+- [x] Firmware WebUI: board select on upload, board column in library, compatibility info in deploy modal, incompatible devices disabled
 
 **Результат:** Безпечна мультикористувацька система з per-device access control.
 
@@ -223,3 +224,4 @@
 - 2026-03-08 — Phase 7a: Per-Device RBAC (backend) — migration 006, device-access middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users GET/PUT devices (bulk), grant-all-devices.js migration script.
 - 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout, batch state writer (N→1 query), heartbeat write dedup, event INSERT batching (1s flush), cleanup-telemetry.js (90-day retention), telemetry LIMIT 10000, WS backpressure (64KB), StateMap monitoring (60s stats).
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), route guards (admin-only pages via svelte-spa-router wrap), device assignment modal on Users page (search, select all/none, bulk PUT), i18n keys (uk+en).
+- 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal).
