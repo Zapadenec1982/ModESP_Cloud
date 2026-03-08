@@ -223,6 +223,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    animation: fade-in 0.3s ease-out;
   }
 
   .grid {
@@ -230,6 +231,18 @@
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: var(--space-3);
   }
+
+  /* Stagger card entrance in grid */
+  .grid > :global(*) {
+    animation: slide-in-up 0.35s ease-out both;
+  }
+  .grid > :global(*:nth-child(1)) { animation-delay: 0ms; }
+  .grid > :global(*:nth-child(2)) { animation-delay: 50ms; }
+  .grid > :global(*:nth-child(3)) { animation-delay: 100ms; }
+  .grid > :global(*:nth-child(4)) { animation-delay: 150ms; }
+  .grid > :global(*:nth-child(5)) { animation-delay: 200ms; }
+  .grid > :global(*:nth-child(6)) { animation-delay: 250ms; }
+  .grid > :global(*:nth-child(n+7)) { animation-delay: 280ms; }
 
   .list-view {
     display: flex;
@@ -250,7 +263,9 @@
     color: var(--text-secondary);
     font-size: var(--text-sm);
     font-weight: 600;
-    padding: var(--space-2) 0;
+    padding: var(--space-3) 0 var(--space-1);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .group-count {
@@ -259,5 +274,6 @@
     font-size: var(--text-xs);
     padding: 1px 6px;
     border-radius: var(--radius-full);
+    font-weight: 600;
   }
 </style>

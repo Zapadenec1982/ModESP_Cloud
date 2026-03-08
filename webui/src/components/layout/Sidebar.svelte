@@ -128,8 +128,8 @@
     left: 0;
     bottom: 0;
     width: var(--sidebar-width);
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border-default);
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-muted);
     display: flex;
     flex-direction: column;
     z-index: 100;
@@ -242,7 +242,7 @@
   }
 
   .nav-item.active {
-    background: rgba(88, 166, 255, 0.1);
+    background: rgba(74, 158, 255, 0.08);
     color: var(--accent-blue);
     border-left-color: var(--accent-blue);
   }

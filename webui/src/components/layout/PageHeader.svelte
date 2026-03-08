@@ -22,19 +22,24 @@
     justify-content: space-between;
     gap: var(--space-4);
     margin-bottom: var(--space-5);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
+    animation: fade-in 0.25s ease-out;
   }
 
   .page-title {
-    font-size: var(--text-xl);
-    font-weight: 600;
+    font-size: var(--text-2xl);
+    font-weight: 700;
     color: var(--text-primary);
-    line-height: 1.3;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
   }
 
   .page-subtitle {
     font-size: var(--text-sm);
-    color: var(--text-secondary);
+    color: var(--text-muted);
     margin-top: var(--space-1);
+    letter-spacing: 0.02em;
   }
 
   .page-header-actions {

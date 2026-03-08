@@ -17,7 +17,7 @@
   }
 </script>
 
-<button class="card" class:alarm={hasAlarm} on:click={handleClick}>
+<button class="card" class:alarm={hasAlarm} class:online on:click={handleClick}>
   <div class="stripe {stripe}" />
 
   <div class="card-inner">
@@ -34,7 +34,7 @@
 
     <div class="card-body">
       <div class="temp-block">
-        <span class="temp-value" class:alarm={hasAlarm}>{temp}</span>
+        <span class="temp-value" class:temp-alarm={hasAlarm}>{temp}</span>
         <span class="temp-unit">°C</span>
       </div>
       <div class="meta">
@@ -64,33 +64,47 @@
     all: unset;
     cursor: pointer;
     position: relative;
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    background: var(--glass-bg);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
     display: flex;
     overflow: hidden;
-    transition: all var(--transition-fast);
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.25s ease,
+      transform 0.2s ease;
   }
 
   .card:hover {
-    border-color: var(--text-muted);
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-md), var(--shadow-glow-blue);
+    transform: translateY(-2px);
+  }
+
+  .card.online:hover {
+    box-shadow: var(--shadow-md), 0 0 20px rgba(52, 211, 153, 0.1);
   }
 
   .card.alarm {
-    border-color: rgba(248, 81, 73, 0.3);
+    border-color: rgba(239, 68, 68, 0.25);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.08);
+  }
+
+  .card.alarm:hover {
+    box-shadow: var(--shadow-md), var(--shadow-glow-red);
   }
 
   .stripe {
-    width: 4px;
+    width: 3px;
     flex-shrink: 0;
   }
 
-  .stripe.online { background: var(--accent-green); }
+  .stripe.online  { background: linear-gradient(180deg, var(--accent-green), var(--accent-cyan)); }
   .stripe.offline { background: var(--text-muted); }
-  .stripe.alarm { background: var(--accent-red); }
-  .stripe.pending { background: var(--accent-yellow); }
+  .stripe.alarm   { background: linear-gradient(180deg, var(--accent-red), var(--accent-orange)); }
+  .stripe.pending { background: linear-gradient(180deg, var(--accent-yellow), var(--accent-orange)); }
 
   .card-inner {
     flex: 1;
@@ -119,13 +133,13 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    background: rgba(248, 81, 73, 0.15);
+    background: rgba(239, 68, 68, 0.12);
     color: var(--accent-red);
     font-size: var(--text-xs);
     font-weight: 700;
     padding: 2px 8px;
     border-radius: var(--radius-full);
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     animation: pulse 2s ease-in-out infinite;
     flex-shrink: 0;
   }
@@ -148,9 +162,10 @@
     line-height: 1;
     color: var(--text-primary);
     font-family: var(--font-mono);
+    letter-spacing: -0.02em;
   }
 
-  .temp-value.alarm {
+  .temp-value.temp-alarm {
     color: var(--accent-red);
   }
 
@@ -171,14 +186,14 @@
     text-transform: uppercase;
     font-weight: 700;
     font-size: var(--text-xs);
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     padding: 1px 6px;
     border-radius: var(--radius-sm);
   }
 
   .status-tag.online {
     color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.1);
+    background: rgba(52, 211, 153, 0.1);
   }
   .status-tag.offline {
     color: var(--text-muted);
@@ -186,7 +201,7 @@
   }
   .status-tag.pending {
     color: var(--accent-yellow);
-    background: rgba(210, 153, 34, 0.1);
+    background: rgba(251, 191, 36, 0.1);
   }
 
   .last-seen {

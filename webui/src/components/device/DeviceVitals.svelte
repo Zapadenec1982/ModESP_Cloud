@@ -12,9 +12,11 @@
   $: defrostPhase = state['defrost.phase']
 </script>
 
-<div class="vitals">
-  <div class="vital">
-    <Icon name="thermometer" size={18} />
+<div class="vitals stagger-enter">
+  <div class="vital" class:alarm={state['protection.alarm_active']}>
+    <div class="vital-icon temp-icon">
+      <Icon name="thermometer" size={20} />
+    </div>
     <div class="vital-data">
       <span class="vital-value" class:alarm={state['protection.alarm_active']}>
         {temp != null ? temp.toFixed(1) : '--'}
@@ -22,10 +24,13 @@
       </span>
       <span class="vital-label">Temperature</span>
     </div>
+    <div class="vital-accent temp" />
   </div>
 
   <div class="vital">
-    <Icon name="settings" size={18} />
+    <div class="vital-icon setpoint-icon">
+      <Icon name="settings" size={20} />
+    </div>
     <div class="vital-data">
       <span class="vital-value">
         {setpoint != null ? setpoint.toFixed(1) : '--'}
@@ -33,10 +38,13 @@
       </span>
       <span class="vital-label">Setpoint</span>
     </div>
+    <div class="vital-accent setpoint" />
   </div>
 
   <div class="vital">
-    <Icon name="zap" size={18} />
+    <div class="vital-icon" class:compressor-on={compressorOn}>
+      <Icon name="zap" size={20} />
+    </div>
     <div class="vital-data">
       <span class="vital-value" class:on={compressorOn}>
         {compressorOn ? 'ON' : 'OFF'}
@@ -46,16 +54,20 @@
       </span>
       <span class="vital-label">Compressor</span>
     </div>
+    <div class="vital-accent" class:compressor-active={compressorOn} />
   </div>
 
   <div class="vital">
-    <Icon name="snowflake" size={18} />
+    <div class="vital-icon" class:defrost-on={defrostActive}>
+      <Icon name="snowflake" size={20} />
+    </div>
     <div class="vital-data">
       <span class="vital-value" class:on={defrostActive}>
         {defrostActive ? (defrostPhase || 'Active') : 'OFF'}
       </span>
       <span class="vital-label">Defrost</span>
     </div>
+    <div class="vital-accent" class:defrost-active={defrostActive} />
   </div>
 </div>
 
@@ -73,15 +85,57 @@
   }
 
   .vital {
+    position: relative;
     display: flex;
     align-items: center;
     gap: var(--space-3);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
     padding: var(--space-3) var(--space-4);
-    color: var(--text-muted);
+    overflow: hidden;
+    transition: border-color var(--transition-normal);
   }
+
+  .vital.alarm {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: var(--shadow-glow-red);
+  }
+
+  .vital-accent {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--border-muted);
+    opacity: 0.3;
+  }
+
+  .vital-accent.temp { background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue)); opacity: 0.5; }
+  .vital-accent.setpoint { background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); opacity: 0.4; }
+  .vital-accent.compressor-active { background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan)); opacity: 0.6; }
+  .vital-accent.defrost-active { background: linear-gradient(90deg, var(--accent-cyan), #fff); opacity: 0.5; }
+
+  .vital-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    transition: all var(--transition-fast);
+  }
+
+  .temp-icon     { color: var(--accent-cyan);  background: rgba(34, 211, 238, 0.1); }
+  .setpoint-icon { color: var(--accent-blue);  background: rgba(74, 158, 255, 0.1); }
+  .compressor-on { color: var(--accent-green); background: rgba(52, 211, 153, 0.12); }
+  .defrost-on    { color: var(--accent-cyan);  background: rgba(34, 211, 238, 0.12); }
 
   .vital-data {
     display: flex;
@@ -117,5 +171,8 @@
   .vital-label {
     font-size: var(--text-xs);
     color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
   }
 </style>
