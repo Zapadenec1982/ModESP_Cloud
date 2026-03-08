@@ -675,12 +675,26 @@ function sendJsonCommand(tenantSlug, deviceId, key, payload) {
   logger.info({ tenantSlug, deviceId, key }, 'JSON command sent (QoS 1)');
 }
 
+/**
+ * Request full state republish from device.
+ * ESP32 will clear its publish cache and resend all 48 keys within ~1s.
+ * @param {string} tenantSlug
+ * @param {string} deviceId
+ */
+function requestFullState(tenantSlug, deviceId) {
+  if (!client || !connected) return;
+  const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/_request_full_state`;
+  client.publish(topic, '1', { qos: 0 });
+  logger.info({ tenantSlug, deviceId }, 'Requested full state from device');
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, sendCommand, sendJsonCommand,
+  requestFullState,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

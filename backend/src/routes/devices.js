@@ -265,4 +265,58 @@ router.post('/:id/command', async (req, res, next) => {
   }
 });
 
+// ── POST /api/devices/:id/request-state ───────────────────
+// Ask device to republish all 48 state keys (clears ESP32 publish cache).
+router.post('/:id/request-state', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isUuid = id.length > 8;
+    const whereClause = isUuid
+      ? 'id = $1 AND tenant_id = $2'
+      : 'mqtt_device_id = $1 AND tenant_id = $2';
+
+    const { rows } = await db.query(
+      `SELECT mqtt_device_id, status FROM devices WHERE ${whereClause}`,
+      [id, req.tenantId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Device ${id} not found`,
+        status: 404,
+      });
+    }
+
+    const mqttId = rows[0].mqtt_device_id;
+    const deviceStatus = rows[0].status;
+
+    let tenantSlug;
+    if (deviceStatus === 'pending') {
+      tenantSlug = 'pending';
+    } else {
+      const tenantRes = await db.query(
+        `SELECT slug FROM tenants WHERE id = $1`,
+        [req.tenantId]
+      );
+      tenantSlug = tenantRes.rows[0]?.slug || 'pending';
+    }
+
+    mqttSvc.requestFullState(tenantSlug, mqttId);
+
+    res.json({
+      data: { device_id: mqttId, requested: true },
+    });
+  } catch (err) {
+    if (err.message === 'MQTT not connected') {
+      return res.status(503).json({
+        error: 'mqtt_unavailable',
+        message: 'MQTT broker is not connected',
+        status: 503,
+      });
+    }
+    next(err);
+  }
+});
+
 module.exports = router;

@@ -157,7 +157,17 @@ async function subscribe(ws, deviceId) {
     meta: meta || { online: false },
   });
 
-  logger.debug({ deviceId, clients: subscriptions.get(deviceId).size }, 'WS subscribe');
+  // If device is online but live stateMap has few keys (missed initial dump),
+  // request full state republish from device
+  const liveKeyCount = liveState
+    ? Object.keys(liveState).filter(k => !k.startsWith('_')).length
+    : 0;
+  if (meta && meta.online && liveKeyCount < 10) {
+    const tenantSlug = liveState?._tenantSlug || 'pending';
+    mqttSvc.requestFullState(tenantSlug, deviceId);
+  }
+
+  logger.debug({ deviceId, clients: subscriptions.get(deviceId).size, liveKeyCount }, 'WS subscribe');
 }
 
 function unsubscribe(ws, deviceId) {
