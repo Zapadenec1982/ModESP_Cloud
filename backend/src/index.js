@@ -86,6 +86,14 @@ if (!AUTH_ENABLED) {
   app.use('/api/ota',      require('./routes/ota'));
 }
 
+// ── Serve WebUI static files (production) ─────────────────
+const webUiDist = path.join(__dirname, '../../webui/dist');
+app.use(express.static(webUiDist));
+// SPA fallback: non-API routes → index.html
+app.get(/^\/(?!api|ws|firmware).*/, (_req, res) => {
+  res.sendFile(path.join(webUiDist, 'index.html'));
+});
+
 // ── Global error handler ──────────────────────────────────
 app.use((err, _req, res, _next) => {
   logger.error({ err }, 'Unhandled Express error');
