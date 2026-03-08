@@ -1,368 +1,545 @@
 <script>
-  import { onMount } from 'svelte';
-  import { getUsers, createUser, updateUser, deleteUser } from '../lib/api.js';
+  import { onMount } from 'svelte'
+  import { getUsers, createUser, updateUser, deleteUser } from '../lib/api.js'
+  import { timeAgo } from '../lib/format.js'
+  import PageHeader from '../components/layout/PageHeader.svelte'
+  import Button from '../components/ui/Button.svelte'
+  import Badge from '../components/ui/Badge.svelte'
+  import Icon from '../components/ui/Icon.svelte'
+  import StatusDot from '../components/ui/StatusDot.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+  import EmptyState from '../components/ui/EmptyState.svelte'
+  import { toast } from '../lib/toast.js'
 
-  let users = [];
-  let loading = true;
-  let error = '';
+  let users = []
+  let loading = true
+  let error = null
 
-  // Create form
-  let showCreate = false;
-  let newEmail = '';
-  let newPassword = '';
-  let newRole = 'viewer';
-  let createError = '';
-  let creating = false;
+  // Create modal
+  let showCreate = false
+  let newEmail = ''
+  let newPassword = ''
+  let newRole = 'viewer'
+  let creating = false
 
   // Edit state
-  let editId = null;
-  let editRole = '';
-  let saving = false;
+  let editId = null
+  let editRole = ''
+  let saving = false
 
-  onMount(loadUsers);
+  function roleVariant(role) {
+    if (role === 'admin') return 'warning'
+    if (role === 'technician') return 'info'
+    return 'success'
+  }
 
   async function loadUsers() {
-    loading = true;
-    error = '';
     try {
-      users = await getUsers();
+      users = await getUsers()
+      error = null
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
   }
 
   async function handleCreate() {
-    createError = '';
-    creating = true;
+    if (!newEmail.trim() || !newPassword) {
+      toast.warning('Email and password are required')
+      return
+    }
+    creating = true
     try {
-      await createUser({ email: newEmail, password: newPassword, role: newRole });
-      showCreate = false;
-      newEmail = '';
-      newPassword = '';
-      newRole = 'viewer';
-      await loadUsers();
+      await createUser({ email: newEmail.trim(), password: newPassword, role: newRole })
+      toast.success('User created')
+      showCreate = false
+      newEmail = ''
+      newPassword = ''
+      newRole = 'viewer'
+      await loadUsers()
     } catch (e) {
-      createError = e.message;
+      toast.error(e.message)
     } finally {
-      creating = false;
+      creating = false
     }
   }
 
   function startEdit(user) {
-    editId = user.id;
-    editRole = user.role;
+    editId = user.id
+    editRole = user.role
   }
 
   function cancelEdit() {
-    editId = null;
+    editId = null
   }
 
   async function saveEdit(userId) {
-    saving = true;
+    saving = true
     try {
-      await updateUser(userId, { role: editRole });
-      editId = null;
-      await loadUsers();
+      await updateUser(userId, { role: editRole })
+      toast.success('Role updated')
+      editId = null
+      await loadUsers()
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message)
     } finally {
-      saving = false;
+      saving = false
     }
   }
 
-  async function handleDelete(user) {
-    if (!confirm(`Deactivate ${user.email}?`)) return;
+  async function handleDeactivate(user) {
     try {
-      await deleteUser(user.id);
-      await loadUsers();
+      await deleteUser(user.id)
+      toast.success(`${user.email} deactivated`)
+      await loadUsers()
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message)
     }
   }
 
   async function handleReactivate(user) {
     try {
-      await updateUser(user.id, { active: true });
-      await loadUsers();
+      await updateUser(user.id, { active: true })
+      toast.success(`${user.email} reactivated`)
+      await loadUsers()
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message)
     }
   }
 
-  function formatDate(d) {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString();
+  function closeModal() {
+    showCreate = false
+    newEmail = ''
+    newPassword = ''
+    newRole = 'viewer'
   }
+
+  function handleBackdropClick(e) {
+    if (e.target === e.currentTarget) closeModal()
+  }
+
+  function handleBackdropKey(e) {
+    if (e.key === 'Escape') closeModal()
+  }
+
+  onMount(loadUsers)
 </script>
 
 <div class="users-page">
-  <div class="header">
-    <h2>Users</h2>
-    <button class="btn btn-primary" on:click={() => showCreate = !showCreate}>
-      {showCreate ? 'Cancel' : '+ New User'}
-    </button>
-  </div>
-
-  {#if showCreate}
-    <form class="create-form" on:submit|preventDefault={handleCreate}>
-      {#if createError}
-        <div class="error">{createError}</div>
-      {/if}
-      <div class="form-row">
-        <input type="email" bind:value={newEmail} placeholder="Email" required />
-        <input type="password" bind:value={newPassword} placeholder="Password (min 6)" required minlength="6" />
-        <select bind:value={newRole}>
-          <option value="viewer">Viewer</option>
-          <option value="technician">Technician</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button type="submit" class="btn btn-primary" disabled={creating}>
-          {creating ? 'Creating...' : 'Create'}
-        </button>
-      </div>
-    </form>
-  {/if}
+  <PageHeader title="Users" subtitle="Manage platform accounts and roles">
+    <Button variant="secondary" icon="refresh" on:click={loadUsers}>Refresh</Button>
+    <Button variant="primary" icon="plus" on:click={() => showCreate = true}>New User</Button>
+  </PageHeader>
 
   {#if loading}
-    <p class="muted">Loading...</p>
+    <Skeleton height="400px" />
   {:else if error}
-    <div class="error">{error}</div>
+    <EmptyState icon="x-circle" title="Failed to load" message={error} />
   {:else if users.length === 0}
-    <p class="muted">No users found.</p>
+    <EmptyState icon="users" title="No users" message="Create the first user account to get started" />
   {:else}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Email</th>
-          <th>Role</th>
-          <th>Active</th>
-          <th>Created</th>
-          <th>Last Login</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each users as user}
-          <tr class:inactive={!user.active}>
-            <td>{user.email}</td>
-            <td>
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="users" size={16} />
+        <span>Accounts</span>
+        <Badge variant="neutral" size="sm">{users.length}</Badge>
+      </div>
+
+      <!-- Desktop table header -->
+      <div class="user-table-header">
+        <span class="th th-email">User</span>
+        <span class="th th-role">Role</span>
+        <span class="th th-status">Status</span>
+        <span class="th th-created">Created</span>
+        <span class="th th-login">Last Login</span>
+        <span class="th th-actions">Actions</span>
+      </div>
+
+      <div class="user-list">
+        {#each users as user (user.id)}
+          <div class="user-row" class:inactive={!user.active}>
+            <!-- Email -->
+            <div class="cell cell-email">
+              <Icon name="user" size={14} />
+              <span class="user-email">{user.email}</span>
+            </div>
+
+            <!-- Role -->
+            <div class="cell cell-role">
               {#if editId === user.id}
-                <select bind:value={editRole}>
+                <select bind:value={editRole} class="input input-sm">
                   <option value="viewer">Viewer</option>
                   <option value="technician">Technician</option>
                   <option value="admin">Admin</option>
                 </select>
               {:else}
-                <span class="badge badge-{user.role}">{user.role}</span>
+                <Badge variant={roleVariant(user.role)} size="sm">{user.role}</Badge>
               {/if}
-            </td>
-            <td>
+            </div>
+
+            <!-- Status -->
+            <div class="cell cell-status">
               {#if user.active}
-                <span class="dot dot-green"></span> Yes
+                <StatusDot status="online" size="sm" />
+                <span class="status-text active">Active</span>
               {:else}
-                <span class="dot dot-red"></span> No
+                <StatusDot status="offline" size="sm" />
+                <span class="status-text">Inactive</span>
               {/if}
-            </td>
-            <td>{formatDate(user.created_at)}</td>
-            <td>{formatDate(user.last_login)}</td>
-            <td class="actions">
+            </div>
+
+            <!-- Created -->
+            <div class="cell cell-created">
+              <span class="text-muted">{timeAgo(user.created_at)}</span>
+            </div>
+
+            <!-- Last Login -->
+            <div class="cell cell-login">
+              <span class="text-muted">{user.last_login ? timeAgo(user.last_login) : '—'}</span>
+            </div>
+
+            <!-- Actions -->
+            <div class="cell cell-actions">
               {#if editId === user.id}
-                <button class="btn btn-sm btn-primary" on:click={() => saveEdit(user.id)} disabled={saving}>Save</button>
-                <button class="btn btn-sm" on:click={cancelEdit}>Cancel</button>
+                <Button variant="primary" size="sm" loading={saving} on:click={() => saveEdit(user.id)}>Save</Button>
+                <Button variant="secondary" size="sm" on:click={cancelEdit}>Cancel</Button>
               {:else}
-                <button class="btn btn-sm" on:click={() => startEdit(user)}>Edit</button>
+                <Button variant="secondary" size="sm" on:click={() => startEdit(user)}>
+                  <Icon name="edit" size={13} />
+                </Button>
                 {#if user.active}
-                  <button class="btn btn-sm btn-danger" on:click={() => handleDelete(user)}>Deactivate</button>
+                  <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)}>
+                    <Icon name="x-circle" size={13} />
+                  </Button>
                 {:else}
-                  <button class="btn btn-sm btn-success" on:click={() => handleReactivate(user)}>Reactivate</button>
+                  <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)}>
+                    <Icon name="check" size={13} />
+                  </Button>
                 {/if}
               {/if}
-            </td>
-          </tr>
+            </div>
+          </div>
         {/each}
-      </tbody>
-    </table>
+      </div>
+    </section>
   {/if}
 </div>
 
+<!-- Create User Modal -->
+{#if showCreate}
+  <div class="modal-backdrop" on:click={handleBackdropClick} on:keydown={handleBackdropKey} role="dialog" tabindex="-1">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Create User</h3>
+        <button class="modal-close" on:click={closeModal}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <form on:submit|preventDefault={handleCreate} class="modal-body">
+        <div class="form-field">
+          <label class="field-label">Email</label>
+          <input
+            type="email"
+            bind:value={newEmail}
+            placeholder="user@example.com"
+            class="input"
+            required
+          />
+        </div>
+        <div class="form-field">
+          <label class="field-label">Password</label>
+          <input
+            type="password"
+            bind:value={newPassword}
+            placeholder="Minimum 6 characters"
+            class="input"
+            required
+            minlength="6"
+          />
+        </div>
+        <div class="form-field">
+          <label class="field-label">Role</label>
+          <select bind:value={newRole} class="input">
+            <option value="viewer">Viewer</option>
+            <option value="technician">Technician</option>
+            <option value="admin">Admin</option>
+          </select>
+          <span class="field-hint">
+            {#if newRole === 'admin'}
+              Full access — manage users, devices, firmware
+            {:else if newRole === 'technician'}
+              Can view and control devices, manage alarms
+            {:else}
+              Read-only access to dashboards and reports
+            {/if}
+          </span>
+        </div>
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeModal}>Cancel</Button>
+          <Button variant="primary" type="submit" loading={creating} icon="plus">Create User</Button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
 <style>
   .users-page {
-    max-width: 900px;
-  }
-
-  .header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: var(--space-4);
+    flex-direction: column;
+    gap: var(--space-4);
+    animation: fade-in 0.3s ease-out;
   }
 
-  h2 {
-    font-size: var(--text-2xl);
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .create-form {
+  .section-card {
     background: var(--bg-surface);
-    padding: var(--space-4);
-    border-radius: var(--radius-md);
-    margin-bottom: var(--space-4);
     border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
   }
 
-  .form-row {
+  .section-header {
     display: flex;
-    gap: var(--space-2);
     align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .form-row input, .form-row select {
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
     font-size: var(--text-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
-  .form-row input::placeholder {
+  /* Table header */
+  .user-table-header {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .th {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+
+  .th-email   { flex: 2; min-width: 0; }
+  .th-role    { width: 100px; }
+  .th-status  { width: 90px; }
+  .th-created { width: 100px; }
+  .th-login   { width: 100px; }
+  .th-actions { width: 110px; text-align: right; }
+
+  /* User rows */
+  .user-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .user-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
+    transition: background var(--transition-fast);
+  }
+
+  .user-row:last-child {
+    border-bottom: none;
+  }
+
+  .user-row:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .user-row.inactive {
+    opacity: 0.45;
+  }
+
+  .user-row.inactive:hover {
+    opacity: 0.7;
+  }
+
+  .cell {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    min-width: 0;
+  }
+
+  .cell-email   { flex: 2; min-width: 0; }
+  .cell-role    { width: 100px; }
+  .cell-status  { width: 90px; }
+  .cell-created { width: 100px; }
+  .cell-login   { width: 100px; }
+  .cell-actions { width: 110px; justify-content: flex-end; gap: var(--space-1); }
+
+  .user-email {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .status-text {
+    font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
-  .form-row input:focus, .form-row select:focus {
+  .status-text.active {
+    color: var(--accent-green);
+  }
+
+  .text-muted {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
+
+  /* Input styles */
+  .input {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    transition: border-color var(--transition-fast);
+    width: 100%;
+  }
+
+  .input:focus {
     outline: none;
     border-color: var(--accent-blue);
   }
 
-  .form-row input { flex: 1; min-width: 140px; }
-
-  .error {
-    background: rgba(248, 81, 73, 0.1);
-    color: var(--accent-red);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm);
-    margin-bottom: var(--space-3);
-  }
-
-  .muted {
-    color: var(--text-secondary);
-  }
-
-  .table {
-    width: 100%;
-    background: var(--bg-surface);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    border: 1px solid var(--border-default);
-    border-collapse: collapse;
-  }
-
-  .table th {
-    text-align: left;
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-tertiary);
-    font-size: var(--text-xs);
-    font-weight: 600;
+  .input::placeholder {
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
   }
 
-  .table td {
-    padding: var(--space-2) var(--space-3);
-    border-top: 1px solid var(--border-muted);
-    font-size: var(--text-sm);
-    color: var(--text-primary);
-  }
-
-  .table td select {
+  .input-sm {
     padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    font-size: var(--text-sm);
-  }
-
-  .inactive td {
-    opacity: 0.4;
-  }
-
-  .badge {
-    display: inline-block;
-    padding: 0.15rem 0.5rem;
-    border-radius: var(--radius-sm);
     font-size: var(--text-xs);
-    font-weight: 600;
-    text-transform: uppercase;
+    width: auto;
   }
 
-  .badge-admin { background: rgba(210, 153, 34, 0.15); color: var(--accent-yellow); }
-  .badge-technician { background: rgba(88, 166, 255, 0.1); color: var(--accent-blue); }
-  .badge-viewer { background: rgba(63, 185, 80, 0.1); color: var(--accent-green); }
-
-  .dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 4px;
-  }
-
-  .dot-green { background: var(--accent-green); }
-  .dot-red { background: var(--accent-red); }
-
-  .actions {
-    white-space: nowrap;
-    display: flex;
-    gap: var(--space-1);
-  }
-
-  .btn {
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    font-size: var(--text-sm);
+  select.input {
     cursor: pointer;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    animation: fade-in 0.2s ease-out;
+  }
+
+  .modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 440px;
+    margin: var(--space-4);
+    animation: slide-in-up 0.25s ease-out;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
+  }
+
+  .modal-header h3 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    display: flex;
     transition: all var(--transition-fast);
   }
 
-  .btn:hover { background: var(--border-default); }
+  .modal-close:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+  }
 
-  .btn-sm {
-    padding: var(--space-1) var(--space-2);
+  .modal-body {
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .field-label {
     font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.03em;
   }
 
-  .btn-primary {
-    background: var(--accent-blue);
-    color: var(--text-inverse);
-    border-color: var(--accent-blue);
+  .field-hint {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: 2px;
   }
 
-  .btn-primary:hover { background: #4a9aef; }
-  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .btn-danger {
-    color: var(--accent-red);
-    border-color: rgba(248, 81, 73, 0.3);
-    background: rgba(248, 81, 73, 0.06);
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-muted);
   }
 
-  .btn-danger:hover { background: rgba(248, 81, 73, 0.15); }
+  /* Mobile */
+  @media (max-width: 768px) {
+    .user-table-header {
+      display: none;
+    }
 
-  .btn-success {
-    color: var(--accent-green);
-    border-color: rgba(63, 185, 80, 0.3);
-    background: rgba(63, 185, 80, 0.06);
+    .user-row {
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .cell-email { flex: 1 1 100%; }
+    .cell-role { width: auto; }
+    .cell-status { width: auto; }
+    .cell-created { display: none; }
+    .cell-login { display: none; }
+    .cell-actions { width: auto; margin-left: auto; }
   }
-
-  .btn-success:hover { background: rgba(63, 185, 80, 0.15); }
 </style>

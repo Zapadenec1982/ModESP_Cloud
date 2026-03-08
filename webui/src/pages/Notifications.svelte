@@ -1,300 +1,317 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount } from 'svelte'
   import {
     getSubscribers,
     createSubscriber,
     deleteSubscriber,
     testNotification,
     getNotificationLog,
-  } from '../lib/api.js';
+  } from '../lib/api.js'
+  import { timeAgo } from '../lib/format.js'
+  import PageHeader from '../components/layout/PageHeader.svelte'
+  import Button from '../components/ui/Button.svelte'
+  import Badge from '../components/ui/Badge.svelte'
+  import Icon from '../components/ui/Icon.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+  import EmptyState from '../components/ui/EmptyState.svelte'
+  import { toast } from '../lib/toast.js'
 
-  let subscribers = [];
-  let log = [];
-  let loading = true;
-  let error = null;
+  let subscribers = []
+  let log = []
+  let loading = true
+  let error = null
 
   // Add form
-  let newChannel = 'telegram';
-  let newAddress = '';
-  let newLabel = '';
-  let addStatus = '';
+  let newChannel = 'telegram'
+  let newAddress = ''
+  let newLabel = ''
+  let adding = false
 
   // Test status per subscriber
-  let testStatuses = {};
+  let testingIds = new Set()
 
   async function load() {
     try {
       const [subs, entries] = await Promise.all([
         getSubscribers(),
         getNotificationLog({ limit: 50 }),
-      ]);
-      subscribers = subs;
-      log = entries;
-      error = null;
+      ])
+      subscribers = subs
+      log = entries
+      error = null
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
   }
 
   async function handleAdd() {
     if (!newAddress.trim()) {
-      addStatus = 'Address is required';
-      return;
+      toast.warning('Address is required')
+      return
     }
-    addStatus = 'Adding...';
+    adding = true
     try {
       await createSubscriber({
         channel: newChannel,
         address: newAddress.trim(),
         label: newLabel.trim() || undefined,
-      });
-      newAddress = '';
-      newLabel = '';
-      addStatus = '';
-      await load();
+      })
+      toast.success('Subscriber added')
+      newAddress = ''
+      newLabel = ''
+      await load()
     } catch (e) {
-      addStatus = `Error: ${e.message}`;
+      toast.error(e.message)
+    } finally {
+      adding = false
     }
   }
 
-  async function handleDelete(id) {
+  async function handleDelete(sub) {
     try {
-      await deleteSubscriber(id);
-      await load();
+      await deleteSubscriber(sub.id)
+      toast.success('Subscriber removed')
+      await load()
     } catch (e) {
-      error = e.message;
+      toast.error(e.message)
     }
   }
 
-  async function handleTest(id) {
-    testStatuses[id] = 'Sending...';
-    testStatuses = testStatuses;
+  async function handleTest(sub) {
+    testingIds.add(sub.id)
+    testingIds = testingIds
     try {
-      const result = await testNotification(id);
-      testStatuses[id] = result.status === 'sent' ? 'Sent!' : `Failed: ${result.error}`;
+      const result = await testNotification(sub.id)
+      if (result.status === 'sent') {
+        toast.success(`Test sent to ${sub.label || sub.address}`)
+      } else {
+        toast.error(`Test failed: ${result.error}`)
+      }
     } catch (e) {
-      testStatuses[id] = `Error: ${e.message}`;
+      toast.error(e.message)
+    } finally {
+      testingIds.delete(sub.id)
+      testingIds = testingIds
     }
-    testStatuses = testStatuses;
-    setTimeout(() => {
-      delete testStatuses[id];
-      testStatuses = testStatuses;
-    }, 3000);
   }
 
-  function channelIcon(ch) {
-    return ch === 'telegram' ? '\u{1F4AC}' : '\u{1F514}';
+  function statusVariant(status) {
+    if (status === 'sent') return 'success'
+    if (status === 'failed') return 'danger'
+    return 'neutral'
   }
 
-  function statusBadgeClass(status) {
-    if (status === 'sent') return 'badge-sent';
-    if (status === 'failed') return 'badge-failed';
-    return 'badge-skipped';
-  }
-
-  function timeAgo(dateStr) {
-    if (!dateStr) return '';
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
-
-  onMount(load);
+  onMount(load)
 </script>
 
-<div class="notifications">
-  <div class="header">
-    <h1>Notifications</h1>
-    <button class="btn-refresh" on:click={load}>Refresh</button>
-  </div>
+<div class="notif-page">
+  <PageHeader title="Notifications" subtitle="Manage push notification subscribers and delivery">
+    <Button variant="secondary" icon="refresh" on:click={load}>Refresh</Button>
+  </PageHeader>
 
   {#if loading}
-    <p class="status-msg">Loading...</p>
+    <Skeleton height="120px" />
+    <Skeleton height="200px" />
+    <Skeleton height="300px" />
   {:else if error}
-    <p class="status-msg error">{error}</p>
+    <EmptyState icon="x-circle" title="Failed to load" message={error} />
   {:else}
-    <!-- Add subscriber form -->
-    <div class="card">
-      <h3>Add Subscriber</h3>
+    <!-- Add Subscriber -->
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="plus" size={16} />
+        <span>Add Subscriber</span>
+      </div>
       <form on:submit|preventDefault={handleAdd} class="add-form">
-        <select bind:value={newChannel} class="input">
-          <option value="telegram">Telegram</option>
-          <option value="fcm">FCM</option>
-        </select>
-        <input
-          type="text"
-          bind:value={newAddress}
-          placeholder={newChannel === 'telegram' ? 'Chat ID' : 'FCM Token'}
-          class="input input-addr"
-        />
-        <input
-          type="text"
-          bind:value={newLabel}
-          placeholder="Label (optional)"
-          class="input"
-        />
-        <button type="submit" class="btn btn-primary">Add</button>
-        {#if addStatus}
-          <span class="form-status">{addStatus}</span>
-        {/if}
+        <div class="form-field">
+          <label class="field-label">Channel</label>
+          <select bind:value={newChannel} class="input">
+            <option value="telegram">Telegram</option>
+            <option value="fcm">FCM</option>
+          </select>
+        </div>
+        <div class="form-field flex-grow">
+          <label class="field-label">Address</label>
+          <input
+            type="text"
+            bind:value={newAddress}
+            placeholder={newChannel === 'telegram' ? 'Chat ID' : 'FCM Token'}
+            class="input"
+          />
+        </div>
+        <div class="form-field">
+          <label class="field-label">Label</label>
+          <input type="text" bind:value={newLabel} placeholder="Optional" class="input" />
+        </div>
+        <div class="form-field form-action">
+          <Button variant="primary" type="submit" loading={adding} icon="plus">Add</Button>
+        </div>
       </form>
-    </div>
+    </section>
 
-    <!-- Subscribers table -->
-    <div class="card">
-      <h3>Subscribers ({subscribers.length})</h3>
+    <!-- Subscribers -->
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="bell" size={16} />
+        <span>Subscribers</span>
+        <Badge variant="neutral" size="sm">{subscribers.length}</Badge>
+      </div>
+
       {#if subscribers.length === 0}
-        <p class="status-msg">No subscribers yet. Add one above or use /start in Telegram bot.</p>
+        <EmptyState
+          icon="bell"
+          title="No subscribers"
+          message="Add a subscriber above or use /start in the Telegram bot"
+        />
       {:else}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Channel</th>
-                <th>Address</th>
-                <th>Label</th>
-                <th>Since</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each subscribers as sub (sub.id)}
-                <tr>
-                  <td>
-                    <span class="channel-badge" class:telegram={sub.channel === 'telegram'} class:fcm={sub.channel === 'fcm'}>
-                      {channelIcon(sub.channel)} {sub.channel}
-                    </span>
-                  </td>
-                  <td class="mono">{sub.address}</td>
-                  <td>{sub.label || '—'}</td>
-                  <td>{timeAgo(sub.created_at)}</td>
-                  <td class="actions">
-                    <button class="btn btn-sm" on:click={() => handleTest(sub.id)}>Test</button>
-                    <button class="btn btn-sm btn-danger" on:click={() => handleDelete(sub.id)}>Delete</button>
-                    {#if testStatuses[sub.id]}
-                      <span class="test-status">{testStatuses[sub.id]}</span>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        <div class="sub-list">
+          {#each subscribers as sub (sub.id)}
+            <div class="sub-row">
+              <div class="sub-channel">
+                <Badge variant={sub.channel === 'telegram' ? 'info' : 'warning'} size="sm">
+                  {sub.channel}
+                </Badge>
+              </div>
+              <div class="sub-info">
+                <span class="sub-address font-mono">{sub.address}</span>
+                {#if sub.label}
+                  <span class="sub-label">{sub.label}</span>
+                {/if}
+              </div>
+              <span class="sub-since">{timeAgo(sub.created_at)}</span>
+              <div class="sub-actions">
+                <Button
+                  variant="secondary" size="sm"
+                  loading={testingIds.has(sub.id)}
+                  on:click={() => handleTest(sub)}
+                >Test</Button>
+                <Button variant="danger" size="sm" on:click={() => handleDelete(sub)}>
+                  <Icon name="trash" size={13} />
+                </Button>
+              </div>
+            </div>
+          {/each}
         </div>
       {/if}
-    </div>
+    </section>
 
-    <!-- Delivery log -->
-    <div class="card">
-      <h3>Delivery Log</h3>
+    <!-- Delivery Log -->
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="activity" size={16} />
+        <span>Delivery Log</span>
+      </div>
+
       {#if log.length === 0}
-        <p class="status-msg">No notifications sent yet.</p>
+        <EmptyState icon="clock" title="No notifications sent" message="Delivery history will appear here" />
       {:else}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Channel</th>
-                <th>Device</th>
-                <th>Alarm</th>
-                <th>Status</th>
-                <th>Subscriber</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each log as entry (entry.id)}
-                <tr>
-                  <td>{timeAgo(entry.created_at)}</td>
-                  <td>{channelIcon(entry.channel)} {entry.channel}</td>
-                  <td class="mono">{entry.device_id || '—'}</td>
-                  <td>{entry.alarm_code || '—'}</td>
-                  <td>
-                    <span class="status-badge {statusBadgeClass(entry.status)}">{entry.status}</span>
-                    {#if entry.error_message}
-                      <span class="error-hint" title={entry.error_message}>!</span>
-                    {/if}
-                  </td>
-                  <td>{entry.subscriber_label || entry.subscriber_address || '—'}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        <div class="log-table">
+          <div class="log-header">
+            <span class="th">Time</span>
+            <span class="th">Channel</span>
+            <span class="th">Device</span>
+            <span class="th">Alarm</span>
+            <span class="th">Status</span>
+            <span class="th">Subscriber</span>
+          </div>
+          {#each log as entry (entry.id)}
+            <div class="log-row">
+              <span class="td text-muted">{timeAgo(entry.created_at)}</span>
+              <span class="td">
+                <Badge variant={entry.channel === 'telegram' ? 'info' : 'warning'} size="sm">
+                  {entry.channel}
+                </Badge>
+              </span>
+              <span class="td font-mono">{entry.device_id || '—'}</span>
+              <span class="td">{entry.alarm_code || '—'}</span>
+              <span class="td">
+                <Badge variant={statusVariant(entry.status)} size="sm">{entry.status}</Badge>
+                {#if entry.error_message}
+                  <span class="error-indicator" title={entry.error_message}>
+                    <Icon name="info" size={12} />
+                  </span>
+                {/if}
+              </span>
+              <span class="td text-muted">{entry.subscriber_label || entry.subscriber_address || '—'}</span>
+            </div>
+          {/each}
         </div>
       {/if}
-    </div>
+    </section>
   {/if}
 </div>
 
 <style>
-  .notifications {
+  .notif-page {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    animation: fade-in 0.3s ease-out;
   }
 
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  h1 {
-    font-size: var(--text-2xl);
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .btn-refresh {
-    padding: var(--space-2) var(--space-4);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-  }
-
-  .btn-refresh:hover {
-    background: var(--border-default);
-  }
-
-  .card {
+  .section-card {
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-lg);
-    padding: var(--space-5);
+    overflow: hidden;
   }
 
-  .card h3 {
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
     font-size: var(--text-sm);
-    margin-bottom: var(--space-3);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
+  /* Add form */
   .add-form {
     display: flex;
-    gap: var(--space-2);
-    align-items: center;
+    gap: var(--space-3);
+    align-items: flex-end;
+    padding: var(--space-4);
     flex-wrap: wrap;
+  }
+
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .form-field.flex-grow {
+    flex: 1;
+    min-width: 160px;
+  }
+
+  .form-action {
+    padding-top: 18px;
+  }
+
+  .field-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.03em;
   }
 
   .input {
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     font-size: var(--text-sm);
     background: var(--bg-tertiary);
     color: var(--text-primary);
+    font-family: var(--font-sans);
+    transition: border-color var(--transition-fast);
   }
 
   .input:focus {
@@ -306,168 +323,136 @@
     color: var(--text-muted);
   }
 
-  .input-addr {
-    min-width: 160px;
-  }
-
   select.input {
     cursor: pointer;
   }
 
-  .btn {
-    padding: var(--space-2) var(--space-4);
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font-size: var(--text-sm);
-    font-weight: 600;
+  /* Subscribers list */
+  .sub-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sub-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border-muted);
     transition: background var(--transition-fast);
   }
 
-  .btn-primary {
-    background: var(--accent-blue);
-    color: var(--text-inverse);
+  .sub-row:last-child {
+    border-bottom: none;
   }
 
-  .btn-primary:hover {
-    background: #4a9aef;
-  }
-
-  .btn-sm {
-    padding: 0.25rem 0.6rem;
-    font-size: var(--text-xs);
+  .sub-row:hover {
     background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
   }
 
-  .btn-sm:hover {
-    background: var(--border-default);
+  .sub-channel {
+    flex-shrink: 0;
+    min-width: 80px;
   }
 
-  .btn-danger {
-    background: rgba(248, 81, 73, 0.1);
-    color: var(--accent-red);
-    border: 1px solid rgba(248, 81, 73, 0.3);
+  .sub-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
 
-  .btn-danger:hover {
-    background: rgba(248, 81, 73, 0.2);
-  }
-
-  .form-status {
+  .sub-address {
     font-size: var(--text-sm);
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .table-wrap {
+  .sub-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .sub-since {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .sub-actions {
+    display: flex;
+    gap: var(--space-1);
+    flex-shrink: 0;
+  }
+
+  /* Log table */
+  .log-table {
     overflow-x: auto;
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-sm);
+  .log-header {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--border-default);
   }
 
-  th {
-    text-align: left;
-    padding: var(--space-2) var(--space-3);
-    border-bottom: 2px solid var(--border-default);
-    color: var(--text-muted);
-    font-weight: 600;
+  .th {
+    flex: 1;
     font-size: var(--text-xs);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
+    font-weight: 600;
   }
 
-  td {
-    padding: var(--space-2) var(--space-3);
+  .log-row {
+    display: flex;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border-muted);
-    color: var(--text-primary);
+    align-items: center;
   }
 
-  .mono {
+  .log-row:last-child {
+    border-bottom: none;
+  }
+
+  .td {
+    flex: 1;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .text-muted {
+    color: var(--text-muted);
+  }
+
+  .font-mono {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
   }
 
-  .channel-badge {
-    padding: 0.15rem 0.5rem;
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    font-weight: 600;
-  }
-
-  .channel-badge.telegram {
-    background: rgba(88, 166, 255, 0.1);
-    color: var(--accent-blue);
-  }
-
-  .channel-badge.fcm {
-    background: rgba(219, 109, 40, 0.1);
-    color: var(--accent-orange);
-  }
-
-  .status-badge {
-    padding: 0.1rem 0.45rem;
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  .badge-sent {
-    background: rgba(63, 185, 80, 0.1);
-    color: var(--accent-green);
-  }
-
-  .badge-failed {
-    background: rgba(248, 81, 73, 0.1);
+  .error-indicator {
     color: var(--accent-red);
-  }
-
-  .badge-skipped {
-    background: var(--bg-tertiary);
-    color: var(--text-muted);
-  }
-
-  .error-hint {
-    display: inline-block;
-    width: 18px;
-    height: 18px;
-    line-height: 18px;
-    text-align: center;
-    background: rgba(248, 81, 73, 0.15);
-    color: var(--accent-red);
-    border-radius: 50%;
-    font-size: 0.7rem;
-    font-weight: 700;
     cursor: help;
-    margin-left: 0.25rem;
-  }
-
-  .actions {
     display: flex;
-    gap: 0.35rem;
-    align-items: center;
-    flex-wrap: wrap;
   }
 
-  .test-status {
-    font-size: var(--text-xs);
-    color: var(--text-secondary);
-  }
-
-  .status-msg {
-    text-align: center;
-    color: var(--text-secondary);
-    padding: var(--space-5);
-    font-size: var(--text-base);
-  }
-
-  .status-msg.error {
-    color: var(--accent-red);
+  @media (max-width: 768px) {
+    .log-header { display: none; }
+    .log-row { flex-wrap: wrap; gap: var(--space-2); }
+    .add-form { flex-direction: column; }
+    .form-field.flex-grow { min-width: auto; }
   }
 </style>

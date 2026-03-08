@@ -1,262 +1,342 @@
 <script>
-  import { onMount } from 'svelte';
-  import { getPendingDevices, assignDevice } from '../lib/api.js';
+  import { onMount } from 'svelte'
+  import { getPendingDevices, assignDevice } from '../lib/api.js'
+  import { timeAgo } from '../lib/format.js'
+  import PageHeader from '../components/layout/PageHeader.svelte'
+  import Button from '../components/ui/Button.svelte'
+  import Badge from '../components/ui/Badge.svelte'
+  import StatusDot from '../components/ui/StatusDot.svelte'
+  import Icon from '../components/ui/Icon.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+  import EmptyState from '../components/ui/EmptyState.svelte'
+  import { toast } from '../lib/toast.js'
 
-  let devices = [];
-  let loading = true;
-  let error = null;
+  let devices = []
+  let loading = true
+  let error = null
 
-  // Assign form state
-  let assigningId = null;
-  let assignName = '';
-  let assignLocation = '';
-  let assignStatus = '';
+  // Assign modal state
+  let assigningDevice = null
+  let assignName = ''
+  let assignLocation = ''
+  let assigning = false
 
   async function load() {
     try {
-      devices = await getPendingDevices();
-      error = null;
+      devices = await getPendingDevices()
+      error = null
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
   }
 
-  function startAssign(mqttId) {
-    assigningId = mqttId;
-    assignName = '';
-    assignLocation = '';
-    assignStatus = '';
+  function openAssign(dev) {
+    assigningDevice = dev
+    assignName = ''
+    assignLocation = ''
   }
 
-  function cancelAssign() {
-    assigningId = null;
+  function closeAssign() {
+    assigningDevice = null
   }
 
   async function confirmAssign() {
-    assignStatus = 'Assigning...';
+    if (!assigningDevice) return
+    assigning = true
     try {
-      await assignDevice(assigningId, {
+      await assignDevice(assigningDevice.mqtt_device_id, {
         name: assignName || undefined,
         location: assignLocation || undefined,
-      });
-      assignStatus = 'Assigned!';
-      assigningId = null;
-      // Reload the list
-      await load();
+      })
+      toast.success(`Device ${assigningDevice.mqtt_device_id} assigned`)
+      assigningDevice = null
+      await load()
     } catch (e) {
-      assignStatus = `Error: ${e.message}`;
+      toast.error(e.message)
+    } finally {
+      assigning = false
     }
   }
 
-  function timeAgo(dateStr) {
-    if (!dateStr) return 'never';
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
-
-  onMount(load);
+  onMount(load)
 </script>
 
-<div class="pending">
-  <div class="header">
-    <h1>Pending Devices</h1>
-    <button class="btn-refresh" on:click={load}>Refresh</button>
-  </div>
+<div class="pending-page">
+  <PageHeader title="Pending Devices" subtitle="Unassigned devices waiting for tenant assignment">
+    <Button variant="secondary" icon="refresh" on:click={load}>Refresh</Button>
+  </PageHeader>
 
   {#if loading}
-    <p class="status-msg">Loading...</p>
+    <div class="skeleton-list">
+      {#each Array(3) as _}
+        <Skeleton height="80px" />
+      {/each}
+    </div>
   {:else if error}
-    <p class="status-msg error">{error}</p>
+    <EmptyState icon="x-circle" title="Failed to load" message={error} />
   {:else if devices.length === 0}
-    <p class="status-msg">No pending devices. New devices will appear here automatically.</p>
+    <EmptyState
+      icon="wifi"
+      title="No pending devices"
+      message="New devices will appear here automatically when they connect for the first time"
+    />
   {:else}
-    <div class="list">
+    <div class="device-list">
       {#each devices as dev (dev.id)}
         <div class="device-row">
-          <div class="row-info">
-            <div class="dot" class:online={dev.online}></div>
-            <span class="mqtt-id">{dev.mqtt_device_id}</span>
+          <div class="device-info">
+            <StatusDot status={dev.online ? 'online' : 'offline'} />
+            <span class="device-id">{dev.mqtt_device_id}</span>
             {#if dev.firmware_version}
-              <span class="fw">FW: {dev.firmware_version}</span>
+              <Badge variant="neutral" size="sm">FW: {dev.firmware_version}</Badge>
             {/if}
-            <span class="seen">{timeAgo(dev.last_seen)}</span>
+            <Badge variant={dev.online ? 'success' : 'neutral'} size="sm">
+              {dev.online ? 'Online' : 'Offline'}
+            </Badge>
           </div>
-
-          {#if assigningId === dev.mqtt_device_id}
-            <form on:submit|preventDefault={confirmAssign} class="assign-form">
-              <input type="text" bind:value={assignName} placeholder="Name (optional)" class="input" />
-              <input type="text" bind:value={assignLocation} placeholder="Location (optional)" class="input" />
-              <button type="submit" class="btn btn-primary">Assign</button>
-              <button type="button" class="btn btn-secondary" on:click={cancelAssign}>Cancel</button>
-              {#if assignStatus}
-                <span class="assign-status">{assignStatus}</span>
-              {/if}
-            </form>
-          {:else}
-            <button class="btn btn-primary" on:click={() => startAssign(dev.mqtt_device_id)}>
+          <div class="device-meta">
+            <span class="meta-item">
+              <Icon name="clock" size={12} />
+              {timeAgo(dev.last_seen)}
+            </span>
+          </div>
+          <div class="device-actions">
+            <Button variant="primary" size="sm" on:click={() => openAssign(dev)}>
               Assign to Tenant
-            </button>
-          {/if}
+            </Button>
+          </div>
         </div>
       {/each}
     </div>
   {/if}
 </div>
 
+<!-- Assign Modal -->
+{#if assigningDevice}
+  <div class="modal-backdrop" role="presentation" on:click={closeAssign} on:keydown={() => {}}>
+    <div class="modal" role="dialog" on:click|stopPropagation on:keydown={() => {}}>
+      <div class="modal-header">
+        <h3>Assign Device</h3>
+        <button class="close-btn" on:click={closeAssign}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="assign-device-info">
+          <StatusDot status={assigningDevice.online ? 'online' : 'offline'} />
+          <span class="device-id">{assigningDevice.mqtt_device_id}</span>
+          {#if assigningDevice.firmware_version}
+            <Badge variant="neutral" size="sm">v{assigningDevice.firmware_version}</Badge>
+          {/if}
+        </div>
+
+        <label class="field">
+          <span>Device Name</span>
+          <input type="text" bind:value={assignName} placeholder="e.g. Cold Room #1" />
+        </label>
+
+        <label class="field">
+          <span>Location</span>
+          <input type="text" bind:value={assignLocation} placeholder="e.g. Warehouse A" />
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <Button variant="secondary" on:click={closeAssign} disabled={assigning}>Cancel</Button>
+        <Button variant="primary" on:click={confirmAssign} loading={assigning}>Assign</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
-  .pending {
+  .pending-page {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    animation: fade-in 0.3s ease-out;
   }
 
-  .header {
+  .skeleton-list {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: var(--space-3);
   }
 
-  h1 {
-    font-size: var(--text-2xl);
-    font-weight: 700;
-    color: var(--text-primary);
-  }
-
-  .btn-refresh {
-    padding: var(--space-2) var(--space-4);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-  }
-
-  .btn-refresh:hover {
-    background: var(--border-default);
-  }
-
-  .list {
+  .device-list {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
   }
 
   .device-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     padding: var(--space-4);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
+    transition: border-color var(--transition-fast);
   }
 
-  .row-info {
+  .device-row:hover {
+    border-color: var(--text-muted);
+  }
+
+  .device-info {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-2);
+    flex: 1;
+    min-width: 0;
     flex-wrap: wrap;
   }
 
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--status-offline);
-  }
-
-  .dot.online {
-    background: var(--status-online);
-    box-shadow: 0 0 6px var(--status-online);
-  }
-
-  .mqtt-id {
+  .device-id {
     font-weight: 700;
     font-family: var(--font-mono);
     font-size: var(--text-base);
     color: var(--text-primary);
   }
 
-  .fw, .seen {
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-  }
-
-  .assign-form {
+  .device-meta {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--space-3);
+    flex-shrink: 0;
+  }
+
+  .meta-item {
+    display: flex;
     align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .input {
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    gap: 4px;
     font-size: var(--text-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: var(--accent-blue);
-  }
-
-  .input::placeholder {
     color: var(--text-muted);
   }
 
-  .btn {
-    padding: var(--space-2) var(--space-4);
-    border: none;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font-size: var(--text-sm);
-    font-weight: 600;
-    transition: background var(--transition-fast);
+  .device-actions {
+    flex-shrink: 0;
   }
 
-  .btn-primary {
-    background: var(--accent-blue);
-    color: var(--text-inverse);
+  /* Modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    animation: fade-in 0.15s ease-out;
   }
 
-  .btn-primary:hover {
-    background: #4a9aef;
-  }
-
-  .btn-secondary {
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
+  .modal {
+    background: var(--bg-secondary);
     border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    width: 90%;
+    max-width: 440px;
+    box-shadow: var(--shadow-lg);
+    animation: slide-in-up 0.2s ease-out;
   }
 
-  .btn-secondary:hover {
-    background: var(--border-default);
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-4) var(--space-5);
+    border-bottom: 1px solid var(--border-muted);
   }
 
-  .assign-status {
+  .modal-header h3 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+  }
+
+  .close-btn:hover {
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+  }
+
+  .modal-body {
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .assign-device-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .field span {
     font-size: var(--text-sm);
+    font-weight: 500;
     color: var(--text-secondary);
   }
 
-  .status-msg {
-    text-align: center;
-    color: var(--text-secondary);
-    padding: var(--space-6);
+  .field input {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    transition: border-color var(--transition-fast);
   }
 
-  .status-msg.error {
-    color: var(--accent-red);
+  .field input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--border-muted);
+  }
+
+  @media (max-width: 640px) {
+    .device-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-3);
+    }
+
+    .device-actions {
+      align-self: flex-end;
+    }
   }
 </style>
