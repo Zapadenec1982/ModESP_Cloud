@@ -204,21 +204,37 @@ modesp/v1/acme/{device}/... (нормальна робота)
 | API → DB | Prepared statements, параметризовані запити |
 | API → MQTT | Валідація команд через state_meta (type, range, writable) |
 | Між тенантами | tenant_id в кожному запиті + PostgreSQL RLS |
+| Per-device RBAC | `user_devices` таблиця, filterDeviceAccess/checkDeviceAccess middleware |
+| Ролі | admin (все), technician (assigned devices, write), viewer (assigned devices, read-only) |
 | Push | FCM server key зберігається тільки на сервері |
+| OTA | Board compatibility перевірка, SHA256 checksum, файли ≤4MB, .bin only |
 
 ---
 
 ## Масштабування
 
-**Поточна ціль:** до 1000 пристроїв на одному VPS (1 vCPU, 2GB RAM)
+**Поточна ціль:** до 5000 пристроїв на одному VPS (2 vCPU, 4GB RAM)
 
-**Вузькі місця при зростанні:**
+### Реалізовані оптимізації (Phase 7b)
+
+- **DB Connection Pool:** max=30 з'єднань, statement_timeout 30s
+- **Batch State Writer:** N окремих state updates → 1 multi-row UPDATE (debounced)
+- **Heartbeat Dedup:** запис в БД тільки при зміні firmware_version
+- **Event Batching:** буфер + flush кожну секунду (або при shutdown)
+- **Telemetry Retention:** автоматичне видалення партицій старших 90 днів (`cleanup-telemetry.js`)
+- **Query Limits:** telemetry LIMIT 10000 + заголовок `X-Truncated`
+- **WS Backpressure:** пропуск broadcast якщо `bufferedAmount > 64KB`
+- **StateMap Monitoring:** логування статистики кожні 60s
+
+### Вузькі місця при подальшому зростанні
+
 - Телеметрія: партиціонування PostgreSQL по місяцях → TimescaleDB при 10М+ рядків
 - WebSocket: Node.js cluster або Redis pub/sub при кількох процесах
 - Mosquitto: горизонтальне масштабування через bridge або EMQX при 10К+ пристроїв
-- State Map: ~50KB per device × 1000 = ~50MB (прийнятно для 2GB RAM)
+- State Map: ~50KB per device × 5000 = ~250MB (прийнятно для 4GB RAM)
 
-**Що не потребує змін при масштабуванні:**
+### Що не потребує змін при масштабуванні
+
 - MQTT topic structure (вже включає tenant_slug і версію)
 - Схема БД (tenant_id в кожній таблиці з першого дня)
 - REST API (stateless, масштабується горизонтально)
@@ -230,3 +246,4 @@ modesp/v1/acme/{device}/... (нормальна робота)
 
 - 2026-03-07 — Створено. Базова архітектура.
 - 2026-03-07 — Оновлено. Cloud adapter pattern, state aggregation, server-side telemetry sampling, auto-discovery flow, command translation.
+- 2026-03-08 — Оновлено. Phase 7: per-device RBAC (ролі, middleware), scalability оптимізації (batch writes, dedup, retention, backpressure), OTA board compatibility.

@@ -486,7 +486,7 @@ Bulk-заміна списку пристроїв користувача (вид
 Завантажити новий firmware binary (тільки admin).
 
 **Content-Type:** multipart/form-data
-**Fields:** `file` (.bin, ≤ 4MB), `version` (string), `notes` (optional)
+**Fields:** `file` (.bin, ≤ 4MB), `version` (string), `notes` (optional), `board_type` (optional — модель плати, наприклад "ModESP-4R"; якщо не вказано — firmware universal для всіх плат)
 
 **Response 201:**
 ```json
@@ -498,6 +498,7 @@ Bulk-заміна списку пристроїв користувача (вид
     "original_name": "modesp_v4_1.2.3.bin",
     "size_bytes": 1548288,
     "checksum": "sha256:a1b2c3d4...",
+    "board_type": "ModESP-4R",
     "notes": "Fix sensor calibration",
     "created_at": "2026-03-08T10:00:00Z"
   }
@@ -515,6 +516,8 @@ Bulk-заміна списку пристроїв користувача (вид
 
 **Ролі:** admin
 
+**Board Compatibility:** Якщо firmware має `board_type`, а пристрій має `model` — вони повинні збігатись. При невідповідності повертається 400.
+
 ```json
 { "firmware_id": "uuid", "device_id": "F27FCD" }
 ```
@@ -528,6 +531,15 @@ Bulk-заміна списку пристроїв користувача (вид
     "firmware_version": "1.2.3",
     "status": "sent"
   }
+}
+```
+
+**Response 400 (board mismatch):**
+```json
+{
+  "error": "board_mismatch",
+  "message": "Board mismatch: firmware targets \"ModESP-4R\", device is \"ModESP-2R\"",
+  "status": 400
 }
 ```
 
@@ -546,6 +558,8 @@ Bulk-заміна списку пристроїв користувача (вид
 }
 ```
 
+**Board Compatibility:** Якщо firmware має `board_type`, несумісні пристрої (device.model ≠ firmware.board_type) автоматично виключаються з rollout. Кількість виключених повертається в `skipped_incompatible`.
+
 **Response 201:**
 ```json
 {
@@ -553,6 +567,7 @@ Bulk-заміна списку пристроїв користувача (вид
     "rollout_id": "uuid",
     "firmware_version": "1.2.3",
     "total_devices": 2,
+    "skipped_incompatible": 1,
     "batch_size": 2,
     "status": "running"
   }
@@ -686,3 +701,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 - 2026-03-07 — Phase 6: firmware upload/list/delete, OTA deploy + group rollout, rollout pause/resume/cancel, jobs listing.
 - 2026-03-08 — Device metadata: PATCH /devices/:id, service records CRUD, new fields (model, comment, manufactured_at), users with access in device detail.
 - 2026-03-08 — Phase 7a: Per-Device RBAC — GET/PUT /users/:id/devices, filterDeviceAccess/checkDeviceAccess middleware on all device endpoints, WebSocket per-device check, 403 for unauthorized device access.
+- 2026-03-08 — Phase 7d: OTA Board Compatibility — firmware upload з board_type, deploy board mismatch 400, rollout auto-filter incompatible + skipped_incompatible count.
