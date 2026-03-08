@@ -20,6 +20,8 @@ const TELEMETRY_CHANNELS = [
   { key: 'equipment.evap_temp', channel: 'evap' },
   { key: 'equipment.cond_temp', channel: 'cond' },
   { key: 'thermostat.effective_setpoint', channel: 'setpoint' },
+  { key: 'equipment.compressor', channel: 'comp',    bool: true },
+  { key: 'defrost.active',      channel: 'defrost',  bool: true },
 ];
 
 // Alarm keys: protection.*_alarm (bool)
@@ -443,10 +445,13 @@ async function telemetrySampler() {
   const rows = [];
   for (const [deviceId, state] of stateMap) {
     if (!state._online) continue;
-    for (const { key, channel } of TELEMETRY_CHANNELS) {
+    for (const { key, channel, bool } of TELEMETRY_CHANNELS) {
       const val = state[key];
-      if (val !== undefined && typeof val === 'number') {
-        rows.push({ tenantId: state._tenantId, deviceId, channel, value: val });
+      if (val === undefined) continue;
+      // Boolean channels (compressor, defrost) → 0/1
+      const numVal = bool ? (val ? 1 : 0) : val;
+      if (typeof numVal === 'number') {
+        rows.push({ tenantId: state._tenantId, deviceId, channel, value: numVal });
       }
     }
   }

@@ -3,10 +3,14 @@
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
   import { getTelemetry } from '../lib/api.js';
+  import { liveState } from '../lib/stores.js';
 
   export let deviceId;
 
-  const CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
+  // Temperature channels + equipment state channels
+  const TEMP_CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
+  const STATE_CHANNELS = ['comp', 'defrost'];
+  const ALL_CHANNELS = [...TEMP_CHANNELS, ...STATE_CHANNELS];
 
   const PRESETS = [
     { label: '1h',  hours: 1 },
@@ -21,10 +25,21 @@
     evap:     { label: 'Evaporator', stroke: '#34d399', width: 2 },
     cond:     { label: 'Condenser',  stroke: '#f97316', width: 2 },
     setpoint: { label: 'Setpoint',   stroke: '#a78bfa', width: 2, dash: [5, 5] },
+    comp:     { label: 'Compressor', stroke: 'rgba(59,130,246,0.5)', fill: 'rgba(59,130,246,0.08)', band: true },
+    defrost:  { label: 'Defrost',    stroke: 'rgba(251,146,60,0.5)', fill: 'rgba(251,146,60,0.12)', band: true },
+  };
+
+  // Map liveState keys → telemetry channels for real-time append
+  const LIVE_KEY_MAP = {
+    'equipment.air_temp':             'air',
+    'equipment.evap_temp':            'evap',
+    'equipment.cond_temp':            'cond',
+    'thermostat.effective_setpoint':  'setpoint',
+    'equipment.compressor':           'comp',
+    'defrost.active':                 'defrost',
   };
 
   // ── Date range state ─────────────────────────────────────
-  // datetime-local inputs use "YYYY-MM-DDThh:mm" format (no seconds, no TZ)
 
   function toLocalInput(date) {
     const y = date.getFullYear();
@@ -50,6 +65,10 @@
   let chart = null;
   let resizeObserver;
 
+  // Track active channels and data for real-time append
+  let activeChannels = [];
+  let uData = null;
+
   // ── Data helpers ──────────────────────────────────────────
 
   function getActiveChannels(rows) {
@@ -59,8 +78,13 @@
         seen.add(row.channel);
       }
     }
-    const active = CHANNELS.filter(ch => ch === 'air' || seen.has(ch));
-    return active.length > 0 ? active : CHANNELS;
+    // Always show air; show others only if they have data
+    const active = TEMP_CHANNELS.filter(ch => ch === 'air' || seen.has(ch));
+    // Always include state channels if they have any data
+    for (const ch of STATE_CHANNELS) {
+      if (seen.has(ch)) active.push(ch);
+    }
+    return active.length > 0 ? active : TEMP_CHANNELS;
   }
 
   function transformToUplot(rows, channels) {
@@ -80,61 +104,147 @@
       ...channels.map(ch => sortedTimes.map(t => timeMap.get(t)?.[ch] ?? null)),
     ];
 
-    return { data, channels };
+    return data;
   }
 
-  function createChart(uData, channels) {
+  // ── Band plugin for compressor/defrost ─────────────────────
+
+  function bandPlugin(channels) {
+    return {
+      hooks: {
+        drawSeries: [
+          (u, si) => {
+            const ch = channels[si - 1];
+            const cfg = SERIES_CONFIG[ch];
+            if (!cfg || !cfg.band) return;
+
+            const ctx = u.ctx;
+            const data = u.data[si];
+            const xData = u.data[0];
+            if (!data || !xData) return;
+
+            const yScale = u.scales.y;
+            const yMin = u.valToPos(yScale.min, 'y', true);
+            const yMax = u.valToPos(yScale.max, 'y', true);
+
+            ctx.save();
+            ctx.fillStyle = cfg.fill;
+
+            let inBand = false;
+            let startX = 0;
+
+            for (let i = 0; i < data.length; i++) {
+              const val = data[i];
+              const x = u.valToPos(xData[i], 'x', true);
+
+              if (val >= 1 && !inBand) {
+                inBand = true;
+                startX = x;
+              } else if ((val < 1 || val === null) && inBand) {
+                inBand = false;
+                ctx.fillRect(startX, yMax, x - startX, yMin - yMax);
+              }
+            }
+            // Close open band
+            if (inBand) {
+              const lastX = u.valToPos(xData[xData.length - 1], 'x', true);
+              ctx.fillRect(startX, yMax, lastX - startX, yMin - yMax);
+            }
+
+            ctx.restore();
+          }
+        ]
+      }
+    };
+  }
+
+  function createChart(data, channels) {
     if (chart) { chart.destroy(); chart = null; }
-    if (!chartEl || !uData) return;
+    if (!chartEl || !data) return;
 
     const width = chartEl.clientWidth;
     if (width < 50) return;
 
+    const series = [
+      {},  // x-axis
+      ...channels.map(ch => {
+        const cfg = SERIES_CONFIG[ch];
+        if (cfg.band) {
+          return {
+            label:    cfg.label,
+            stroke:   cfg.stroke,
+            width:    0,
+            fill:     cfg.fill,
+            spanGaps: true,
+            points:   { show: false },
+            paths:    () => null,      // don't draw line — band plugin handles it
+            scale:    'state',
+          };
+        }
+        return {
+          label:    cfg.label,
+          stroke:   cfg.stroke,
+          width:    cfg.width,
+          dash:     cfg.dash,
+          spanGaps: true,
+          points:   { show: data[0].length < 100 },
+        };
+      }),
+    ];
+
+    const hasBands = channels.some(ch => SERIES_CONFIG[ch].band);
+
+    const axes = [
+      {
+        stroke: 'rgba(139, 148, 158, 0.6)',
+        grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
+        font: '11px "IBM Plex Sans", system-ui',
+        ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
+      },
+      {
+        stroke: 'rgba(139, 148, 158, 0.6)',
+        grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
+        size: 55,
+        label: '\u00B0C',
+        font: '11px "IBM Plex Sans", system-ui',
+        labelFont: 'bold 12px "IBM Plex Sans", system-ui',
+        ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
+      },
+    ];
+
+    // Hidden axis for state channels (0/1 scale)
+    if (hasBands) {
+      axes.push({
+        scale: 'state',
+        show: false,
+      });
+    }
+
+    const scales = {
+      x: { time: true },
+      y: { auto: true },
+    };
+    if (hasBands) {
+      scales.state = { auto: false, range: [0, 1] };
+    }
+
     const opts = {
       width,
-      height: 300,
+      height: 320,
       cursor: { show: true, drag: { x: true, y: false } },
-      scales: {
-        x: { time: true },
-        y: { auto: true },
+      scales,
+      axes,
+      series,
+      plugins: [bandPlugin(channels)],
+      legend: {
+        show: true,
       },
-      axes: [
-        {
-          stroke: 'rgba(139, 148, 158, 0.6)',
-          grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
-          font: '11px "IBM Plex Sans", system-ui',
-          ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
-        },
-        {
-          stroke: 'rgba(139, 148, 158, 0.6)',
-          grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
-          size: 55,
-          label: '\u00B0C',
-          font: '11px "IBM Plex Sans", system-ui',
-          labelFont: 'bold 12px "IBM Plex Sans", system-ui',
-          ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
-        },
-      ],
-      series: [
-        {},
-        ...channels.map(ch => ({
-          label:    SERIES_CONFIG[ch].label,
-          stroke:   SERIES_CONFIG[ch].stroke,
-          width:    SERIES_CONFIG[ch].width,
-          dash:     SERIES_CONFIG[ch].dash,
-          spanGaps: true,
-          points:   { show: uData[0].length < 100 },
-        })),
-      ],
     };
 
-    chart = new uPlot(opts, uData, chartEl);
+    chart = new uPlot(opts, data, chartEl);
   }
 
   // ── Load & render ─────────────────────────────────────────
-
-  let lastData = null;
-  let lastChannels = null;
 
   async function loadData() {
     loading = true;
@@ -146,33 +256,72 @@
       const rows = await getTelemetry(deviceId, {
         from: fromISO,
         to: toISO,
-        channels: CHANNELS,
+        channels: ALL_CHANNELS,
       });
 
-      const activeChannels = getActiveChannels(rows);
-      const result = transformToUplot(rows, activeChannels);
+      activeChannels = getActiveChannels(rows);
+      uData = transformToUplot(rows, activeChannels);
 
-      if (!result) {
+      if (!uData) {
         noData = true;
-        lastData = null;
-        lastChannels = null;
         if (chart) { chart.destroy(); chart = null; }
-      } else {
-        lastData = result.data;
-        lastChannels = result.channels;
       }
     } catch (e) {
       console.error('[TelemetryChart] Load failed:', e);
       noData = true;
-      lastData = null;
-      lastChannels = null;
+      uData = null;
     } finally {
       loading = false;
     }
 
-    if (lastData) {
+    if (uData) {
       await tick();
-      createChart(lastData, lastChannels);
+      createChart(uData, activeChannels);
+    }
+  }
+
+  // ── Real-time updates from liveState ──────────────────────
+
+  let liveUnsub;
+  let lastAppendTs = 0;
+  const APPEND_INTERVAL = 60;  // append at most every 60 seconds
+
+  function handleLiveUpdate(state) {
+    if (!chart || !uData || !activeChannels.length) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    // Throttle: only append a new point every APPEND_INTERVAL seconds
+    if (now - lastAppendTs < APPEND_INTERVAL) return;
+
+    // Check if we have any temperature data to append
+    let hasData = false;
+    const newPoint = {};
+    for (const [stateKey, ch] of Object.entries(LIVE_KEY_MAP)) {
+      if (!activeChannels.includes(ch)) continue;
+      const val = state[stateKey];
+      if (val !== undefined) {
+        const isBool = SERIES_CONFIG[ch]?.band;
+        newPoint[ch] = isBool ? (val ? 1 : 0) : (typeof val === 'number' ? val : null);
+        if (newPoint[ch] !== null) hasData = true;
+      }
+    }
+
+    if (!hasData) return;
+    lastAppendTs = now;
+
+    // Append new data point
+    const newData = uData.map((arr, i) => {
+      if (i === 0) return [...arr, now];
+      const ch = activeChannels[i - 1];
+      return [...arr, newPoint[ch] ?? null];
+    });
+
+    uData = newData;
+
+    try {
+      chart.setData(uData);
+    } catch {
+      // uPlot might throw if chart was destroyed during async
     }
   }
 
@@ -186,7 +335,6 @@
 
   function applyCustomRange() {
     if (!range.from || !range.to) return;
-    // Validate: from < to, max 31 days
     const f = new Date(range.from);
     const t = new Date(range.to);
     if (f >= t) return;
@@ -199,7 +347,6 @@
   }
 
   function handleDateChange() {
-    // Deselect preset when user manually changes dates
     activePreset = null;
   }
 
@@ -212,16 +359,20 @@
       if (chart && chartEl) {
         const w = chartEl.clientWidth;
         if (w > 50) {
-          chart.setSize({ width: w, height: 300 });
+          chart.setSize({ width: w, height: 320 });
         }
       }
     });
     resizeObserver.observe(chartEl);
+
+    // Subscribe to live state for real-time chart updates
+    liveUnsub = liveState.subscribe(handleLiveUpdate);
   });
 
   onDestroy(() => {
     if (chart) chart.destroy();
     if (resizeObserver) resizeObserver.disconnect();
+    if (liveUnsub) liveUnsub();
   });
 </script>
 
@@ -389,7 +540,7 @@
 
   .chart-wrap {
     position: relative;
-    min-height: 300px;
+    min-height: 320px;
   }
 
   .chart-container {
