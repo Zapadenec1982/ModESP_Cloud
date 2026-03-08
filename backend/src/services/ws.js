@@ -2,6 +2,7 @@
 
 const { WebSocketServer } = require('ws');
 const mqttSvc = require('./mqtt');
+const db      = require('./db');
 const { verifyAccessToken } = require('./auth');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
@@ -112,7 +113,7 @@ function handleClientMessage(ws, msg) {
   }
 }
 
-function subscribe(ws, deviceId) {
+async function subscribe(ws, deviceId) {
   // Add to subscription map
   if (!subscriptions.has(deviceId)) {
     subscriptions.set(deviceId, new Set());
@@ -120,14 +121,31 @@ function subscribe(ws, deviceId) {
   subscriptions.get(deviceId).add(ws);
   ws._subscriptions.add(deviceId);
 
-  // Send current state snapshot
-  const state = mqttSvc.getDeviceState(deviceId);
-  const meta  = mqttSvc.getDeviceMeta(deviceId);
+  // Send current state snapshot: merge DB last_state with live stateMap
+  // stateMap may not have all keys if device hasn't published deltas since backend start
+  const liveState = mqttSvc.getDeviceState(deviceId);
+  const meta      = mqttSvc.getDeviceMeta(deviceId);
+
+  let dbState = {};
+  try {
+    const { rows } = await db.query(
+      `SELECT last_state FROM devices WHERE mqtt_device_id = $1 LIMIT 1`,
+      [deviceId]
+    );
+    if (rows.length > 0 && rows[0].last_state) {
+      dbState = rows[0].last_state;
+    }
+  } catch (err) {
+    logger.warn({ err, deviceId }, 'Failed to load DB state for WS subscribe');
+  }
+
+  // DB state as base, live stateMap overrides (fresher data wins)
+  const mergedState = { ...dbState, ...(liveState || {}) };
 
   sendJSON(ws, {
     type: 'state_full',
     device_id: deviceId,
-    state: state || {},
+    state: mergedState,
     meta: meta || { online: false },
   });
 

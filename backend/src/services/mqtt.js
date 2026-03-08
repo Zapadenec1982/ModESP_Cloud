@@ -19,7 +19,7 @@ const TELEMETRY_CHANNELS = [
   { key: 'equipment.air_temp',  channel: 'air' },
   { key: 'equipment.evap_temp', channel: 'evap' },
   { key: 'equipment.cond_temp', channel: 'cond' },
-  { key: 'thermostat.setpoint', channel: 'setpoint' },
+  { key: 'thermostat.effective_setpoint', channel: 'setpoint' },
 ];
 
 // Alarm keys: protection.*_alarm (bool)
@@ -70,6 +70,7 @@ async function start(log) {
   logger = log;
 
   await loadRegistries();
+  await bootstrapStateMap();
 
   const url  = process.env.MQTT_URL  || 'mqtt://localhost:1883';
   const user = process.env.MQTT_USER || '';
@@ -536,6 +537,47 @@ async function offlineDetector() {
 
 async function refreshRegistries() {
   await loadRegistries();
+}
+
+/**
+ * Bootstrap stateMap from DB last_state on startup.
+ * Ensures that after backend restart, we have the last known state
+ * even if the ESP32 doesn't re-publish its full state dump.
+ */
+async function bootstrapStateMap() {
+  try {
+    const { rows } = await db.query(
+      `SELECT d.mqtt_device_id, d.tenant_id, d.last_state, d.online,
+              t.slug AS tenant_slug
+       FROM devices d
+       LEFT JOIN tenants t ON t.id = d.tenant_id
+       WHERE d.last_state IS NOT NULL`
+    );
+
+    for (const row of rows) {
+      const state = {
+        _tenantId:    row.tenant_id,
+        _tenantSlug:  row.tenant_slug || 'pending',
+        _lastSeen:    Date.now(),
+        _online:      false,    // will be set to true by status/heartbeat
+        _dirty:       false,    // data is already in DB
+        _lastDbWrite: Date.now(),
+      };
+
+      // Merge all state keys from DB
+      if (row.last_state && typeof row.last_state === 'object') {
+        for (const [k, v] of Object.entries(row.last_state)) {
+          state[k] = v;
+        }
+      }
+
+      stateMap.set(row.mqtt_device_id, state);
+    }
+
+    logger.info({ devices: rows.length }, 'StateMap bootstrapped from DB');
+  } catch (err) {
+    logger.error({ err }, 'Failed to bootstrap stateMap');
+  }
 }
 
 async function loadRegistries() {

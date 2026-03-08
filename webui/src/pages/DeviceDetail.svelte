@@ -48,7 +48,9 @@
   function setupWs() {
     subscribe(resolvedId)
     unsubs.push(on('state_full', (msg) => {
-      if (msg.device_id === resolvedId) liveState.set(msg.state || {})
+      // Merge with existing state (from REST API) — don't replace!
+      // stateMap may not have all keys if device hasn't published them since backend start
+      if (msg.device_id === resolvedId) liveState.update(s => ({ ...s, ...(msg.state || {}) }))
     }))
     unsubs.push(on('state_update', (msg) => {
       if (msg.device_id === resolvedId) liveState.update(s => ({ ...s, ...msg.changes }))

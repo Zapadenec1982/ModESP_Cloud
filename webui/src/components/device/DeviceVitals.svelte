@@ -5,11 +5,15 @@
   export let state = {}
 
   $: temp = state['equipment.air_temp']
-  $: setpoint = state['thermostat.setpoint'] ?? state['thermostat.effective_setpoint']
-  $: compressorOn = state['thermostat.compressor_on']
-  $: compressorRuntime = state['thermostat.compressor_runtime']
+  // Firmware publishes effective_setpoint (after night-mode adjustments);
+  // thermostat.setpoint is a writable parameter, not a publish key
+  $: setpoint = state['thermostat.effective_setpoint'] ?? state['thermostat.setpoint']
+  // Firmware publishes equipment.compressor (bool), not thermostat.compressor_on
+  $: compressorOn = state['equipment.compressor'] ?? state['thermostat.compressor_on']
+  // Runtime is published as thermostat.comp_on_time (seconds)
+  $: compressorRuntime = state['thermostat.comp_on_time'] ?? state['thermostat.compressor_runtime']
   $: defrostActive = state['defrost.active']
-  $: defrostPhase = state['defrost.phase']
+  $: defrostPhase = state['defrost.phase'] ?? state['defrost.state']
 </script>
 
 <div class="vitals stagger-enter">
