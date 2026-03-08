@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 6: Fleet OTA — реалізовано (cloud side)**
+**Фаза 6.5: WebUI Polish & Device Management — реалізовано**
 
 ---
 
@@ -117,6 +117,26 @@
 
 ---
 
+### Фаза 6.5: WebUI Polish & Device Management
+**Ціль:** Зручний UI для техніків: i18n, theming, повне керування метаданими пристрою.
+
+- [x] WebUI: i18n система (UK + EN) з Svelte store + locale switcher
+- [x] WebUI: Light theme toggle (CSS custom properties `[data-theme="light"]`)
+- [x] DB: нові колонки devices (model, comment, manufactured_at) — migration 005
+- [x] DB: service_records таблиця (технік, причина, роботи) — migration 005
+- [x] REST API: PATCH /devices/:id (name, location, serial_number, model, comment, manufactured_at)
+- [x] REST API: CRUD /devices/:id/service-records (GET, POST, DELETE)
+- [x] REST API: GET /devices/:id повертає users з доступом (user_devices JOIN)
+- [x] WebUI: DeviceDetail — edit modal (6 полів), users with access, manufactured_at
+- [x] WebUI: DeviceDetail — Service tab (записи обслуговування, додавання, видалення)
+- [x] WebUI: DeviceCard — model в footer
+- [x] WebUI: Dashboard — пошук по model, serial_number
+- [x] WebUI: PendingDevices — model/serial в assign modal
+
+**Результат:** Повна картка пристрою з редагуванням, сервісною історією, двома мовами і темами.
+
+---
+
 ### Фаза 7: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
@@ -156,3 +176,4 @@
 - 2026-03-07 — Phase 5: History & Analytics — telemetry stats (bucketed aggregation), alarm stats, fleet summary API, uPlot TelemetryChart, AlarmHistory table, Dashboard fleet summary bar, ensure-partitions.js.
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete, OTA deploy + group rollout with batching, ota.js service (status checker, auto-pause), sendJsonCommand QoS 1, Firmware WebUI page, migration 003.
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler (ota_handler.cpp) — E2E verified. Partition table fix (otadata + ota_1 for rollback).
+- 2026-03-08 — Phase 6.5: WebUI polish — i18n (UK+EN), light/dark theme, device metadata (model, comment, manufactured_at), editing, service records, search by all fields.

@@ -74,42 +74,117 @@ Authorization: Bearer <access_token>
 **Response 200:**
 ```json
 {
-  "devices": [
+  "data": [
     {
       "id": "uuid",
-      "device_id": "a4cf1234abcd",
+      "mqtt_device_id": "A4CF12",
       "name": "Холодильна камера №1",
-      "location": "Склад A, секція 3",
+      "location": "Склад А",
+      "serial_number": "MX-2024-001",
+      "model": "ModESP-4R",
+      "comment": "...",
+      "manufactured_at": "2024-06-15",
       "firmware_version": "1.2.3",
       "online": true,
       "last_seen": "2026-03-07T10:30:00Z",
-      "alarm_active": false
+      "alarm_active": false,
+      "air_temp": 4.5
     }
-  ],
-  "total": 42,
-  "page": 1
+  ]
 }
 ```
 
 ### `GET /devices/:id`
-Деталі пристрою з поточним станом.
+Деталі пристрою з поточним станом + список користувачів з доступом.
 
 **Response 200:**
 ```json
 {
   "id": "uuid",
-  "device_id": "a4cf1234abcd",
+  "mqtt_device_id": "A4CF12",
   "name": "Холодильна камера №1",
+  "location": "Склад А",
+  "serial_number": "MX-2024-001",
+  "model": "ModESP-4R",
+  "comment": "Нотатки...",
+  "manufactured_at": "2024-06-15",
   "online": true,
   "last_seen": "2026-03-07T10:30:00Z",
-  "state": {
+  "last_state": {
     "thermostat.temperature": 4.5,
     "thermostat.setpoint": 4.0,
     "thermostat.compressor": true,
     "protection.alarm_active": false
-  }
+  },
+  "users": [
+    { "id": "uuid", "email": "tech@example.com", "role": "technician" }
+  ]
 }
 ```
+
+### `PATCH /devices/:id`
+Оновити властивості пристрою.
+
+**Ролі:** admin, technician
+
+**Body** (будь-яке поле опціональне, мінімум 1):
+```json
+{
+  "name": "Нова назва",
+  "location": "Склад Б",
+  "serial_number": "MX-2024-002",
+  "model": "ModESP-4R",
+  "comment": "Коментар",
+  "manufactured_at": "2024-06-15"
+}
+```
+
+**Response 200:** оновлений пристрій (без state).
+
+---
+
+## Сервісні записи
+
+### `GET /devices/:id/service-records`
+Історія обслуговування пристрою.
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "service_date": "2026-03-01",
+      "technician": "Іванов І.І.",
+      "reason": "Планове ТО",
+      "work_done": "Чистка конденсатора",
+      "created_at": "2026-03-01T10:00:00Z"
+    }
+  ]
+}
+```
+
+### `POST /devices/:id/service-records`
+Додати сервісний запис.
+
+**Ролі:** admin, technician
+
+**Body:**
+```json
+{
+  "service_date": "2026-03-01",
+  "technician": "Іванов І.І.",
+  "reason": "Планове ТО",
+  "work_done": "Чистка конденсатора, перевірка тиску"
+}
+```
+
+### `DELETE /devices/:id/service-records/:recordId`
+Видалити сервісний запис.
+
+**Ролі:** admin, technician
+
+---
 
 ### `POST /devices/:id/command`
 Відправити команду на пристрій.
@@ -454,7 +529,9 @@ Max range: 31 day.
 {
   "name": "Холодильна камера №1",
   "location": "Склад A, секція 3",
-  "serial_number": "SN-2024-00142"
+  "serial_number": "SN-2024-00142",
+  "model": "ModESP-4R",
+  "comment": "Нотатки (необов'язково)"
 }
 ```
 
@@ -526,3 +603,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 - 2026-03-07 — Оновлено. Command translation (REST→MQTT individual keys), auto-discovery endpoints, set_parameter generic command.
 - 2026-03-07 — Phase 5: telemetry from/to + stats (bucketed), alarm stats, fleet summary endpoints.
 - 2026-03-07 — Phase 6: firmware upload/list/delete, OTA deploy + group rollout, rollout pause/resume/cancel, jobs listing.
+- 2026-03-08 — Device metadata: PATCH /devices/:id, service records CRUD, new fields (model, comment, manufactured_at), users with access in device detail.

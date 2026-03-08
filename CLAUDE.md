@@ -314,13 +314,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 6: Fleet OTA** — повністю завершено (cloud + firmware)
+**Фаза 6.5: WebUI Polish & Device Management** — завершено
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-003) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-005) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -330,8 +330,9 @@ git push origin main
 | Auth (Phase 4) | ✅ auth.js service, JWT middleware, login/refresh/logout, users CRUD, WebUI Login/Users |
 | History & Analytics (Phase 5) | ✅ telemetry stats, alarm stats, fleet summary, uPlot chart, AlarmHistory, Dashboard fleet bar |
 | Fleet OTA (Phase 6) | ✅ Cloud: firmware upload/list/delete, deploy/rollout, status checker. Firmware: OTA handler E2E verified (~8s) |
+| WebUI Polish (Phase 6.5) | ✅ i18n (UK+EN), light/dark theme, PATCH devices, service records, search by model/serial |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
-| VPS розгортання | ⬜ Не розпочато |
+| VPS розгортання | 🔄 В процесі |
 
 ---
 
@@ -357,3 +358,4 @@ git push origin main
 - 2026-03-07 — Phase 5: History & Analytics — telemetry from/to + bucketed stats API, alarm stats API, fleet summary API, uPlot TelemetryChart, AlarmHistory component, Dashboard fleet summary bar, ensure-partitions.js script.
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete API (multer), OTA deploy + group rollout API, ota.js service (batch scheduling, periodic status checker, auto-pause on failure threshold), sendJsonCommand (QoS 1), Firmware.svelte WebUI page with deploy modal.
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler verified E2E (~8s). Partition table fix (otadata + ota_1 for rollback). ROADMAP оновлено.
+- 2026-03-08 — Phase 6.5: i18n (UK+EN), light/dark theme toggle, device metadata (model, comment, manufactured_at), PATCH /devices/:id, service records CRUD, search by model/serial, migration 005.
