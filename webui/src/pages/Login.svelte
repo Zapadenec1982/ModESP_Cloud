@@ -1,28 +1,29 @@
 <script>
-  import { login } from '../lib/api.js';
-  import { navigate } from '../lib/stores.js';
+  import { login } from '../lib/api.js'
+  import { navigate } from '../lib/stores.js'
 
-  let email = '';
-  let password = '';
-  let error = '';
-  let loading = false;
+  let email = ''
+  let password = ''
+  let error = ''
+  let loading = false
 
   async function handleSubmit() {
-    error = '';
-    loading = true;
+    error = ''
+    loading = true
     try {
-      await login(email, password);
-      navigate('/');
+      await login(email, password)
+      navigate('/')
     } catch (e) {
-      error = e.message || 'Login failed';
+      error = e.message || 'Login failed'
     } finally {
-      loading = false;
+      loading = false
     }
   }
 </script>
 
 <div class="login-page">
   <form class="login-form" on:submit|preventDefault={handleSubmit}>
+    <div class="login-brand">M</div>
     <h1 class="login-title">ModESP Cloud</h1>
     <p class="login-subtitle">Sign in to your account</p>
 
@@ -51,89 +52,117 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    background: #f5f6fa;
+    height: 100vh;
+    background: var(--bg-primary);
   }
 
   .login-form {
-    background: white;
-    padding: 2.5rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
     width: 100%;
     max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .login-brand {
+    width: 48px;
+    height: 48px;
+    background: var(--accent-blue);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: var(--text-2xl);
+    color: white;
+    margin-bottom: var(--space-3);
   }
 
   .login-title {
-    font-size: 1.5rem;
+    font-size: var(--text-xl);
     font-weight: 700;
-    color: #2d3436;
-    margin-bottom: 0.25rem;
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
   }
 
   .login-subtitle {
-    color: #636e72;
-    font-size: 0.9rem;
-    margin-bottom: 1.5rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-5);
   }
 
   .error {
-    background: #ffeaea;
-    color: #d63031;
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    margin-bottom: 1rem;
+    background: rgba(248, 81, 73, 0.1);
+    color: var(--accent-red);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-3);
+    width: 100%;
+    text-align: center;
   }
 
   .field {
     display: block;
-    margin-bottom: 1rem;
+    width: 100%;
+    margin-bottom: var(--space-3);
   }
 
   .field span {
     display: block;
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
     font-weight: 500;
-    color: #2d3436;
-    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-1);
   }
 
   .field input {
     width: 100%;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid #dfe6e9;
-    border-radius: 6px;
-    font-size: 0.9rem;
-    transition: border-color 0.2s;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    transition: border-color var(--transition-fast);
+  }
+
+  .field input::placeholder {
+    color: var(--text-muted);
   }
 
   .field input:focus {
     outline: none;
-    border-color: #00b894;
-    box-shadow: 0 0 0 3px rgba(0, 184, 148, 0.15);
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
   }
 
   .btn-login {
     width: 100%;
-    padding: 0.7rem;
-    background: #00b894;
+    padding: var(--space-3);
+    background: var(--accent-blue);
     color: white;
     border: none;
-    border-radius: 6px;
-    font-size: 0.95rem;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.2s;
-    margin-top: 0.5rem;
+    transition: background var(--transition-fast);
+    margin-top: var(--space-2);
   }
 
   .btn-login:hover:not(:disabled) {
-    background: #00a884;
+    background: #4c94e8;
   }
 
   .btn-login:disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 </style>

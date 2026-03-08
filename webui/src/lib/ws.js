@@ -5,6 +5,7 @@
  */
 
 import { getAccessToken } from './api.js';
+import { wsConnected } from './stores.js';
 
 /** @type {WebSocket | null} */
 let socket = null;
@@ -39,6 +40,7 @@ export function connect() {
 
   socket.onopen = () => {
     console.log('[WS] Connected');
+    wsConnected.set(true);
     reconnectDelay = 1000;
     // Re-subscribe to all active subscriptions
     for (const deviceId of activeSubscriptions) {
@@ -57,6 +59,7 @@ export function connect() {
 
   socket.onclose = () => {
     console.log('[WS] Disconnected, reconnecting in', reconnectDelay, 'ms');
+    wsConnected.set(false);
     scheduleReconnect();
   };
 

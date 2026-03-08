@@ -19,40 +19,14 @@ export const selectedDevice = writable(null);
 export const liveState = writable({});
 
 /**
- * Connection status.
+ * WebSocket connection status.
  */
 export const wsConnected = writable(false);
-
-/**
- * Current hash route.
- */
-export const route = writable(parseHash());
-
-function parseHash() {
-  const hash = window.location.hash.slice(1) || '/';
-  return hash;
-}
-
-// Listen for hash changes
-if (typeof window !== 'undefined') {
-  window.addEventListener('hashchange', () => {
-    route.set(parseHash());
-  });
-}
-
-/**
- * Navigate by setting hash.
- * @param {string} path
- */
-export function navigate(path) {
-  window.location.hash = path;
-}
 
 // ── Auth stores ──────────────────────────────────────────
 
 /**
  * Whether auth is enabled on the backend.
- * Set after first API call or from config.
  */
 export const authEnabled = writable(false);
 
@@ -65,3 +39,26 @@ export const authUser = writable(null);
  * Derived: is the user authenticated?
  */
 export const isAuthenticated = derived(authUser, $u => $u !== null);
+
+// ── UI stores ────────────────────────────────────────────
+
+/**
+ * Sidebar collapsed state (desktop).
+ */
+export const sidebarCollapsed = writable(false);
+
+/**
+ * Sidebar open state (mobile overlay).
+ */
+export const sidebarOpen = writable(false);
+
+// ── Legacy route compatibility ───────────────────────────
+// Kept for any code that still imports `route` / `navigate`.
+// svelte-spa-router handles routing, but these are safe no-ops.
+
+export const route = writable('/');
+
+export function navigate(path) {
+  // svelte-spa-router uses hash-based routes
+  window.location.hash = '#' + path;
+}

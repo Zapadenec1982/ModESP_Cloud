@@ -1,208 +1,184 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { route, navigate, authEnabled, authUser, isAuthenticated } from './lib/stores.js';
-  import { checkAuthEnabled, restoreSession, logout } from './lib/api.js';
-  import { connect, disconnect, reconnect } from './lib/ws.js';
-  import Dashboard from './pages/Dashboard.svelte';
-  import DeviceDetail from './pages/DeviceDetail.svelte';
-  import PendingDevices from './pages/PendingDevices.svelte';
-  import Notifications from './pages/Notifications.svelte';
-  import Login from './pages/Login.svelte';
-  import Users from './pages/Users.svelte';
-  import Firmware from './pages/Firmware.svelte';
+  import { onMount, onDestroy } from 'svelte'
+  import Router from 'svelte-spa-router'
+  import { authEnabled, authUser, isAuthenticated, sidebarCollapsed } from './lib/stores.js'
+  import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
+  import { connect, disconnect, reconnect, on } from './lib/ws.js'
+  import Sidebar from './components/layout/Sidebar.svelte'
+  import MobileHeader from './components/layout/MobileHeader.svelte'
+  import ToastContainer from './components/ui/ToastContainer.svelte'
 
-  let currentRoute = '/';
-  let routeParams = {};
-  let booting = true;
+  // Pages
+  import Dashboard from './pages/Dashboard.svelte'
+  import DeviceDetail from './pages/DeviceDetail.svelte'
+  import PendingDevices from './pages/PendingDevices.svelte'
+  import Notifications from './pages/Notifications.svelte'
+  import Login from './pages/Login.svelte'
+  import Users from './pages/Users.svelte'
+  import Firmware from './pages/Firmware.svelte'
+  import Alarms from './pages/Alarms.svelte'
 
-  const unsub = route.subscribe(r => {
-    currentRoute = r;
-    routeParams = parseRoute(r);
-  });
-
-  function parseRoute(r) {
-    // #/device/F27FCD
-    const match = r.match(/^\/device\/(.+)$/);
-    if (match) return { page: 'device', id: match[1] };
-    if (r === '/pending') return { page: 'pending' };
-    if (r === '/notifications') return { page: 'notifications' };
-    if (r === '/users') return { page: 'users' };
-    if (r === '/firmware') return { page: 'firmware' };
-    return { page: 'dashboard' };
+  const routes = {
+    '/':                Dashboard,
+    '/device/:id':      DeviceDetail,
+    '/alarms':          Alarms,
+    '/pending':         PendingDevices,
+    '/notifications':   Notifications,
+    '/firmware':        Firmware,
+    '/users':           Users,
   }
 
-  async function handleLogout() {
-    await logout();
-    disconnect();
-    navigate('/');
+  let booting = true
+  let alarmCount = 0
+  let pendingCount = 0
+
+  // Fetch counts for sidebar badges
+  async function refreshCounts() {
+    try {
+      const [devRes, almRes] = await Promise.all([
+        getDevices(),
+        getAlarms({ active: true })
+      ])
+      if (devRes?.data) {
+        pendingCount = devRes.data.filter(d => d.status === 'pending').length
+      }
+      if (almRes?.data) {
+        alarmCount = almRes.data.length
+      }
+    } catch (e) {
+      // silent — sidebar badges are non-critical
+    }
   }
+
+  let unsubAlarm
+  let unsubDeviceOnline
+  let unsubDeviceOffline
 
   onMount(async () => {
     // Check if backend has auth enabled
-    const enabled = await checkAuthEnabled();
+    const enabled = await checkAuthEnabled()
     if (enabled) {
-      // Try to restore session from refresh token
-      const restored = await restoreSession();
+      const restored = await restoreSession()
       if (!restored) {
-        booting = false;
-        return; // Show login page
+        booting = false
+        return
       }
     }
-    booting = false;
-    connect();
-  });
+    booting = false
+    connect()
+    refreshCounts()
+
+    // Update alarm count on alarm events
+    unsubAlarm = on('alarm', () => refreshCounts())
+    unsubDeviceOnline = on('device_online', () => refreshCounts())
+    unsubDeviceOffline = on('device_offline', () => refreshCounts())
+  })
 
   // Reconnect WS when user logs in
   $: if ($isAuthenticated && !booting) {
-    reconnect();
+    reconnect()
+    refreshCounts()
   }
 
   onDestroy(() => {
-    disconnect();
-    unsub();
-  });
+    disconnect()
+    unsubAlarm?.()
+    unsubDeviceOnline?.()
+    unsubDeviceOffline?.()
+  })
+
+  const pageTitles = {
+    '/': 'Dashboard',
+    '/alarms': 'Alarms',
+    '/pending': 'Pending Devices',
+    '/notifications': 'Notifications',
+    '/firmware': 'Firmware',
+    '/users': 'Users',
+  }
+
+  function handleRouteLoaded(e) {
+    const path = e.detail.location
+    const title = pageTitles[path] || (path.startsWith('/device/') ? 'Device' : 'ModESP Cloud')
+    document.title = `${title} — ModESP Cloud`
+  }
+
+  function conditionsFailed() {
+    window.location.hash = '#/'
+  }
 </script>
 
 {#if booting}
-  <div class="boot">Loading...</div>
+  <div class="boot">
+    <div class="boot-spinner" />
+    <span class="boot-text">ModESP Cloud</span>
+  </div>
 {:else if $authEnabled && !$isAuthenticated}
   <Login />
 {:else}
-  <div class="app">
-    <nav class="nav">
-      <a href="#/" class="nav-brand">ModESP Cloud</a>
-      <div class="nav-links">
-        <a href="#/" class:active={routeParams.page === 'dashboard'}>Dashboard</a>
-        <a href="#/pending" class:active={routeParams.page === 'pending'}>Pending</a>
-        <a href="#/notifications" class:active={routeParams.page === 'notifications'}>Notifications</a>
-        {#if !$authEnabled || $authUser?.role === 'admin'}
-          <a href="#/firmware" class:active={routeParams.page === 'firmware'}>Firmware</a>
-        {/if}
-        {#if $authEnabled && $authUser?.role === 'admin'}
-          <a href="#/users" class:active={routeParams.page === 'users'}>Users</a>
-        {/if}
-      </div>
-      {#if $authEnabled && $authUser}
-        <div class="nav-user">
-          <span class="user-email">{$authUser.email}</span>
-          <button class="btn-logout" on:click={handleLogout}>Logout</button>
-        </div>
-      {/if}
-    </nav>
+  <div class="app-layout" class:collapsed={$sidebarCollapsed}>
+    <Sidebar {alarmCount} {pendingCount} />
+    <MobileHeader />
 
-    <main class="main">
-      {#if routeParams.page === 'device'}
-        <DeviceDetail deviceId={routeParams.id} />
-      {:else if routeParams.page === 'pending'}
-        <PendingDevices />
-      {:else if routeParams.page === 'notifications'}
-        <Notifications />
-      {:else if routeParams.page === 'users'}
-        <Users />
-      {:else if routeParams.page === 'firmware'}
-        <Firmware />
-      {:else}
-        <Dashboard />
-      {/if}
+    <main class="main-content">
+      <Router {routes} on:conditionsFailed={conditionsFailed} on:routeLoaded={handleRouteLoaded} />
     </main>
   </div>
+  <ToastContainer />
 {/if}
 
 <style>
-  :global(*) {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-
-  :global(body) {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f5f6fa;
-    color: #2d3436;
-    line-height: 1.5;
-  }
-
   .boot {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    color: #636e72;
-    font-size: 1.1rem;
+    height: 100vh;
+    gap: var(--space-4);
+    background: var(--bg-primary);
   }
 
-  .app {
-    min-height: 100vh;
+  .boot-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border-default);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
   }
 
-  .nav {
-    background: #2d3436;
-    color: white;
-    padding: 0 1.5rem;
+  .boot-text {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+
+  .app-layout {
     display: flex;
-    align-items: center;
-    height: 56px;
-    gap: 2rem;
+    height: 100vh;
+    overflow: hidden;
   }
 
-  .nav-brand {
-    font-weight: 700;
-    font-size: 1.1rem;
-    color: #00b894;
-    text-decoration: none;
-  }
-
-  .nav-links {
-    display: flex;
-    gap: 1rem;
+  .main-content {
     flex: 1;
+    margin-left: var(--sidebar-width);
+    overflow-y: auto;
+    padding: var(--space-5);
+    transition: margin-left var(--transition-normal);
   }
 
-  .nav-links a {
-    color: #b2bec3;
-    text-decoration: none;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.9rem;
-    transition: color 0.2s;
+  .app-layout.collapsed .main-content {
+    margin-left: var(--sidebar-collapsed);
   }
 
-  .nav-links a:hover,
-  .nav-links a.active {
-    color: white;
-  }
-
-  .nav-user {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-left: auto;
-  }
-
-  .user-email {
-    color: #b2bec3;
-    font-size: 0.8rem;
-  }
-
-  .btn-logout {
-    background: none;
-    border: 1px solid #636e72;
-    color: #b2bec3;
-    padding: 0.25rem 0.6rem;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-logout:hover {
-    border-color: #e17055;
-    color: #e17055;
-  }
-
-  .main {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 1.5rem;
+  @media (max-width: 768px) {
+    .main-content {
+      margin-left: 0;
+      padding: var(--space-4);
+      padding-top: calc(var(--header-height) + var(--space-4));
+    }
+    .app-layout.collapsed .main-content {
+      margin-left: 0;
+    }
   }
 </style>

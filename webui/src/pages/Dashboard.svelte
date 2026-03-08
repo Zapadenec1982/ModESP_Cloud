@@ -1,65 +1,99 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { getDevices, getFleetSummary } from '../lib/api.js';
-  import { subscribe, unsubscribe, on } from '../lib/ws.js';
-  import { devices } from '../lib/stores.js';
-  import DeviceCard from '../components/DeviceCard.svelte';
+  import { onMount, onDestroy } from 'svelte'
+  import { getDevices } from '../lib/api.js'
+  import { subscribe, unsubscribe, on } from '../lib/ws.js'
+  import { devices } from '../lib/stores.js'
+  import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
+  import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
+  import DeviceCard from '../components/DeviceCard.svelte'
+  import DeviceListRow from '../components/dashboard/DeviceListRow.svelte'
+  import PageHeader from '../components/layout/PageHeader.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+  import EmptyState from '../components/ui/EmptyState.svelte'
+  import Icon from '../components/ui/Icon.svelte'
 
-  let loading = true;
-  let error = null;
-  let interval;
+  let loading = true
+  let error = null
+  let interval
 
-  let fleet = null;
+  // Filter state
+  let search = ''
+  let filter = 'all'
+  let view = 'grid'
 
-  /** Track which device IDs we've subscribed to via WS */
-  let subscribedIds = new Set();
-  let wsUnsubs = [];
+  // WS tracking
+  let subscribedIds = new Set()
+  let wsUnsubs = []
+
+  // Derived filtered list
+  $: filtered = filterDevices($devices, search, filter)
+
+  // Group by location
+  $: groups = groupByLocation(filtered)
+
+  function filterDevices(list, q, f) {
+    let result = list
+    if (q) {
+      const lq = q.toLowerCase()
+      result = result.filter(d =>
+        (d.name || '').toLowerCase().includes(lq) ||
+        (d.mqtt_device_id || '').toLowerCase().includes(lq) ||
+        (d.location || '').toLowerCase().includes(lq)
+      )
+    }
+    if (f === 'online')  result = result.filter(d => d.online)
+    if (f === 'offline') result = result.filter(d => !d.online && d.status !== 'pending')
+    if (f === 'alarm')   result = result.filter(d => d.alarm_active)
+    return result
+  }
+
+  function groupByLocation(list) {
+    const map = new Map()
+    for (const d of list) {
+      const loc = d.location || 'Unassigned'
+      if (!map.has(loc)) map.set(loc, [])
+      map.get(loc).push(d)
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  }
+
+  // Fleet stats derived from device list
+  $: onlineCount = $devices.filter(d => d.online).length
+  $: totalCount = $devices.length
+  $: alarmCount = $devices.filter(d => d.alarm_active).length
+  $: avgTemp = (() => {
+    const temps = $devices.filter(d => d.air_temp != null).map(d => d.air_temp)
+    return temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null
+  })()
 
   async function load() {
     try {
-      const [data, summary] = await Promise.all([
-        getDevices(),
-        getFleetSummary().catch(() => null),
-      ]);
-      devices.set(data);
-      fleet = summary;
-      error = null;
-      // Subscribe to WS for all loaded devices
-      syncWsSubscriptions(data);
+      const data = await getDevices()
+      devices.set(data)
+      error = null
+      syncWsSubscriptions(data)
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
   }
 
-  /** Subscribe to WS for all visible devices to get real-time updates */
   function syncWsSubscriptions(deviceList) {
-    const newIds = new Set(deviceList.map(d => d.mqtt_device_id));
-
-    // Unsubscribe from devices no longer in list
+    const newIds = new Set(deviceList.map(d => d.mqtt_device_id))
     for (const id of subscribedIds) {
-      if (!newIds.has(id)) {
-        unsubscribe(id);
-        subscribedIds.delete(id);
-      }
+      if (!newIds.has(id)) { unsubscribe(id); subscribedIds.delete(id) }
     }
-
-    // Subscribe to new devices
     for (const id of newIds) {
-      if (!subscribedIds.has(id)) {
-        subscribe(id);
-        subscribedIds.add(id);
-      }
+      if (!subscribedIds.has(id)) { subscribe(id); subscribedIds.add(id) }
     }
   }
 
   function setupWsListeners() {
-    // Real-time state updates → update air_temp and alarm_active on cards
     wsUnsubs.push(on('state_update', (msg) => {
       devices.update(list => list.map(d => {
-        if (d.mqtt_device_id !== msg.device_id) return d;
-        const changes = msg.changes || {};
+        if (d.mqtt_device_id !== msg.device_id) return d
+        const changes = msg.changes || {}
         return {
           ...d,
           air_temp: changes['equipment.air_temp'] !== undefined
@@ -67,106 +101,120 @@
           alarm_active: changes['protection.alarm_active'] !== undefined
             ? !!changes['protection.alarm_active'] : d.alarm_active,
           last_seen: msg.time || d.last_seen,
-        };
-      }));
-    }));
+        }
+      }))
+    }))
 
-    // state_full → merge full state snapshot into device card
     wsUnsubs.push(on('state_full', (msg) => {
       devices.update(list => list.map(d => {
-        if (d.mqtt_device_id !== msg.device_id) return d;
-        const s = msg.state || {};
+        if (d.mqtt_device_id !== msg.device_id) return d
+        const s = msg.state || {}
         return {
           ...d,
           air_temp: s['equipment.air_temp'] ?? d.air_temp,
           alarm_active: s['protection.alarm_active'] != null
             ? !!s['protection.alarm_active'] : d.alarm_active,
           online: msg.meta?.online ?? d.online,
-        };
-      }));
-    }));
+        }
+      }))
+    }))
 
-    // Device online/offline
     wsUnsubs.push(on('device_online', (msg) => {
       devices.update(list => list.map(d =>
         d.mqtt_device_id === msg.device_id ? { ...d, online: true } : d
-      ));
-    }));
+      ))
+    }))
 
     wsUnsubs.push(on('device_offline', (msg) => {
       devices.update(list => list.map(d =>
         d.mqtt_device_id === msg.device_id
           ? { ...d, online: false, last_seen: msg.last_seen }
           : d
-      ));
-    }));
+      ))
+    }))
 
-    // Alarm events
     wsUnsubs.push(on('alarm', (msg) => {
       devices.update(list => list.map(d =>
         d.mqtt_device_id === msg.device_id
           ? { ...d, alarm_active: msg.active }
           : d
-      ));
-    }));
+      ))
+    }))
   }
 
   onMount(() => {
-    setupWsListeners();
-    load();
-    interval = setInterval(load, 30000); // full REST refresh every 30s as fallback
-  });
+    setupWsListeners()
+    load()
+    interval = setInterval(load, 30000)
+  })
 
   onDestroy(() => {
-    clearInterval(interval);
-    // Unsubscribe from all WS device subscriptions
-    for (const id of subscribedIds) {
-      unsubscribe(id);
-    }
-    subscribedIds.clear();
-    for (const fn of wsUnsubs) fn();
-  });
+    clearInterval(interval)
+    for (const id of subscribedIds) unsubscribe(id)
+    subscribedIds.clear()
+    for (const fn of wsUnsubs) fn()
+  })
 </script>
 
 <div class="dashboard">
-  <div class="header">
-    <h1>Devices</h1>
-    <button class="btn-refresh" on:click={load}>Refresh</button>
-  </div>
+  <PageHeader title="Dashboard" subtitle="Fleet overview and device monitoring" />
 
-  {#if fleet}
-    <div class="fleet-summary">
-      <div class="fleet-stat">
-        <span class="fleet-value">{fleet.devices_online}</span>
-        <span class="fleet-label">Online</span>
-      </div>
-      <div class="fleet-stat">
-        <span class="fleet-value">{fleet.devices_total}</span>
-        <span class="fleet-label">Total Devices</span>
-      </div>
-      <div class="fleet-stat" class:alert={fleet.alarms_active > 0}>
-        <span class="fleet-value">{fleet.alarms_active}</span>
-        <span class="fleet-label">Active Alarms</span>
-      </div>
-      <div class="fleet-stat">
-        <span class="fleet-value">{fleet.alarms_24h}</span>
-        <span class="fleet-label">Alarms (24h)</span>
-      </div>
-    </div>
-  {/if}
+  <FleetSummaryBar
+    online={onlineCount}
+    total={totalCount}
+    alarms={alarmCount}
+    {avgTemp}
+  />
+
+  <DeviceFilter bind:search bind:filter bind:view />
 
   {#if loading}
-    <p class="status-msg">Loading devices...</p>
-  {:else if error}
-    <p class="status-msg error">{error}</p>
-  {:else if $devices.length === 0}
-    <p class="status-msg">No devices found. Connect an ESP32 to get started.</p>
-  {:else}
-    <div class="grid">
-      {#each $devices as device (device.id)}
-        <DeviceCard {device} />
+    <div class="skeleton-grid">
+      {#each Array(6) as _}
+        <Skeleton height="140px" />
       {/each}
     </div>
+  {:else if error}
+    <EmptyState
+      icon="x-circle"
+      title="Failed to load devices"
+      message={error}
+    />
+  {:else if filtered.length === 0}
+    {#if search || filter !== 'all'}
+      <EmptyState
+        icon="search"
+        title="No matching devices"
+        message="Try adjusting your search or filter"
+      />
+    {:else}
+      <EmptyState
+        icon="wifi"
+        title="No devices yet"
+        message="Connect an ESP32 controller to get started"
+      />
+    {/if}
+  {:else if view === 'list'}
+    <div class="list-view">
+      {#each filtered as device (device.id)}
+        <DeviceListRow {device} />
+      {/each}
+    </div>
+  {:else}
+    {#each groups as [location, devicesInGroup]}
+      {#if groups.length > 1}
+        <div class="group-header">
+          <Icon name="map-pin" size={14} />
+          <span>{location}</span>
+          <span class="group-count">{devicesInGroup.length}</span>
+        </div>
+      {/if}
+      <div class="grid">
+        {#each devicesInGroup as device (device.id)}
+          <DeviceCard {device} />
+        {/each}
+      </div>
+    {/each}
   {/if}
 </div>
 
@@ -174,91 +222,42 @@
   .dashboard {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-  }
-
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  h1 {
-    font-size: 1.5rem;
-    font-weight: 700;
-  }
-
-  .btn-refresh {
-    padding: 0.4rem 1rem;
-    background: #2d3436;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-
-  .btn-refresh:hover {
-    background: #636e72;
+    gap: var(--space-4);
   }
 
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1rem;
+    gap: var(--space-3);
   }
 
-  .status-msg {
-    text-align: center;
-    color: #636e72;
-    padding: 2rem;
-    font-size: 1rem;
-  }
-
-  .status-msg.error {
-    color: #e17055;
-  }
-
-  .fleet-summary {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .fleet-stat {
-    flex: 1;
-    min-width: 120px;
-    background: white;
-    border: 1px solid #dfe6e9;
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
+  .list-view {
     display: flex;
     flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-3);
+  }
+
+  .group-header {
+    display: flex;
     align-items: center;
-    gap: 0.25rem;
-  }
-
-  .fleet-stat.alert {
-    border-color: #d63031;
-    background: #fff5f5;
-  }
-
-  .fleet-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: #2d3436;
-  }
-
-  .fleet-stat.alert .fleet-value {
-    color: #d63031;
-  }
-
-  .fleet-label {
-    font-size: 0.75rem;
-    color: #636e72;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
     font-weight: 600;
+    padding: var(--space-2) 0;
+  }
+
+  .group-count {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
   }
 </style>

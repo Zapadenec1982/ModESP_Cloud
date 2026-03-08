@@ -235,7 +235,7 @@
   .notifications {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-4);
   }
 
   .header {
@@ -245,57 +245,65 @@
   }
 
   h1 {
-    font-size: 1.5rem;
+    font-size: var(--text-2xl);
     font-weight: 700;
+    color: var(--text-primary);
   }
 
   .btn-refresh {
-    padding: 0.4rem 1rem;
-    background: #2d3436;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background var(--transition-fast);
   }
 
   .btn-refresh:hover {
-    background: #636e72;
+    background: var(--border-default);
   }
 
   .card {
-    background: white;
-    border: 1px solid #dfe6e9;
-    border-radius: 12px;
-    padding: 1.25rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-5);
   }
 
   .card h3 {
-    font-size: 0.9rem;
-    margin-bottom: 0.75rem;
-    color: #636e72;
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-3);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    font-weight: 600;
   }
 
   .add-form {
     display: flex;
-    gap: 0.5rem;
+    gap: var(--space-2);
     align-items: center;
     flex-wrap: wrap;
   }
 
   .input {
-    padding: 0.4rem 0.75rem;
-    border: 1px solid #dfe6e9;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
   }
 
   .input:focus {
     outline: none;
-    border-color: #0984e3;
+    border-color: var(--accent-blue);
+  }
+
+  .input::placeholder {
+    color: var(--text-muted);
   }
 
   .input-addr {
@@ -307,47 +315,50 @@
   }
 
   .btn {
-    padding: 0.4rem 1rem;
+    padding: var(--space-2) var(--space-4);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
     font-weight: 600;
+    transition: background var(--transition-fast);
   }
 
   .btn-primary {
-    background: #0984e3;
-    color: white;
+    background: var(--accent-blue);
+    color: var(--text-inverse);
   }
 
   .btn-primary:hover {
-    background: #0873c4;
+    background: #4a9aef;
   }
 
   .btn-sm {
     padding: 0.25rem 0.6rem;
-    font-size: 0.8rem;
-    background: #dfe6e9;
-    color: #2d3436;
+    font-size: var(--text-xs);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
   }
 
   .btn-sm:hover {
-    background: #b2bec3;
+    background: var(--border-default);
   }
 
   .btn-danger {
-    background: #ffe0db;
-    color: #e17055;
+    background: rgba(248, 81, 73, 0.1);
+    color: var(--accent-red);
+    border: 1px solid rgba(248, 81, 73, 0.3);
   }
 
   .btn-danger:hover {
-    background: #fab1a0;
-    color: white;
+    background: rgba(248, 81, 73, 0.2);
   }
 
   .form-status {
-    font-size: 0.8rem;
-    color: #636e72;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
   }
 
   .table-wrap {
@@ -357,68 +368,69 @@
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
   }
 
   th {
     text-align: left;
-    padding: 0.5rem 0.75rem;
-    border-bottom: 2px solid #dfe6e9;
-    color: #636e72;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 2px solid var(--border-default);
+    color: var(--text-muted);
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
 
   td {
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid #f0f0f0;
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-muted);
+    color: var(--text-primary);
   }
 
   .mono {
-    font-family: 'SF Mono', 'Consolas', monospace;
-    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
 
   .channel-badge {
     padding: 0.15rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.78rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
     font-weight: 600;
   }
 
   .channel-badge.telegram {
-    background: #e3f2fd;
-    color: #0288d1;
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent-blue);
   }
 
   .channel-badge.fcm {
-    background: #fff3e0;
-    color: #e65100;
+    background: rgba(219, 109, 40, 0.1);
+    color: var(--accent-orange);
   }
 
   .status-badge {
     padding: 0.1rem 0.45rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
   }
 
   .badge-sent {
-    background: #e8f5e9;
-    color: #2e7d32;
+    background: rgba(63, 185, 80, 0.1);
+    color: var(--accent-green);
   }
 
   .badge-failed {
-    background: #ffebee;
-    color: #c62828;
+    background: rgba(248, 81, 73, 0.1);
+    color: var(--accent-red);
   }
 
   .badge-skipped {
-    background: #f5f5f5;
-    color: #757575;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
   }
 
   .error-hint {
@@ -427,8 +439,8 @@
     height: 18px;
     line-height: 18px;
     text-align: center;
-    background: #ffebee;
-    color: #c62828;
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--accent-red);
     border-radius: 50%;
     font-size: 0.7rem;
     font-weight: 700;
@@ -444,18 +456,18 @@
   }
 
   .test-status {
-    font-size: 0.75rem;
-    color: #636e72;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
   }
 
   .status-msg {
     text-align: center;
-    color: #636e72;
-    padding: 1.5rem;
-    font-size: 0.9rem;
+    color: var(--text-secondary);
+    padding: var(--space-5);
+    font-size: var(--text-base);
   }
 
   .status-msg.error {
-    color: #e17055;
+    color: var(--accent-red);
   }
 </style>

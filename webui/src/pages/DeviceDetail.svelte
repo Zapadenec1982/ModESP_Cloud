@@ -1,219 +1,133 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import { getDevice, sendCommand as apiSendCommand } from '../lib/api.js';
-  import { subscribe, unsubscribe, on } from '../lib/ws.js';
-  import { navigate, liveState } from '../lib/stores.js';
-  import StateView from '../components/StateView.svelte';
-  import AlarmBadge from '../components/AlarmBadge.svelte';
-  import TelemetryChart from '../components/TelemetryChart.svelte';
-  import AlarmHistory from '../components/AlarmHistory.svelte';
+  import { onMount, onDestroy } from 'svelte'
+  import { getDevice } from '../lib/api.js'
+  import { subscribe, unsubscribe, on } from '../lib/ws.js'
+  import { navigate, liveState } from '../lib/stores.js'
+  import StatusDot from '../components/ui/StatusDot.svelte'
+  import Badge from '../components/ui/Badge.svelte'
+  import Icon from '../components/ui/Icon.svelte'
+  import Tabs from '../components/ui/Tabs.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+  import EmptyState from '../components/ui/EmptyState.svelte'
+  import DeviceVitals from '../components/device/DeviceVitals.svelte'
+  import ParameterEditor from '../components/device/ParameterEditor.svelte'
+  import TelemetryChart from '../components/TelemetryChart.svelte'
+  import AlarmHistory from '../components/AlarmHistory.svelte'
+  import StateView from '../components/StateView.svelte'
 
-  export let deviceId;
+  // svelte-spa-router passes route params via `params` prop
+  export let params = {}
+  export let deviceId = undefined
+  $: resolvedId = deviceId || params.id
 
-  /** Writable keys grouped by category for the command dropdown */
-  const COMMAND_KEYS = [
-    { group: 'Thermostat', keys: [
-      'thermostat.setpoint', 'thermostat.differential', 'thermostat.min_off_time',
-      'thermostat.min_on_time', 'thermostat.startup_delay', 'thermostat.evap_fan_mode',
-      'thermostat.fan_stop_temp', 'thermostat.fan_stop_hyst', 'thermostat.cond_fan_delay',
-      'thermostat.safety_run_on', 'thermostat.safety_run_off', 'thermostat.night_setback',
-      'thermostat.night_mode', 'thermostat.night_start', 'thermostat.night_end',
-      'thermostat.night_active', 'thermostat.display_defrost',
-    ]},
-    { group: 'Protection', keys: [
-      'protection.high_limit', 'protection.low_limit', 'protection.high_alarm_delay',
-      'protection.low_alarm_delay', 'protection.door_delay', 'protection.manual_reset',
-      'protection.post_defrost_delay', 'protection.reset_alarms',
-      'protection.min_compressor_run', 'protection.max_starts_hour',
-      'protection.max_continuous_run', 'protection.pulldown_timeout',
-      'protection.pulldown_min_drop', 'protection.max_rise_rate', 'protection.rate_duration',
-      'protection.compressor_hours',
-    ]},
-    { group: 'Defrost', keys: [
-      'defrost.manual_start', 'defrost.manual_stop', 'defrost.type', 'defrost.interval',
-      'defrost.counter_mode', 'defrost.initiation', 'defrost.termination',
-      'defrost.end_temp', 'defrost.max_duration', 'defrost.demand_temp',
-      'defrost.drip_time', 'defrost.fan_delay', 'defrost.fad_temp',
-      'defrost.stabilize_time', 'defrost.valve_delay', 'defrost.equalize_time',
-    ]},
-    { group: 'Equipment', keys: [
-      'equipment.filter_coeff', 'equipment.ntc_beta', 'equipment.ntc_r_series',
-      'equipment.ntc_r_nominal', 'equipment.ds18b20_offset',
-    ]},
-    { group: 'Datalogger', keys: [
-      'datalogger.enabled', 'datalogger.retention_hours', 'datalogger.sample_interval',
-      'datalogger.log_evap', 'datalogger.log_cond', 'datalogger.log_setpoint',
-      'datalogger.log_humidity',
-    ]},
-  ];
+  let device = null
+  let loading = true
+  let error = null
+  let unsubs = []
 
-  let device = null;
-  let loading = true;
-  let error = null;
-  let commandKey = 'thermostat.setpoint';
-  let commandValue = '';
-  let commandStatus = '';
-  let sending = false;
-
-  // WS listener unsubscribers
-  let unsubs = [];
+  let activeTab = 'chart'
+  const tabs = [
+    { id: 'chart',  label: 'Chart' },
+    { id: 'params', label: 'Parameters' },
+    { id: 'alarms', label: 'Alarms' },
+    { id: 'state',  label: 'State' },
+  ]
 
   async function loadDevice() {
     try {
-      device = await getDevice(deviceId);
-      liveState.set(device.last_state || {});
-      error = null;
+      device = await getDevice(resolvedId)
+      liveState.set(device.last_state || {})
+      error = null
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
   }
 
   function setupWs() {
-    subscribe(deviceId);
-
+    subscribe(resolvedId)
     unsubs.push(on('state_full', (msg) => {
-      if (msg.device_id === deviceId) {
-        liveState.set(msg.state || {});
-      }
-    }));
-
+      if (msg.device_id === resolvedId) liveState.set(msg.state || {})
+    }))
     unsubs.push(on('state_update', (msg) => {
-      if (msg.device_id === deviceId) {
-        liveState.update(s => ({ ...s, ...msg.changes }));
-      }
-    }));
-
+      if (msg.device_id === resolvedId) liveState.update(s => ({ ...s, ...msg.changes }))
+    }))
     unsubs.push(on('device_online', (msg) => {
-      if (msg.device_id === deviceId && device) {
-        device = { ...device, online: true };
-      }
-    }));
-
+      if (msg.device_id === resolvedId && device) device = { ...device, online: true }
+    }))
     unsubs.push(on('device_offline', (msg) => {
-      if (msg.device_id === deviceId && device) {
-        device = { ...device, online: false };
-      }
-    }));
+      if (msg.device_id === resolvedId && device) device = { ...device, online: false }
+    }))
   }
 
-  async function handleCommand() {
-    if (!commandKey) {
-      commandStatus = 'Select a parameter';
-      return;
-    }
-    if (commandValue === '') {
-      commandStatus = 'Enter a value';
-      return;
-    }
-    sending = true;
-    commandStatus = 'Sending...';
-    try {
-      await apiSendCommand(deviceId, commandKey, parseCommandValue(commandValue));
-      commandStatus = 'Sent!';
-      setTimeout(() => { commandStatus = ''; }, 3000);
-    } catch (e) {
-      commandStatus = `Error: ${e.message}`;
-    } finally {
-      sending = false;
-    }
-  }
+  onMount(() => { loadDevice(); setupWs() })
+  onDestroy(() => { unsubscribe(resolvedId); for (const fn of unsubs) fn() })
 
-  function parseCommandValue(v) {
-    if (v === 'true') return true;
-    if (v === 'false') return false;
-    const n = Number(v);
-    if (v !== '' && !isNaN(n)) return n;
-    return v;
-  }
-
-  onMount(() => {
-    loadDevice();
-    setupWs();
-  });
-
-  onDestroy(() => {
-    unsubscribe(deviceId);
-    for (const fn of unsubs) fn();
-  });
+  $: hasAlarm = !!$liveState['protection.alarm_active']
 </script>
 
 <div class="detail">
+  <!-- Breadcrumb -->
   <div class="breadcrumb">
-    <a href="#/" on:click|preventDefault={() => navigate('/')}>Dashboard</a>
-    <span>/</span>
-    <span>{deviceId}</span>
+    <a href="#/" class="back-link">
+      <Icon name="arrow-left" size={16} />
+      Dashboard
+    </a>
+    <span class="breadcrumb-sep">/</span>
+    <span class="breadcrumb-current">{resolvedId}</span>
   </div>
 
   {#if loading}
-    <p class="status-msg">Loading...</p>
+    <Skeleton height="120px" />
+    <Skeleton height="80px" />
+    <Skeleton height="300px" />
   {:else if error}
-    <p class="status-msg error">{error}</p>
+    <EmptyState icon="x-circle" title="Failed to load device" message={error} />
   {:else if device}
+    <!-- Device header -->
     <div class="device-header">
-      <div class="device-info">
-        <h1>
-          <span class="status-dot" class:online={device.online}></span>
-          {device.name || device.mqtt_device_id}
-        </h1>
-        <div class="meta">
-          <span>ID: {device.mqtt_device_id}</span>
-          {#if device.firmware_version}
-            <span>FW: {device.firmware_version}</span>
-          {/if}
-          {#if device.location}
-            <span>{device.location}</span>
-          {/if}
-          <span class="status-badge" class:online={device.online}>
-            {device.online ? 'Online' : 'Offline'}
+      <div class="header-top">
+        <StatusDot status={hasAlarm ? 'alarm' : (device.online ? 'online' : 'offline')} />
+        <h1 class="device-title">{device.name || device.mqtt_device_id}</h1>
+        <Badge variant={device.online ? 'success' : 'neutral'}>
+          {device.online ? 'Online' : 'Offline'}
+        </Badge>
+        {#if hasAlarm}
+          <Badge variant="danger" pulse>ALARM</Badge>
+        {/if}
+      </div>
+      <div class="header-meta">
+        <span class="meta-item font-mono">ID: {device.mqtt_device_id}</span>
+        {#if device.firmware_version}
+          <span class="meta-item font-mono">FW: {device.firmware_version}</span>
+        {/if}
+        {#if device.location}
+          <span class="meta-item">
+            <Icon name="map-pin" size={12} />
+            {device.location}
           </span>
-          <AlarmBadge active={!!$liveState['protection.alarm_active']} />
-        </div>
+        {/if}
       </div>
     </div>
 
-    <!-- Command panel -->
-    <div class="command-panel">
-      <h3>Send Command</h3>
-      <form on:submit|preventDefault={handleCommand} class="command-form">
-        <select bind:value={commandKey} class="input select-key">
-          {#each COMMAND_KEYS as group}
-            <optgroup label={group.group}>
-              {#each group.keys as key}
-                <option value={key}>{key}</option>
-              {/each}
-            </optgroup>
-          {/each}
-        </select>
-        <input
-          type="text"
-          bind:value={commandValue}
-          placeholder="value"
-          class="input input-value"
-        />
-        <button type="submit" class="btn" disabled={sending}>
-          {sending ? 'Sending...' : 'Send'}
-        </button>
-        {#if commandStatus}
-          <span class="command-status" class:error={commandStatus.startsWith('Error')}
-                class:success={commandStatus === 'Sent!'}>
-            {commandStatus}
-          </span>
-        {/if}
-      </form>
-    </div>
+    <!-- Vitals -->
+    <DeviceVitals state={$liveState} />
 
-    <!-- Temperature chart -->
-    <TelemetryChart {deviceId} />
+    <!-- Tabs -->
+    <Tabs {tabs} bind:active={activeTab} />
 
-    <!-- Alarm history -->
-    <AlarmHistory {deviceId} />
-
-    <!-- Live state -->
-    <div class="state-section">
-      <h2>Live State</h2>
-      <StateView state={$liveState} />
+    <!-- Tab content -->
+    <div class="tab-content">
+      {#if activeTab === 'chart'}
+        <TelemetryChart deviceId={resolvedId} />
+      {:else if activeTab === 'params'}
+        <ParameterEditor deviceId={resolvedId} state={$liveState} />
+      {:else if activeTab === 'alarms'}
+        <AlarmHistory deviceId={resolvedId} />
+      {:else if activeTab === 'state'}
+        <StateView state={$liveState} />
+      {/if}
     </div>
   {/if}
 </div>
@@ -222,163 +136,70 @@
   .detail {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: var(--space-4);
   }
 
   .breadcrumb {
-    font-size: 0.85rem;
-    color: #636e72;
     display: flex;
-    gap: 0.5rem;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
   }
 
-  .breadcrumb a {
-    color: #0984e3;
+  .back-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--accent-blue);
     text-decoration: none;
+    transition: color var(--transition-fast);
   }
+
+  .back-link:hover {
+    color: var(--text-primary);
+  }
+
+  .breadcrumb-sep { color: var(--text-muted); }
+  .breadcrumb-current { color: var(--text-secondary); }
 
   .device-header {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid #dfe6e9;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
   }
 
-  h1 {
-    font-size: 1.4rem;
+  .header-top {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-  }
-
-  .status-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #b2bec3;
-    display: inline-block;
-  }
-
-  .status-dot.online {
-    background: #00b894;
-    box-shadow: 0 0 6px #00b894;
-  }
-
-  .meta {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-top: 0.5rem;
-    font-size: 0.85rem;
-    color: #636e72;
-  }
-
-  .status-badge {
-    padding: 0.1rem 0.5rem;
-    border-radius: 4px;
-    background: #dfe6e9;
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-  }
-
-  .status-badge.online {
-    background: #00b89433;
-    color: #00b894;
-  }
-
-  .command-panel {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid #dfe6e9;
-  }
-
-  .command-panel h3 {
-    font-size: 0.9rem;
-    margin-bottom: 0.75rem;
-    color: #636e72;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .command-form {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
 
-  .input {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #dfe6e9;
-    border-radius: 6px;
-    font-size: 0.9rem;
-    font-family: 'SF Mono', 'Consolas', monospace;
-  }
-
-  .input:focus {
-    outline: none;
-    border-color: #0984e3;
-  }
-
-  .select-key {
-    min-width: 220px;
-    cursor: pointer;
-  }
-
-  .input-value {
-    width: 100px;
-  }
-
-  .btn {
-    padding: 0.5rem 1rem;
-    background: #0984e3;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
+  .device-title {
+    font-size: var(--text-xl);
     font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
   }
 
-  .btn:hover {
-    background: #0873c4;
+  .header-meta {
+    display: flex;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-top: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 
-  .command-status {
-    font-size: 0.85rem;
-    color: #636e72;
-    font-weight: 600;
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
-  .command-status.success {
-    color: #00b894;
-  }
-
-  .command-status.error {
-    color: #e17055;
-  }
-
-  .state-section {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid #dfe6e9;
-  }
-
-  .state-section h2 {
-    font-size: 1.1rem;
-    margin-bottom: 1rem;
-  }
-
-  .status-msg {
-    text-align: center;
-    color: #636e72;
-    padding: 2rem;
-  }
-
-  .status-msg.error {
-    color: #e17055;
+  .tab-content {
+    min-height: 200px;
   }
 </style>
