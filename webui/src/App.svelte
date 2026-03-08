@@ -1,7 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
-  import { authEnabled, authUser, isAuthenticated, sidebarCollapsed } from './lib/stores.js'
+  import { wrap } from 'svelte-spa-router/wrap'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
   import { connect, disconnect, reconnect, on } from './lib/ws.js'
   import { t } from './lib/i18n.js'
@@ -19,14 +20,21 @@
   import Firmware from './pages/Firmware.svelte'
   import Alarms from './pages/Alarms.svelte'
 
+  // Admin-only route guard: redirect non-admin to /
+  function isAdminCheck() {
+    let admin = false
+    isAdmin.subscribe(v => admin = v)()
+    return admin
+  }
+
   const routes = {
     '/':                Dashboard,
     '/device/:id':      DeviceDetail,
     '/alarms':          Alarms,
-    '/pending':         PendingDevices,
+    '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/notifications':   Notifications,
-    '/firmware':        Firmware,
-    '/users':           Users,
+    '/firmware':        wrap({ component: Firmware, conditions: [isAdminCheck] }),
+    '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
   }
 
   let booting = true

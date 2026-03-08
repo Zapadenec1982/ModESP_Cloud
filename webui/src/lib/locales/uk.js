@@ -165,6 +165,7 @@ export default {
     reason_placeholder: 'Причина сервісного виклику',
     work_done_placeholder: 'Опис виконаних робіт',
     delete_service_confirm: 'Видалити цей сервісний запис?',
+    access_denied: 'Доступ заборонено',
     param_category: {
       thermostat: 'Термостат',
       protection: 'Захист',
@@ -339,5 +340,14 @@ export default {
     role_updated: 'Роль оновлено',
     user_deactivated: '{0} деактивовано',
     user_reactivated: '{0} реактивовано',
+    // Device assignment
+    devices: 'Пристрої',
+    assign_devices: 'Призначити пристрої',
+    search_devices: 'Пошук пристроїв...',
+    select_all: 'Обрати всі',
+    select_none: 'Зняти всі',
+    no_devices_found: 'Пристроїв не знайдено',
+    no_devices_assigned: 'Пристроїв не призначено',
+    devices_updated: 'Доступ до пристроїв оновлено',
   },
 };

@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 7b: Backend Scalability — реалізовано**
+**Фаза 7c: Frontend RBAC — реалізовано**
 
 ---
 
@@ -162,12 +162,12 @@
 - [x] WebSocket backpressure (bufferedAmount > 64KB → skip)
 - [x] StateMap monitoring (device count, total keys, approx MB, event buffer — every 60s)
 
-#### 7c: Frontend RBAC (заплановано)
-- [ ] Stores: isAdmin, canWrite derived stores
-- [ ] Conditional UI: edit/command buttons hidden for viewer
-- [ ] Route guards: /users, /firmware, /pending → admin only
-- [ ] Device Assignment UI: checklist modal на Users page
-- [ ] i18n: нові ключі для RBAC
+#### 7c: Frontend RBAC ✅
+- [x] Stores: isAdmin, canWrite derived stores
+- [x] Conditional UI: edit/command/service buttons hidden for viewer, ParameterEditor readonly
+- [x] Route guards: /users, /firmware, /pending → admin only (svelte-spa-router wrap)
+- [x] Device Assignment UI: checklist modal на Users page (search, select all/none, bulk PUT)
+- [x] i18n: нові ключі для RBAC (uk.js + en.js)
 
 #### 7d: OTA Board Compatibility (заплановано)
 - [ ] Міграція 007: firmwares.board_type column
@@ -222,3 +222,4 @@
 - 2026-03-08 — Phase 6.5: WebUI polish — i18n (UK+EN), light/dark theme, device metadata (model, comment, manufactured_at), editing, service records, search by all fields.
 - 2026-03-08 — Phase 7a: Per-Device RBAC (backend) — migration 006, device-access middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users GET/PUT devices (bulk), grant-all-devices.js migration script.
 - 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout, batch state writer (N→1 query), heartbeat write dedup, event INSERT batching (1s flush), cleanup-telemetry.js (90-day retention), telemetry LIMIT 10000, WS backpressure (64KB), StateMap monitoring (60s stats).
+- 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), route guards (admin-only pages via svelte-spa-router wrap), device assignment modal on Users page (search, select all/none, bulk PUT), i18n keys (uk+en).

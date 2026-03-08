@@ -6,6 +6,7 @@
   export let param   // metadata entry
   export let value    // current live value
   export let sending = false
+  export let readonly = false
 
   const dispatch = createEventDispatcher()
 
@@ -74,7 +75,7 @@
         class="toggle"
         class:on={editValue}
         on:click={handleToggle}
-        disabled={sending}
+        disabled={sending || readonly}
       >
         <span class="toggle-thumb" />
       </button>
@@ -87,7 +88,7 @@
         max={param.max}
         step={param.step}
         class="num-input font-mono"
-        disabled={sending}
+        disabled={sending || readonly}
       />
       {#if unit}
         <span class="input-unit">{unit}</span>
@@ -100,7 +101,7 @@
       <button
         class="send-btn"
         on:click={send}
-        disabled={!dirty || sending}
+        disabled={!dirty || sending || readonly}
         title="Send command"
       >
         {#if sending}

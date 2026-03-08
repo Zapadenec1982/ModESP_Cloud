@@ -40,6 +40,23 @@ export const authUser = writable(null);
  */
 export const isAuthenticated = derived(authUser, $u => $u !== null);
 
+/**
+ * Derived: is the user an admin? (true when auth disabled or role === 'admin')
+ */
+export const isAdmin = derived(
+  [authEnabled, authUser],
+  ([$enabled, $user]) => !$enabled || $user?.role === 'admin'
+);
+
+/**
+ * Derived: can the user write (edit devices, send commands, add service records)?
+ * True for admin and technician, false for viewer.
+ */
+export const canWrite = derived(
+  [authEnabled, authUser],
+  ([$enabled, $user]) => !$enabled || $user?.role === 'admin' || $user?.role === 'technician'
+);
+
 // ── UI stores ────────────────────────────────────────────
 
 /**

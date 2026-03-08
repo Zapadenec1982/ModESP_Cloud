@@ -11,6 +11,7 @@
 
   export let deviceId
   export let state = {}
+  export let readonly = false
 
   let groups = []
   let loading = true
@@ -94,6 +95,7 @@
           {params}
           {state}
           {sendingKey}
+          {readonly}
           on:send={handleSend}
         />
       {/each}

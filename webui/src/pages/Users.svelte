@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices } from '../lib/api.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
@@ -124,6 +124,88 @@
     if (e.key === 'Escape') closeModal()
   }
 
+  // ── Device assignment modal ──
+  let showDevices = false
+  let deviceUser = null
+  let allDevices = []
+  let assignedIds = new Set()
+  let devicesLoading = false
+  let devicesSaving = false
+  let deviceSearch = ''
+
+  $: filteredDevices = deviceSearch
+    ? allDevices.filter(d =>
+        (d.name || '').toLowerCase().includes(deviceSearch.toLowerCase()) ||
+        (d.mqtt_device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) ||
+        (d.model || '').toLowerCase().includes(deviceSearch.toLowerCase())
+      )
+    : allDevices
+
+  async function openDevices(user) {
+    deviceUser = user
+    devicesLoading = true
+    showDevices = true
+    deviceSearch = ''
+    try {
+      const [devs, assigned] = await Promise.all([
+        getDevices(),
+        getUserDevices(user.id),
+      ])
+      allDevices = (devs?.data || devs || []).filter(d => d.status === 'active')
+      const ids = (assigned || []).map(d => d.id)
+      assignedIds = new Set(ids)
+    } catch (e) {
+      toast.error(e.message)
+      showDevices = false
+    } finally {
+      devicesLoading = false
+    }
+  }
+
+  function toggleDevice(deviceId) {
+    assignedIds = new Set(assignedIds)
+    if (assignedIds.has(deviceId)) {
+      assignedIds.delete(deviceId)
+    } else {
+      assignedIds.add(deviceId)
+    }
+    assignedIds = assignedIds  // trigger reactivity
+  }
+
+  function selectAll() {
+    assignedIds = new Set(allDevices.map(d => d.id))
+  }
+
+  function selectNone() {
+    assignedIds = new Set()
+  }
+
+  async function saveDevices() {
+    devicesSaving = true
+    try {
+      await setUserDevices(deviceUser.id, [...assignedIds])
+      toast.success($t('users.devices_updated'))
+      showDevices = false
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      devicesSaving = false
+    }
+  }
+
+  function closeDevicesModal() {
+    showDevices = false
+    deviceUser = null
+  }
+
+  function handleDevicesBackdropClick(e) {
+    if (e.target === e.currentTarget) closeDevicesModal()
+  }
+
+  function handleDevicesKey(e) {
+    if (e.key === 'Escape') closeDevicesModal()
+  }
+
   onMount(loadUsers)
 </script>
 
@@ -209,6 +291,11 @@
                 <Button variant="secondary" size="sm" on:click={() => startEdit(user)} aria-label="Edit {user.email}">
                   <Icon name="edit" size={13} />
                 </Button>
+                {#if user.role !== 'admin'}
+                  <Button variant="secondary" size="sm" on:click={() => openDevices(user)} aria-label="{$t('users.devices')} {user.email}">
+                    <Icon name="cpu" size={13} />
+                  </Button>
+                {/if}
                 {#if user.active}
                   <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}">
                     <Icon name="x-circle" size={13} />
@@ -288,6 +375,80 @@
   </div>
 {/if}
 
+<!-- Device Assignment Modal -->
+{#if showDevices}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleDevicesBackdropClick} on:keydown={handleDevicesKey} role="dialog" aria-modal="true" aria-labelledby="devices-modal-title" tabindex="-1">
+    <div class="modal modal-devices">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="devices-modal-title">{$t('users.assign_devices')}</h3>
+          <span class="modal-subtitle">{deviceUser?.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeDevicesModal} aria-label="Close dialog">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+
+      <div class="modal-body">
+        {#if devicesLoading}
+          <Skeleton height="200px" />
+        {:else}
+          <!-- Search -->
+          <div class="device-search">
+            <Icon name="search" size={14} />
+            <input
+              type="text"
+              bind:value={deviceSearch}
+              placeholder={$t('users.search_devices')}
+              class="input device-search-input"
+            />
+          </div>
+
+          <!-- Bulk actions -->
+          <div class="device-bulk-actions">
+            <button class="link-btn" on:click={selectAll}>{$t('users.select_all')}</button>
+            <span class="sep">|</span>
+            <button class="link-btn" on:click={selectNone}>{$t('users.select_none')}</button>
+            <span class="device-count">{assignedIds.size} / {allDevices.length}</span>
+          </div>
+
+          <!-- Device list -->
+          <div class="device-checklist">
+            {#if filteredDevices.length === 0}
+              <div class="device-empty">{$t('users.no_devices_found')}</div>
+            {:else}
+              {#each filteredDevices as device (device.id)}
+                <label class="device-check-item" class:checked={assignedIds.has(device.id)}>
+                  <input
+                    type="checkbox"
+                    checked={assignedIds.has(device.id)}
+                    on:change={() => toggleDevice(device.id)}
+                  />
+                  <div class="device-check-info">
+                    <span class="device-check-name">{device.name || device.mqtt_device_id}</span>
+                    {#if device.name}
+                      <span class="device-check-id">{device.mqtt_device_id}</span>
+                    {/if}
+                    {#if device.model}
+                      <span class="device-check-model">{device.model}</span>
+                    {/if}
+                  </div>
+                </label>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeDevicesModal}>{$t('common.cancel')}</Button>
+          <Button variant="primary" loading={devicesSaving} on:click={saveDevices} icon="check">{$t('common.save')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .users-page {
     display: flex;
@@ -337,7 +498,7 @@
   .th-status  { width: 90px; }
   .th-created { width: 100px; }
   .th-login   { width: 100px; }
-  .th-actions { width: 110px; text-align: right; }
+  .th-actions { width: 140px; text-align: right; }
 
   /* User rows */
   .user-list {
@@ -384,7 +545,7 @@
   .cell-status  { width: 90px; }
   .cell-created { width: 100px; }
   .cell-login   { width: 100px; }
-  .cell-actions { width: 110px; justify-content: flex-end; gap: var(--space-1); }
+  .cell-actions { width: 140px; justify-content: flex-end; gap: var(--space-1); }
 
   .user-email {
     overflow: hidden;
@@ -526,6 +687,150 @@
     gap: var(--space-2);
     padding-top: var(--space-2);
     border-top: 1px solid var(--border-muted);
+  }
+
+  /* Device assignment modal */
+  .modal-devices {
+    max-width: 520px;
+  }
+
+  .modal-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .modal-subtitle {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .device-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+  }
+
+  .device-search-input {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    font-size: var(--text-sm) !important;
+  }
+
+  .device-search-input:focus {
+    outline: none !important;
+  }
+
+  .device-bulk-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    padding: 0;
+    font-family: var(--font-sans);
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
+  .sep {
+    color: var(--border-default);
+  }
+
+  .device-count {
+    margin-left: auto;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .device-checklist {
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+  }
+
+  .device-empty {
+    padding: var(--space-4);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .device-check-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-muted);
+    transition: background var(--transition-fast);
+  }
+
+  .device-check-item:last-child {
+    border-bottom: none;
+  }
+
+  .device-check-item:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .device-check-item.checked {
+    background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+  }
+
+  .device-check-item input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-blue);
+    cursor: pointer;
+  }
+
+  .device-check-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .device-check-name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .device-check-id {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-family: var(--font-mono, monospace);
+  }
+
+  .device-check-model {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   /* Mobile */

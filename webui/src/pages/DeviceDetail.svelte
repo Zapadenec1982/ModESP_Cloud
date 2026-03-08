@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { navigate, liveState } from '../lib/stores.js'
+  import { navigate, liveState, canWrite } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import StatusDot from '../components/ui/StatusDot.svelte'
@@ -221,9 +221,11 @@
         {#if hasAlarm}
           <Badge variant="danger" pulse>{$t('device.alarm_badge')}</Badge>
         {/if}
-        <button class="edit-btn" on:click={openEdit} title={$t('device.edit_device')}>
-          <Icon name="edit" size={16} />
-        </button>
+        {#if $canWrite}
+          <button class="edit-btn" on:click={openEdit} title={$t('device.edit_device')}>
+            <Icon name="edit" size={16} />
+          </button>
+        {/if}
       </div>
 
       <div class="header-meta">
@@ -288,17 +290,19 @@
       {#if activeTab === 'chart'}
         <TelemetryChart deviceId={resolvedId} />
       {:else if activeTab === 'params'}
-        <ParameterEditor deviceId={resolvedId} state={$liveState} />
+        <ParameterEditor deviceId={resolvedId} state={$liveState} readonly={!$canWrite} />
       {:else if activeTab === 'alarms'}
         <AlarmHistory deviceId={resolvedId} />
       {:else if activeTab === 'service'}
         <div class="service-section">
           <div class="service-header">
             <h3>{$t('device.service_records')}</h3>
-            <button class="btn btn-sm btn-primary" on:click={openAddService}>
-              <Icon name="plus" size={14} />
-              {$t('device.add_service_record')}
-            </button>
+            {#if $canWrite}
+              <button class="btn btn-sm btn-primary" on:click={openAddService}>
+                <Icon name="plus" size={14} />
+                {$t('device.add_service_record')}
+              </button>
+            {/if}
           </div>
 
           {#if serviceLoading}
@@ -318,10 +322,12 @@
                       <Icon name="user" size={14} />
                       {record.technician}
                     </span>
-                    <button class="service-delete" on:click={() => removeServiceRecord(record.id)}
-                      title={$t('common.delete')}>
-                      <Icon name="trash" size={14} />
-                    </button>
+                    {#if $canWrite}
+                      <button class="service-delete" on:click={() => removeServiceRecord(record.id)}
+                        title={$t('common.delete')}>
+                        <Icon name="trash" size={14} />
+                      </button>
+                    {/if}
                   </div>
                   <div class="service-card-body">
                     <div class="service-field">

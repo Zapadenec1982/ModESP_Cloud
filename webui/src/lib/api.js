@@ -428,6 +428,17 @@ export function deleteUser(id) {
   });
 }
 
+export function getUserDevices(userId) {
+  return request(`/users/${userId}/devices`);
+}
+
+export function setUserDevices(userId, deviceIds) {
+  return request(`/users/${userId}/devices`, {
+    method: 'PUT',
+    body: JSON.stringify({ device_ids: deviceIds }),
+  });
+}
+
 // ── Firmware (Phase 6) ─────────────────────────────────
 
 export function getFirmwares() {

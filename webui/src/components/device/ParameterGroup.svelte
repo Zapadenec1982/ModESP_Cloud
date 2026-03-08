@@ -8,6 +8,7 @@
   export let params = []
   export let state = {}
   export let sendingKey = null
+  export let readonly = false
 
   const dispatch = createEventDispatcher()
 
@@ -36,6 +37,7 @@
           {param}
           value={state[param.key]}
           sending={sendingKey === param.key}
+          {readonly}
           on:send={handleSend}
         />
       {/each}

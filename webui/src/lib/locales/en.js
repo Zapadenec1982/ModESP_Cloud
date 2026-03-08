@@ -165,6 +165,7 @@ export default {
     reason_placeholder: 'Reason for service call',
     work_done_placeholder: 'Description of work performed',
     delete_service_confirm: 'Delete this service record?',
+    access_denied: 'Access denied',
     param_category: {
       thermostat: 'Thermostat',
       protection: 'Protection',
@@ -339,5 +340,14 @@ export default {
     role_updated: 'Role updated',
     user_deactivated: '{0} deactivated',
     user_reactivated: '{0} reactivated',
+    // Device assignment
+    devices: 'Devices',
+    assign_devices: 'Assign Devices',
+    search_devices: 'Search devices...',
+    select_all: 'Select all',
+    select_none: 'Select none',
+    no_devices_found: 'No devices found',
+    no_devices_assigned: 'No devices assigned',
+    devices_updated: 'Device access updated',
   },
 };
