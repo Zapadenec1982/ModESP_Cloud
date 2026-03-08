@@ -175,6 +175,7 @@ ModESP_Cloud/
 │   │   │   └── firmware.js      # OTA endpoints
 │   │   ├── middleware/
 │   │   │   ├── auth.js          # JWT перевірка, tenant ізоляція
+│   │   │   ├── device-access.js # Per-device RBAC (filterDeviceAccess, checkDeviceAccess)
 │   │   │   └── validate.js      # Joi/Zod валідація
 │   │   └── db/
 │   │       ├── schema.sql       # Повна схема БД
@@ -202,6 +203,9 @@ ModESP_Cloud/
 
 ### Безпека — найвищий пріоритет
 - `tenant_id` в КОЖНОМУ запиті до БД — без винятків
+- Per-device RBAC: non-admin users бачать тільки assigned devices (user_devices)
+- `filterDeviceAccess()` для list endpoints, `checkDeviceAccess()` для single-device
+- Admin та AUTH_ENABLED=false bypass все per-device filtering
 - Всі вхідні дані валідуються до обробки (Joi або Zod)
 - Паролі — bcrypt, мінімум 12 rounds
 - JWT secret — з env, ніколи не хардкодити
@@ -252,11 +256,17 @@ logger.error({ err }, 'DB connection failed')
 
 ```javascript
 // Порядок middleware для захищених роутів:
-router.use(authenticate)      // 1. перевірити JWT
-router.use(extractTenant)     // 2. tenant_id з токена в req.tenantId
-router.use(authorize(roles))  // 3. перевірити роль (якщо потрібно)
-// 4. обробник роуту
+router.use(authenticate)            // 1. перевірити JWT
+router.use(extractTenant)           // 2. tenant_id з токена в req.tenantId
+router.use(authorize(roles))        // 3. перевірити роль (якщо потрібно)
+// 4a. filterDeviceAccess()         — для list endpoints (GET /devices, GET /alarms)
+// 4b. checkDeviceAccess()          — для single-device endpoints (GET /devices/:id)
+// 5. обробник роуту
 ```
+
+**Per-device RBAC bypass:**
+- `AUTH_ENABLED=false` → middleware прозоро пропускає (backward compat)
+- `role === 'admin'` → бачить все, без фільтрації
 
 ---
 
@@ -314,13 +324,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 6.5: WebUI Polish & Device Management** — завершено
+**Фаза 7a: Per-Device RBAC (backend)** — завершено
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-005) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-006) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -331,6 +341,7 @@ git push origin main
 | History & Analytics (Phase 5) | ✅ telemetry stats, alarm stats, fleet summary, uPlot chart, AlarmHistory, Dashboard fleet bar |
 | Fleet OTA (Phase 6) | ✅ Cloud: firmware upload/list/delete, deploy/rollout, status checker. Firmware: OTA handler E2E verified (~8s) |
 | WebUI Polish (Phase 6.5) | ✅ i18n (UK+EN), light/dark theme, PATCH devices, service records, search by model/serial |
+| Per-Device RBAC (Phase 7a) | ✅ device-access middleware, all routes protected, WS per-device check, users device management, grant-all-devices script |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | 🔄 В процесі |
 
@@ -359,3 +370,4 @@ git push origin main
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete API (multer), OTA deploy + group rollout API, ota.js service (batch scheduling, periodic status checker, auto-pause on failure threshold), sendJsonCommand (QoS 1), Firmware.svelte WebUI page with deploy modal.
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler verified E2E (~8s). Partition table fix (otadata + ota_1 for rollback). ROADMAP оновлено.
 - 2026-03-08 — Phase 6.5: i18n (UK+EN), light/dark theme toggle, device metadata (model, comment, manufactured_at), PATCH /devices/:id, service records CRUD, search by model/serial, migration 005.
+- 2026-03-08 — Phase 7a: Per-Device RBAC — device-access.js middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users device management (GET/PUT bulk), grant-all-devices.js migration script, migration 006.

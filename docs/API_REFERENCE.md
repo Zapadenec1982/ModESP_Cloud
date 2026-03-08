@@ -360,11 +360,92 @@ Max range: 31 day.
 ### `PUT /users/:id`
 ### `DELETE /users/:id`
 
+### `GET /users/:id/devices`
+Список пристроїв, до яких користувач має доступ.
+
+**Ролі:** admin
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "mqtt_device_id": "A4CF12",
+      "name": "Холодильна камера №1",
+      "location": "Склад А",
+      "model": "ModESP-4R",
+      "online": true
+    }
+  ]
+}
+```
+
+### `PUT /users/:id/devices`
+Bulk-заміна списку пристроїв користувача (видаляє старі, додає нові).
+
+**Ролі:** admin
+
+**Body:**
+```json
+{ "device_ids": ["uuid1", "uuid2", "uuid3"] }
+```
+
+**Response 200:**
+```json
+{ "data": { "message": "Device access updated", "count": 3 } }
+```
+
 ### `POST /users/:id/devices`
-Надати доступ до пристрою.
+Надати доступ до одного пристрою.
+
+**Ролі:** admin
 
 ```json
 { "device_id": "uuid" }
+```
+
+### `DELETE /users/:id/devices/:deviceId`
+Відкликати доступ до пристрою.
+
+**Ролі:** admin
+
+---
+
+## Per-Device RBAC (Phase 7a)
+
+Всі ендпоінти пристроїв тепер перевіряють per-device доступ:
+
+**Правила:**
+- `admin` — бачить всі пристрої тенанту, без обмежень
+- `technician` / `viewer` — бачить тільки пристрої з таблиці `user_devices`
+- `AUTH_ENABLED=false` — всі перевірки вимкнені (backward compatible)
+
+**List endpoints** (використовують `filterDeviceAccess`):
+- `GET /devices` — фільтрує по user_devices
+- `GET /alarms` — фільтрує по device_id
+- `GET /alarms/stats` — фільтрує по device_id
+- `GET /fleet/summary` — рахує тільки assigned devices
+
+**Single-device endpoints** (використовують `checkDeviceAccess`):
+- `GET /devices/:id` — 403 якщо немає доступу
+- `PATCH /devices/:id` — 403 якщо немає доступу
+- `POST /devices/:id/command` — 403 якщо немає доступу
+- `POST /devices/:id/request-state` — 403 якщо немає доступу
+- `GET/POST/DELETE /devices/:id/service-records` — 403 якщо немає доступу
+- `GET /devices/:id/telemetry` — 403 якщо немає доступу
+- `GET /devices/:id/telemetry/stats` — 403 якщо немає доступу
+- `GET /devices/:id/alarms` — 403 якщо немає доступу
+
+**WebSocket:** `subscribe` перевіряє user_devices для non-admin.
+
+**Помилка 403:**
+```json
+{
+  "error": "forbidden",
+  "message": "Device access denied",
+  "status": 403
+}
 ```
 
 ---
@@ -604,3 +685,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 - 2026-03-07 — Phase 5: telemetry from/to + stats (bucketed), alarm stats, fleet summary endpoints.
 - 2026-03-07 — Phase 6: firmware upload/list/delete, OTA deploy + group rollout, rollout pause/resume/cancel, jobs listing.
 - 2026-03-08 — Device metadata: PATCH /devices/:id, service records CRUD, new fields (model, comment, manufactured_at), users with access in device detail.
+- 2026-03-08 — Phase 7a: Per-Device RBAC — GET/PUT /users/:id/devices, filterDeviceAccess/checkDeviceAccess middleware on all device endpoints, WebSocket per-device check, 403 for unauthorized device access.

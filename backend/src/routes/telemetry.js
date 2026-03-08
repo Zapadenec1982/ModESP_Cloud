@@ -2,6 +2,7 @@
 
 const { Router } = require('express');
 const db         = require('../services/db');
+const { checkDeviceAccess } = require('../middleware/device-access');
 
 const router = Router();
 
@@ -61,7 +62,7 @@ function parseChannels(query) {
 // ── GET /api/devices/:id/telemetry ──────────────────────
 // Query params: hours (default 24) OR from+to (ISO), channels (comma-separated)
 
-router.get('/:id/telemetry', async (req, res, next) => {
+router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
   try {
     const mqttId = await resolveDeviceId(req.params.id, req.tenantId);
     if (!mqttId) {
@@ -107,7 +108,7 @@ router.get('/:id/telemetry', async (req, res, next) => {
 // Aggregated min/max/avg per time bucket.
 // Query params: from, to (or hours), channels, bucket (5m|15m|1h|6h|1d, default 1h)
 
-router.get('/:id/telemetry/stats', async (req, res, next) => {
+router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) => {
   try {
     const mqttId = await resolveDeviceId(req.params.id, req.tenantId);
     if (!mqttId) {

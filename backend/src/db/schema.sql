@@ -72,13 +72,20 @@ CREATE TABLE users (
 CREATE INDEX idx_users_tenant ON users(tenant_id);
 
 -- ============================================================
--- User-Device access (many-to-many)
+-- User-Device access (many-to-many, per-device RBAC)
 -- ============================================================
 CREATE TABLE user_devices (
-  user_id    UUID REFERENCES users(id)   ON DELETE CASCADE,
-  device_id  UUID REFERENCES devices(id) ON DELETE CASCADE,
+  user_id    UUID         REFERENCES users(id)   ON DELETE CASCADE,
+  device_id  UUID         REFERENCES devices(id) ON DELETE CASCADE,
+  granted_by UUID         REFERENCES users(id),
+  granted_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, device_id)
 );
+
+-- "Which users have access to device X?" (device detail page)
+CREATE INDEX idx_user_devices_device ON user_devices(device_id);
+-- "Which devices are accessible to user X?" (device list filtering)
+CREATE INDEX idx_user_devices_user   ON user_devices(user_id);
 
 -- ============================================================
 -- Service Records (maintenance/repair journal per device)

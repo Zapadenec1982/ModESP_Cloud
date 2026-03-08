@@ -2,12 +2,28 @@
 
 const { Router } = require('express');
 const db         = require('../services/db');
+const { filterDeviceAccess } = require('../middleware/device-access');
 
 const router = Router();
 
 // ── GET /api/fleet/summary ──────────────────────────────
-router.get('/summary', async (req, res, next) => {
+router.get('/summary', filterDeviceAccess(), async (req, res, next) => {
   try {
+    // Build WHERE clause for per-device RBAC
+    const deviceFilterSql = req.deviceFilter
+      ? ` AND id = ANY($2)`
+      : '';
+    const deviceParams = req.deviceFilter
+      ? [req.tenantId, req.deviceFilter]
+      : [req.tenantId];
+
+    const alarmFilterSql = req.deviceMqttIds
+      ? ` AND device_id = ANY($2)`
+      : '';
+    const alarmParams = req.deviceMqttIds
+      ? [req.tenantId, req.deviceMqttIds]
+      : [req.tenantId];
+
     const [devicesRes, activeAlarmsRes, recentAlarmsRes] = await Promise.all([
       db.query(`
         SELECT
@@ -15,21 +31,21 @@ router.get('/summary', async (req, res, next) => {
           COUNT(*) FILTER (WHERE online = true)::int  AS online,
           COUNT(*) FILTER (WHERE status = 'active')::int AS active
         FROM devices
-        WHERE tenant_id = $1
-      `, [req.tenantId]),
+        WHERE tenant_id = $1${deviceFilterSql}
+      `, deviceParams),
 
       db.query(`
         SELECT COUNT(*)::int AS count
         FROM alarms
-        WHERE tenant_id = $1 AND active = true
-      `, [req.tenantId]),
+        WHERE tenant_id = $1 AND active = true${alarmFilterSql}
+      `, alarmParams),
 
       db.query(`
         SELECT COUNT(*)::int AS count
         FROM alarms
         WHERE tenant_id = $1
-          AND triggered_at > NOW() - INTERVAL '24 hours'
-      `, [req.tenantId]),
+          AND triggered_at > NOW() - INTERVAL '24 hours'${alarmFilterSql}
+      `, alarmParams),
     ]);
 
     const devices = devicesRes.rows[0];

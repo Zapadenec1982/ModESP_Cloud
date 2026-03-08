@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 6.5: WebUI Polish & Device Management — реалізовано**
+**Фаза 7a: Per-Device RBAC — реалізовано (backend)**
 
 ---
 
@@ -137,7 +137,49 @@
 
 ---
 
-### Фаза 7: Advanced Analytics (майбутнє)
+### Фаза 7: RBAC + Scalability
+**Ціль:** Масштабування до 5000+ пристроїв, per-device access control для техніків/viewers.
+
+#### 7a: Per-Device RBAC (Backend) ✅
+- [x] Міграція 006: audit columns (granted_by, granted_at) + indexes для user_devices
+- [x] Middleware: `filterDeviceAccess()` для list-ендпоінтів (GET /devices, GET /alarms, GET /fleet/summary)
+- [x] Middleware: `checkDeviceAccess()` для single-device ендпоінтів (один JOIN запит)
+- [x] Всі device routes: per-device access check (devices, telemetry, alarms, service-records)
+- [x] Fleet summary: фільтрація по assigned devices для non-admin
+- [x] WebSocket: per-device access check при subscribe
+- [x] Users API: GET /users/:id/devices, PUT /users/:id/devices (bulk replace)
+- [x] POST /users/:id/devices: tenant verification + granted_by
+- [x] grant-all-devices.js: одноразовий скрипт для backward compatibility
+- [x] schema.sql: оновлено user_devices з audit columns + indexes
+
+#### 7b: Backend Scalability (заплановано)
+- [ ] DB Pool: max=30, statement_timeout=30s
+- [ ] Batch state writer (N queries → 1 multi-row UPDATE)
+- [ ] Heartbeat write dedup (firmware_version тільки при зміні)
+- [ ] Event INSERT batching (буфер + flush щосекунди)
+- [ ] Telemetry retention (cleanup партицій >90 днів)
+- [ ] Telemetry query LIMIT 10000 + X-Truncated header
+- [ ] WebSocket backpressure (bufferedAmount check)
+
+#### 7c: Frontend RBAC (заплановано)
+- [ ] Stores: isAdmin, canWrite derived stores
+- [ ] Conditional UI: edit/command buttons hidden for viewer
+- [ ] Route guards: /users, /firmware, /pending → admin only
+- [ ] Device Assignment UI: checklist modal на Users page
+- [ ] i18n: нові ключі для RBAC
+
+#### 7d: OTA Board Compatibility (заплановано)
+- [ ] Міграція 007: firmwares.board_type column
+- [ ] Firmware upload з board_type
+- [ ] OTA deploy: board validation (firmware.board_type vs device.model)
+- [ ] Rollout: фільтрація eligible devices по board
+- [ ] Firmware WebUI: board awareness, incompatible devices disabled
+
+**Результат:** Безпечна мультикористувацька система з per-device access control.
+
+---
+
+### Фаза 8: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
@@ -177,3 +219,4 @@
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete, OTA deploy + group rollout with batching, ota.js service (status checker, auto-pause), sendJsonCommand QoS 1, Firmware WebUI page, migration 003.
 - 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler (ota_handler.cpp) — E2E verified. Partition table fix (otadata + ota_1 for rollback).
 - 2026-03-08 — Phase 6.5: WebUI polish — i18n (UK+EN), light/dark theme, device metadata (model, comment, manufactured_at), editing, service records, search by all fields.
+- 2026-03-08 — Phase 7a: Per-Device RBAC (backend) — migration 006, device-access middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users GET/PUT devices (bulk), grant-all-devices.js migration script.

@@ -2,12 +2,13 @@
 
 const { Router } = require('express');
 const db         = require('../services/db');
+const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 
 const router = Router();
 
 // ── GET /api/alarms ───────────────────────────────────────
 // List alarms for current tenant. Query: active (bool), from, to, limit, offset
-router.get('/', async (req, res, next) => {
+router.get('/', filterDeviceAccess(), async (req, res, next) => {
   try {
     const active = req.query.active;
     const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 200);
@@ -24,6 +25,12 @@ router.get('/', async (req, res, next) => {
     `;
     const params = [req.tenantId];
     let idx = 2;
+
+    // Per-device RBAC: filter by user's assigned devices
+    if (req.deviceMqttIds) {
+      sql += ` AND a.device_id = ANY($${idx++})`;
+      params.push(req.deviceMqttIds);
+    }
 
     if (active === 'true') {
       sql += ` AND a.active = true`;
@@ -53,12 +60,12 @@ router.get('/', async (req, res, next) => {
 
 // ── GET /api/alarms/stats ──────────────────────────────────
 // Alarm frequency statistics. Query: from, to
-router.get('/stats', async (req, res, next) => {
+router.get('/stats', filterDeviceAccess(), async (req, res, next) => {
   try {
     const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400 * 1000);
     const to   = req.query.to   ? new Date(req.query.to)   : new Date();
 
-    const { rows } = await db.query(`
+    let sql = `
       SELECT
         alarm_code,
         COUNT(*)::int AS count,
@@ -67,9 +74,18 @@ router.get('/stats', async (req, res, next) => {
       WHERE tenant_id = $1
         AND triggered_at >= $2
         AND triggered_at < $3
-      GROUP BY alarm_code
-      ORDER BY count DESC
-    `, [req.tenantId, from, to]);
+    `;
+    const params = [req.tenantId, from, to];
+
+    // Per-device RBAC
+    if (req.deviceMqttIds) {
+      sql += ` AND device_id = ANY($4)`;
+      params.push(req.deviceMqttIds);
+    }
+
+    sql += ` GROUP BY alarm_code ORDER BY count DESC`;
+
+    const { rows } = await db.query(sql, params);
 
     res.json({ data: rows });
   } catch (err) {
@@ -79,7 +95,7 @@ router.get('/stats', async (req, res, next) => {
 
 // ── GET /api/devices/:id/alarms ───────────────────────────
 // Alarms for a specific device. Query: active, from, to, limit, offset
-router.get('/:id/alarms', async (req, res, next) => {
+router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
     const active = req.query.active;

@@ -114,13 +114,13 @@ function handleClientMessage(ws, msg) {
 }
 
 async function subscribe(ws, deviceId) {
-  // ── Tenant isolation: verify device belongs to user's tenant ──
+  // ── Tenant isolation + per-device RBAC ──
   let dbState = {};
   try {
     const params = [deviceId];
-    let sql = 'SELECT last_state, tenant_id FROM devices WHERE mqtt_device_id = $1';
+    let sql = 'SELECT d.id, d.last_state, d.tenant_id FROM devices d WHERE d.mqtt_device_id = $1';
     if (AUTH_ENABLED && ws._user) {
-      sql += ' AND tenant_id = $2';
+      sql += ' AND d.tenant_id = $2';
       params.push(ws._user.tenantId);
     }
     sql += ' LIMIT 1';
@@ -130,6 +130,17 @@ async function subscribe(ws, deviceId) {
     }
     if (rows[0].last_state) {
       dbState = rows[0].last_state;
+    }
+
+    // Per-device access check for non-admin users
+    if (AUTH_ENABLED && ws._user && ws._user.role !== 'admin') {
+      const access = await db.query(
+        'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2',
+        [ws._user.id, rows[0].id]
+      );
+      if (access.rows.length === 0) {
+        return sendJSON(ws, { type: 'error', message: 'Device access denied' });
+      }
     }
   } catch (err) {
     logger.warn({ err, deviceId }, 'Failed to load device state for WS subscribe');

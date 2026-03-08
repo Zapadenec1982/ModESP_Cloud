@@ -5,6 +5,7 @@ const { z }      = require('zod');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const { authorize } = require('../middleware/auth');
+const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const stateMeta  = require('../config/state_meta.json');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
@@ -32,17 +33,24 @@ async function resolveRoutingSlug(mqttId, tenantId) {
 
 // ── GET /api/devices ──────────────────────────────────────
 // List all devices for current tenant. Augments DB data with live state.
-router.get('/', async (req, res, next) => {
+router.get('/', filterDeviceAccess(), async (req, res, next) => {
   try {
-    const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, name, location, serial_number,
+    let sql = `SELECT id, mqtt_device_id, name, location, serial_number,
               model, comment, manufactured_at, firmware_version,
               online, status, last_seen, created_at
        FROM devices
-       WHERE tenant_id = $1
-       ORDER BY name NULLS LAST, mqtt_device_id`,
-      [req.tenantId]
-    );
+       WHERE tenant_id = $1`;
+    const params = [req.tenantId];
+
+    // Per-device RBAC: non-admin users see only assigned devices
+    if (req.deviceFilter) {
+      sql += ` AND id = ANY($2)`;
+      params.push(req.deviceFilter);
+    }
+
+    sql += ` ORDER BY name NULLS LAST, mqtt_device_id`;
+
+    const { rows } = await db.query(sql, params);
 
     // Augment with live alarm_active from stateMap
     const devices = rows.map(row => {
@@ -163,7 +171,7 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
 
 // ── GET /api/devices/:id ──────────────────────────────────
 // Full device detail: DB record + live state from stateMap.
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -244,7 +252,7 @@ const updateDeviceSchema = z.object({
 const maybeAuthorize = (...roles) =>
   AUTH_ENABLED ? authorize(...roles) : (_req, _res, next) => next();
 
-router.patch('/:id', maybeAuthorize('admin', 'technician'), async (req, res, next) => {
+router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const parsed = updateDeviceSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -294,7 +302,7 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), async (req, res, nex
 
 // ── POST /api/devices/:id/command ─────────────────────────
 // Send a command to a device. Body: { key, value }
-router.post('/:id/command', async (req, res, next) => {
+router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
     const { key, value } = req.body || {};
@@ -359,7 +367,7 @@ router.post('/:id/command', async (req, res, next) => {
 
 // ── POST /api/devices/:id/request-state ───────────────────
 // Ask device to republish all 48 state keys (clears ESP32 publish cache).
-router.post('/:id/request-state', async (req, res, next) => {
+router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
     const isUuid = id.length > 8;
@@ -404,7 +412,7 @@ router.post('/:id/request-state', async (req, res, next) => {
 
 // ── GET /api/devices/:id/service-records ────────────────
 // List service records for a device.
-router.get('/:id/service-records', async (req, res, next) => {
+router.get('/:id/service-records', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
     const isUuid = id.length > 8;
@@ -449,7 +457,7 @@ const serviceRecordSchema = z.object({
   work_done:    z.string().min(1).max(2000),
 });
 
-router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), async (req, res, next) => {
+router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const parsed = serviceRecordSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -496,7 +504,7 @@ router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), async
 
 // ── DELETE /api/devices/:deviceId/service-records/:recordId ─
 // Remove a service record.
-router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technician'), async (req, res, next) => {
+router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { recordId } = req.params;
 
