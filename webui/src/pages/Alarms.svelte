@@ -77,6 +77,7 @@
             <button
               class="alarm-row active"
               on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
+              aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
             >
               <div class="alarm-severity">
                 <Badge variant={severityVariant(alarm.alarm_code)} pulse>
@@ -117,6 +118,7 @@
             <button
               class="alarm-row history"
               on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
+              aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
             >
               <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
               <span class="td">{alarmLabel(alarm.alarm_code)}</span>

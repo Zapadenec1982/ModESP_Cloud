@@ -61,7 +61,7 @@
     {:else}
       <span class="brand-icon">M</span>
     {/if}
-    <button class="collapse-btn" on:click={toggleCollapse} title="Toggle sidebar">
+    <button class="collapse-btn" on:click={toggleCollapse} title="Toggle sidebar" aria-expanded={!$sidebarCollapsed} aria-label="Toggle sidebar">
       <Icon name={$sidebarCollapsed ? 'chevron-right' : 'chevron-left'} size={16} />
     </button>
   </div>
@@ -83,6 +83,7 @@
           class:active={isActive(item.path, $location)}
           on:click={() => handleNav(item.path)}
           title={$sidebarCollapsed ? item.label : ''}
+          aria-current={isActive(item.path, $location) ? 'page' : undefined}
         >
           <Icon name={item.icon} size={18} />
           {#if !$sidebarCollapsed}

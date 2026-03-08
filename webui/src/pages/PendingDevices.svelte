@@ -42,6 +42,10 @@
     assigningDevice = null
   }
 
+  function handleBackdropKey(e) {
+    if (e.key === 'Escape') closeAssign()
+  }
+
   async function confirmAssign() {
     if (!assigningDevice) return
     assigning = true
@@ -115,11 +119,13 @@
 
 <!-- Assign Modal -->
 {#if assigningDevice}
-  <div class="modal-backdrop" role="presentation" on:click={closeAssign} on:keydown={() => {}}>
-    <div class="modal" role="dialog" on:click|stopPropagation on:keydown={() => {}}>
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={closeAssign} on:keydown={handleBackdropKey} role="dialog" aria-modal="true" aria-labelledby="assign-modal-title" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
-        <h3>Assign Device</h3>
-        <button class="close-btn" on:click={closeAssign}>
+        <h3 id="assign-modal-title">Assign Device</h3>
+        <button class="close-btn" on:click={closeAssign} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
       </div>

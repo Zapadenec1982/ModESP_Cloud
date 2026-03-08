@@ -15,6 +15,7 @@
   class:loading
   disabled={disabled || loading}
   on:click
+  {...$$restProps}
 >
   {#if loading}
     <span class="spinner" />

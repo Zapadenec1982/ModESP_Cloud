@@ -151,6 +151,10 @@
     deployFirmware = null
   }
 
+  function handleBackdropKey(e) {
+    if (e.key === 'Escape') closeDeploy()
+  }
+
   function toggleDevice(devId) {
     if (selectedDevices.has(devId)) {
       selectedDevices.delete(devId)
@@ -252,16 +256,16 @@
       </div>
       <div class="upload-form">
         <div class="form-field">
-          <label class="field-label">File (.bin)</label>
-          <input type="file" accept=".bin" on:change={handleFileSelect} disabled={uploading} class="file-input" />
+          <label class="field-label" for="fw-file">File (.bin)</label>
+          <input id="fw-file" type="file" accept=".bin" on:change={handleFileSelect} disabled={uploading} class="file-input" />
         </div>
         <div class="form-field">
-          <label class="field-label">Version</label>
-          <input type="text" bind:value={uploadVersion} placeholder="e.g. 1.2.3" disabled={uploading} class="input" />
+          <label class="field-label" for="fw-version">Version</label>
+          <input id="fw-version" type="text" bind:value={uploadVersion} placeholder="e.g. 1.2.3" disabled={uploading} class="input" />
         </div>
         <div class="form-field flex-grow">
-          <label class="field-label">Notes</label>
-          <input type="text" bind:value={uploadNotes} placeholder="Release notes (optional)" disabled={uploading} class="input" />
+          <label class="field-label" for="fw-notes">Notes</label>
+          <input id="fw-notes" type="text" bind:value={uploadNotes} placeholder="Release notes (optional)" disabled={uploading} class="input" />
         </div>
         <div class="form-field form-action">
           <Button variant="primary" icon="upload" on:click={handleUpload} loading={uploading}
@@ -303,7 +307,7 @@
                   <td class="text-muted">{formatDate(fw.created_at)}</td>
                   <td class="actions">
                     <Button variant="primary" size="sm" on:click={() => openDeploy(fw)}>Deploy</Button>
-                    <Button variant="danger" size="sm" on:click={() => handleDelete(fw)}>
+                    <Button variant="danger" size="sm" on:click={() => handleDelete(fw)} aria-label="Delete firmware {fw.version}">
                       <Icon name="trash" size={13} />
                     </Button>
                   </td>
@@ -411,11 +415,13 @@
 
 <!-- ── Deploy Modal ──────────────────────────────── -->
 {#if showDeploy}
-  <div class="modal-backdrop" role="presentation" on:click={closeDeploy} on:keydown={() => {}}>
-    <div class="modal" role="dialog" on:click|stopPropagation on:keydown={() => {}}>
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={closeDeploy} on:keydown={handleBackdropKey} role="dialog" aria-modal="true" aria-labelledby="deploy-modal-title" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
-        <h3>Deploy {deployFirmware?.version}</h3>
-        <button class="close-btn" on:click={closeDeploy}>
+        <h3 id="deploy-modal-title">Deploy {deployFirmware?.version}</h3>
+        <button class="close-btn" on:click={closeDeploy} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -434,8 +440,8 @@
 
         {#if deployMode === 'single'}
           <div class="field">
-            <label class="field-label">Device</label>
-            <select bind:value={deployDeviceId} class="input">
+            <label class="field-label" for="deploy-device">Device</label>
+            <select id="deploy-device" bind:value={deployDeviceId} class="input">
               {#each devices as d}
                 <option value={d.mqtt_device_id}>{d.name || d.mqtt_device_id} ({d.mqtt_device_id})</option>
               {/each}
@@ -443,8 +449,8 @@
           </div>
         {:else}
           <div class="device-checklist">
-            <label class="field-label">Select devices</label>
-            <div class="checklist-inner">
+            <span class="field-label" id="device-select-label">Select devices</span>
+            <div class="checklist-inner" role="group" aria-labelledby="device-select-label">
               {#each devices as d}
                 <label class="device-check">
                   <input type="checkbox" checked={selectedDevices.has(d.mqtt_device_id)}
@@ -460,18 +466,18 @@
           </div>
           <div class="rollout-opts">
             <div class="field">
-              <label class="field-label">Batch size</label>
-              <input type="number" bind:value={deployBatchSize} min="1" max="50" class="input input-sm" />
+              <label class="field-label" for="batch-size">Batch size</label>
+              <input id="batch-size" type="number" bind:value={deployBatchSize} min="1" max="50" class="input input-sm" />
             </div>
             <div class="field">
-              <label class="field-label">Interval (sec)</label>
-              <input type="number" bind:value={deployIntervalS} min="30" max="3600" class="input input-sm" />
+              <label class="field-label" for="batch-interval">Interval (sec)</label>
+              <input id="batch-interval" type="number" bind:value={deployIntervalS} min="30" max="3600" class="input input-sm" />
             </div>
           </div>
         {/if}
 
         {#if deployError}
-          <div class="deploy-error">
+          <div class="deploy-error" role="alert">
             <Icon name="alert-triangle" size={14} />
             {deployError}
           </div>

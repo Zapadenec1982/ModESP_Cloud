@@ -126,15 +126,16 @@
       </div>
       <form on:submit|preventDefault={handleAdd} class="add-form">
         <div class="form-field">
-          <label class="field-label">Channel</label>
-          <select bind:value={newChannel} class="input">
+          <label class="field-label" for="sub-channel">Channel</label>
+          <select id="sub-channel" bind:value={newChannel} class="input">
             <option value="telegram">Telegram</option>
             <option value="fcm">FCM</option>
           </select>
         </div>
         <div class="form-field flex-grow">
-          <label class="field-label">Address</label>
+          <label class="field-label" for="sub-address">Address</label>
           <input
+            id="sub-address"
             type="text"
             bind:value={newAddress}
             placeholder={newChannel === 'telegram' ? 'Chat ID' : 'FCM Token'}
@@ -142,8 +143,8 @@
           />
         </div>
         <div class="form-field">
-          <label class="field-label">Label</label>
-          <input type="text" bind:value={newLabel} placeholder="Optional" class="input" />
+          <label class="field-label" for="sub-label">Label</label>
+          <input id="sub-label" type="text" bind:value={newLabel} placeholder="Optional" class="input" />
         </div>
         <div class="form-field form-action">
           <Button variant="primary" type="submit" loading={adding} icon="plus">Add</Button>
@@ -187,7 +188,7 @@
                   loading={testingIds.has(sub.id)}
                   on:click={() => handleTest(sub)}
                 >Test</Button>
-                <Button variant="danger" size="sm" on:click={() => handleDelete(sub)}>
+                <Button variant="danger" size="sm" on:click={() => handleDelete(sub)} aria-label="Remove {sub.label || sub.address}">
                   <Icon name="trash" size={13} />
                 </Button>
               </div>

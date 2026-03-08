@@ -205,15 +205,15 @@
                 <Button variant="primary" size="sm" loading={saving} on:click={() => saveEdit(user.id)}>Save</Button>
                 <Button variant="secondary" size="sm" on:click={cancelEdit}>Cancel</Button>
               {:else}
-                <Button variant="secondary" size="sm" on:click={() => startEdit(user)}>
+                <Button variant="secondary" size="sm" on:click={() => startEdit(user)} aria-label="Edit {user.email}">
                   <Icon name="edit" size={13} />
                 </Button>
                 {#if user.active}
-                  <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)}>
+                  <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}">
                     <Icon name="x-circle" size={13} />
                   </Button>
                 {:else}
-                  <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)}>
+                  <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)} aria-label="Reactivate {user.email}">
                     <Icon name="check" size={13} />
                   </Button>
                 {/if}
@@ -228,18 +228,20 @@
 
 <!-- Create User Modal -->
 {#if showCreate}
-  <div class="modal-backdrop" on:click={handleBackdropClick} on:keydown={handleBackdropKey} role="dialog" tabindex="-1">
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleBackdropClick} on:keydown={handleBackdropKey} role="dialog" aria-modal="true" aria-labelledby="create-user-title" tabindex="-1">
     <div class="modal">
       <div class="modal-header">
-        <h3>Create User</h3>
-        <button class="modal-close" on:click={closeModal}>
+        <h3 id="create-user-title">Create User</h3>
+        <button class="modal-close" on:click={closeModal} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
       </div>
       <form on:submit|preventDefault={handleCreate} class="modal-body">
         <div class="form-field">
-          <label class="field-label">Email</label>
+          <label class="field-label" for="user-email">Email</label>
           <input
+            id="user-email"
             type="email"
             bind:value={newEmail}
             placeholder="user@example.com"
@@ -248,8 +250,9 @@
           />
         </div>
         <div class="form-field">
-          <label class="field-label">Password</label>
+          <label class="field-label" for="user-password">Password</label>
           <input
+            id="user-password"
             type="password"
             bind:value={newPassword}
             placeholder="Minimum 6 characters"
@@ -259,8 +262,8 @@
           />
         </div>
         <div class="form-field">
-          <label class="field-label">Role</label>
-          <select bind:value={newRole} class="input">
+          <label class="field-label" for="user-role">Role</label>
+          <select id="user-role" bind:value={newRole} class="input">
             <option value="viewer">Viewer</option>
             <option value="technician">Technician</option>
             <option value="admin">Admin</option>

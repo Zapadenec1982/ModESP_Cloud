@@ -38,6 +38,9 @@
       device = await getDevice(resolvedId)
       liveState.set(device.last_state || {})
       error = null
+      // Update browser tab title with device name
+      const name = device.name || device.mqtt_device_id
+      document.title = `${name} — ModESP Cloud`
     } catch (e) {
       error = e.message
     } finally {
@@ -203,5 +206,32 @@
 
   .tab-content {
     min-height: 200px;
+  }
+
+  @media (max-width: 640px) {
+    .device-header {
+      padding: var(--space-3);
+    }
+
+    .device-title {
+      font-size: var(--text-lg);
+      flex-basis: 100%;
+    }
+
+    .header-top {
+      gap: var(--space-2);
+    }
+
+    .header-meta {
+      gap: var(--space-2) var(--space-3);
+    }
+
+    .meta-item {
+      font-size: var(--text-xs);
+    }
+
+    .breadcrumb {
+      font-size: var(--text-xs);
+    }
   }
 </style>
