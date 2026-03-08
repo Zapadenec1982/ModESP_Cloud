@@ -10,6 +10,22 @@ const router = Router();
 // Build Set of writable keys for command validation
 const writableKeys = new Set(stateMeta.subscribeKeys);
 
+/**
+ * Resolve the actual MQTT topic slug to reach a device.
+ * Prefers the observed slug from stateMap (where device is really publishing)
+ * over the DB tenant slug (where we *think* it should be).
+ */
+async function resolveRoutingSlug(mqttId, tenantId) {
+  // DB fallback: look up tenant slug
+  const tenantRes = await db.query(
+    `SELECT slug FROM tenants WHERE id = $1`,
+    [tenantId]
+  );
+  const dbSlug = tenantRes.rows[0]?.slug || 'pending';
+  // Prefer observed slug from live MQTT data
+  return mqttSvc.getDeviceRoutingSlug(mqttId, dbSlug);
+}
+
 // ── GET /api/devices ──────────────────────────────────────
 // List all devices for current tenant. Augments DB data with live state.
 router.get('/', async (req, res, next) => {
@@ -232,21 +248,9 @@ router.post('/:id/command', async (req, res, next) => {
     }
 
     const mqttId = rows[0].mqtt_device_id;
-    const deviceStatus = rows[0].status;
 
-    // Resolve MQTT topic prefix:
-    // Pending devices listen on modesp/v1/pending/{id}/cmd/+
-    // Active devices listen on modesp/v1/{tenant_slug}/{id}/cmd/+
-    let tenantSlug;
-    if (deviceStatus === 'pending') {
-      tenantSlug = 'pending';
-    } else {
-      const tenantRes = await db.query(
-        `SELECT slug FROM tenants WHERE id = $1`,
-        [req.tenantId]
-      );
-      tenantSlug = tenantRes.rows[0]?.slug || 'pending';
-    }
+    // Use observed MQTT slug (where device actually publishes) with DB fallback
+    const tenantSlug = await resolveRoutingSlug(mqttId, req.tenantId);
 
     mqttSvc.sendCommand(tenantSlug, mqttId, key, value);
 
@@ -289,18 +293,9 @@ router.post('/:id/request-state', async (req, res, next) => {
     }
 
     const mqttId = rows[0].mqtt_device_id;
-    const deviceStatus = rows[0].status;
 
-    let tenantSlug;
-    if (deviceStatus === 'pending') {
-      tenantSlug = 'pending';
-    } else {
-      const tenantRes = await db.query(
-        `SELECT slug FROM tenants WHERE id = $1`,
-        [req.tenantId]
-      );
-      tenantSlug = tenantRes.rows[0]?.slug || 'pending';
-    }
+    // Use observed MQTT slug (where device actually publishes) with DB fallback
+    const tenantSlug = await resolveRoutingSlug(mqttId, req.tenantId);
 
     mqttSvc.requestFullState(tenantSlug, mqttId);
 

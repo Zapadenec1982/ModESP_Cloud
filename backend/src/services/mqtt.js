@@ -647,6 +647,20 @@ function getDeviceMeta(deviceId) {
 }
 
 /**
+ * Get the MQTT topic slug the device is **actually** publishing on.
+ * Falls back to dbSlug (from DB tenant lookup) if no live data.
+ * Solves the "device still on pending but DB says __system__" race.
+ * @param {string} deviceId  e.g. "F27FCD"
+ * @param {string} [dbSlug]  slug resolved from DB (optional fallback)
+ * @returns {string}
+ */
+function getDeviceRoutingSlug(deviceId, dbSlug) {
+  const state = stateMap.get(deviceId);
+  if (state && state._tenantSlug) return state._tenantSlug;
+  return dbSlug || 'pending';
+}
+
+/**
  * Send a command to a device via MQTT.
  * @param {string} tenantSlug
  * @param {string} deviceId
@@ -693,7 +707,7 @@ function requestFullState(tenantSlug, deviceId) {
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
-  getDeviceState, getDeviceMeta, sendCommand, sendJsonCommand,
+  getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),

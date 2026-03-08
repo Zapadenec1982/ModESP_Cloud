@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS ota_jobs (
   queued_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   sent_at       TIMESTAMPTZ,
   completed_at  TIMESTAMPTZ,
-  error         TEXT,
+  error            TEXT,
+  pre_ota_version  TEXT,            -- firmware version before OTA (for change detection)
 
   CONSTRAINT valid_ota_status CHECK (
     status IN ('queued', 'sent', 'succeeded', 'failed', 'cancelled')

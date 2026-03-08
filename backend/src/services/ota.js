@@ -42,8 +42,10 @@ async function sendOtaToDevice(tenantSlug, deviceId, firmware) {
     checksum: firmware.checksum,
   };
 
-  mqttSvc.sendJsonCommand(tenantSlug, deviceId, '_ota', payload);
-  logger.info({ tenantSlug, deviceId, version: firmware.version }, 'OTA command sent');
+  // Use observed MQTT slug (where device actually publishes) with DB slug fallback
+  const routingSlug = mqttSvc.getDeviceRoutingSlug(deviceId, tenantSlug);
+  mqttSvc.sendJsonCommand(routingSlug, deviceId, '_ota', payload);
+  logger.info({ tenantSlug: routingSlug, deviceId, version: firmware.version }, 'OTA command sent');
 }
 
 // ── Deploy to a single device (no rollout) ───────────────
@@ -72,12 +74,19 @@ async function deploySingle(tenantId, tenantSlug, firmwareId, deviceId, userId) 
   );
   if (active.rows.length > 0) throw Object.assign(new Error('Device already has an active OTA job'), { status: 409 });
 
-  // Create job
+  // Capture pre-OTA firmware version for change detection
+  const preVersionRes = await db.query(
+    'SELECT firmware_version FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+    [tenantId, deviceId]
+  );
+  const preOtaVersion = preVersionRes.rows[0]?.firmware_version || null;
+
+  // Create job (store pre_ota_version for robust success detection)
   const jobRes = await db.query(
-    `INSERT INTO ota_jobs (tenant_id, firmware_id, device_id, status, sent_at)
-     VALUES ($1, $2, $3, 'sent', NOW())
+    `INSERT INTO ota_jobs (tenant_id, firmware_id, device_id, status, sent_at, pre_ota_version)
+     VALUES ($1, $2, $3, 'sent', NOW(), $4)
      RETURNING id, status, queued_at, sent_at`,
-    [tenantId, firmwareId, deviceId]
+    [tenantId, firmwareId, deviceId, preOtaVersion]
   );
 
   // Send MQTT command
@@ -292,6 +301,7 @@ async function checkOtaStatus() {
     // Find all 'sent' jobs
     const sentJobs = await db.query(
       `SELECT j.id, j.tenant_id, j.firmware_id, j.device_id, j.sent_at, j.rollout_id,
+              j.pre_ota_version,
               f.version AS target_version,
               d.firmware_version AS current_version
        FROM ota_jobs j
@@ -306,14 +316,23 @@ async function checkOtaStatus() {
     const rolloutIds = new Set();
 
     for (const job of sentJobs.rows) {
-      // Check if device now has target version → success
-      if (job.current_version && job.current_version === job.target_version) {
+      // Success detection: exact version match OR firmware changed from pre-OTA version
+      // (handles git-hash vs semver mismatch during transition)
+      const exactMatch = job.current_version && job.current_version === job.target_version;
+      const versionChanged = job.current_version
+        && job.pre_ota_version
+        && job.current_version !== job.pre_ota_version;
+
+      if (exactMatch || versionChanged) {
         await db.query(
           "UPDATE ota_jobs SET status = 'succeeded', completed_at = NOW() WHERE id = $1",
           [job.id]
         );
-        logger.info({ jobId: job.id, deviceId: job.device_id, version: job.target_version },
-          'OTA succeeded — firmware version matches');
+        logger.info({
+          jobId: job.id, deviceId: job.device_id,
+          target: job.target_version, current: job.current_version,
+          preOta: job.pre_ota_version, reason: exactMatch ? 'version_match' : 'version_changed',
+        }, 'OTA succeeded');
         if (job.rollout_id) rolloutIds.add(job.rollout_id);
         continue;
       }
