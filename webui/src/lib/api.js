@@ -13,6 +13,66 @@ const BASE = '/api';
 let accessToken = null;
 let refreshToken = localStorage.getItem('modesp_refresh_token');
 let refreshPromise = null;
+let refreshTimer = null;
+
+/**
+ * Decode JWT payload without external dependencies.
+ */
+function parseJwtExp(token) {
+  try {
+    const base64 = token.split('.')[1];
+    const json = atob(base64.replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(json);
+    return { exp: payload.exp, iat: payload.iat };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Proactive token refresh — schedules refresh at ~80% of token lifetime.
+ * This prevents tokens from silently expiring during active use.
+ * Creates a self-maintaining chain: refresh → setTokens → schedule → refresh …
+ */
+function scheduleTokenRefresh() {
+  clearTimeout(refreshTimer);
+  if (!accessToken) return;
+
+  const jwt = parseJwtExp(accessToken);
+  if (!jwt?.exp) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  const lifetime = jwt.exp - (jwt.iat || now);
+  const remaining = jwt.exp - now;
+
+  if (remaining <= 30) {
+    // Token expiring/expired — refresh immediately
+    console.log('[Auth] Token expiring in', remaining, 's — refreshing now');
+    tryRefresh().then(ok => {
+      if (!ok) {
+        // Retry in 30s
+        refreshTimer = setTimeout(() => scheduleTokenRefresh(), 30000);
+      }
+      // Success: setTokens() → scheduleTokenRefresh() chain continues
+    });
+    return;
+  }
+
+  // Refresh at 80% of lifetime or 60s before expiry, whichever is sooner
+  const refreshAt = Math.min(lifetime * 0.8, remaining - 60);
+  const refreshInMs = Math.max(refreshAt * 1000, 10000); // minimum 10s
+
+  console.log(`[Auth] Proactive refresh in ${Math.round(refreshInMs / 1000)}s (token expires in ${remaining}s)`);
+
+  refreshTimer = setTimeout(async () => {
+    const ok = await tryRefresh();
+    if (!ok) {
+      console.warn('[Auth] Proactive refresh failed, retrying in 30s');
+      refreshTimer = setTimeout(() => scheduleTokenRefresh(), 30000);
+    }
+    // Success path: tryRefresh → setTokens → scheduleTokenRefresh (auto-chain)
+  }, refreshInMs);
+}
 
 function setTokens(access, refresh) {
   accessToken = access;
@@ -22,6 +82,8 @@ function setTokens(access, refresh) {
   } else {
     localStorage.removeItem('modesp_refresh_token');
   }
+  // Start/restart the proactive refresh chain
+  scheduleTokenRefresh();
 }
 
 export function getAccessToken() {
@@ -34,6 +96,11 @@ async function request(path, options = {}) {
   const url = `${BASE}${path}`;
   const headers = { 'Content-Type': 'application/json', ...options.headers };
 
+  // Pre-refresh: if access token is gone but refresh token exists, restore first
+  if (!accessToken && refreshToken && !options._noRetry) {
+    await tryRefresh();
+  }
+
   // Inject Bearer token if available
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
@@ -41,7 +108,7 @@ async function request(path, options = {}) {
 
   let res = await fetch(url, { ...options, headers });
 
-  // Auto-refresh on 401
+  // Auto-refresh on 401 (safety net — proactive refresh should prevent this)
   if (res.status === 401 && refreshToken && !options._noRetry) {
     const refreshed = await tryRefresh();
     if (refreshed) {
@@ -129,6 +196,7 @@ export async function logout() {
 }
 
 function clearAuth() {
+  clearTimeout(refreshTimer);
   setTokens(null, null);
   authUser.set(null);
 }

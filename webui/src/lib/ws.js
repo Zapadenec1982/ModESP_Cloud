@@ -63,14 +63,16 @@ export function connect() {
 
     // Server rejects WS handshake with 401 → browser sees code 1006 (abnormal)
     // Also handle explicit auth codes: 4401, 1008
-    const authFailed = event.code === 4401 || event.code === 1008
-      || (event.code === 1006 && get(authEnabled) && getAccessToken());
-    if (authFailed) {
+    const isAuthCode = event.code === 4401 || event.code === 1008;
+    const isAbnormal = event.code === 1006 && get(authEnabled) && getAccessToken();
+    if (isAuthCode || isAbnormal) {
       console.log('[WS] Auth failed (code:', event.code, '), refreshing token before reconnect');
       handleAuthReconnect();
       return;
     }
 
+    // For clean disconnects (1000, 1001), just reconnect — proactive refresh
+    // in api.js ensures our token stays fresh
     console.log('[WS] Disconnected (code:', event.code, '), reconnecting in', reconnectDelay, 'ms');
     scheduleReconnect();
   };
