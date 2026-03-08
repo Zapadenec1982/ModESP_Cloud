@@ -1,5 +1,6 @@
 <script>
   import Icon from '../ui/Icon.svelte'
+  import { t } from '../../lib/i18n.js'
 
   export let online = 0
   export let total = 0
@@ -16,7 +17,7 @@
     </div>
     <div class="stat-content">
       <span class="stat-value">{online}</span>
-      <span class="stat-label">Online</span>
+      <span class="stat-label">{$t('dashboard.fleet_online')}</span>
     </div>
     <div class="stat-accent online" />
   </div>
@@ -27,7 +28,7 @@
     </div>
     <div class="stat-content">
       <span class="stat-value">{total}</span>
-      <span class="stat-label">Total Devices</span>
+      <span class="stat-label">{$t('dashboard.fleet_total')}</span>
     </div>
     <div class="stat-accent total" />
   </div>
@@ -38,7 +39,7 @@
     </div>
     <div class="stat-content">
       <span class="stat-value" class:alarm-text={alarms > 0}>{alarms}</span>
-      <span class="stat-label">Active Alarms</span>
+      <span class="stat-label">{$t('dashboard.fleet_alarms')}</span>
     </div>
     <div class="stat-accent" class:alarm={alarms > 0} />
   </div>
@@ -52,7 +53,7 @@
         {avgTemp != null ? avgTemp.toFixed(1) : '--'}
         <span class="stat-unit">°C</span>
       </span>
-      <span class="stat-label">Avg Temperature</span>
+      <span class="stat-label">{$t('dashboard.fleet_avg_temp')}</span>
     </div>
     <div class="stat-accent temp" />
   </div>

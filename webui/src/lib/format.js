@@ -1,10 +1,13 @@
 /**
- * Shared formatting utilities.
- * Extracted from duplicated code across pages.
+ * Shared formatting utilities — locale-aware.
+ * Uses i18n store for translations, reads locale synchronously via `get()`.
  */
 
+import { get } from 'svelte/store';
+import { locale, t } from './i18n.js';
+
 /**
- * Human-readable relative time ("2 хв тому", "щойно").
+ * Human-readable relative time ("2 хв тому", "just now").
  * @param {string|Date} date
  * @returns {string}
  */
@@ -14,12 +17,14 @@ export function timeAgo(date) {
   const then = new Date(date).getTime()
   const diff = Math.floor((now - then) / 1000)
 
-  if (diff < 10) return 'щойно'
-  if (diff < 60) return `${diff} сек тому`
-  if (diff < 3600) return `${Math.floor(diff / 60)} хв тому`
-  if (diff < 86400) return `${Math.floor(diff / 3600)} год тому`
-  if (diff < 604800) return `${Math.floor(diff / 86400)} дн тому`
-  return new Date(date).toLocaleDateString('uk-UA')
+  const tr = get(t)
+
+  if (diff < 10) return tr('time.just_now')
+  if (diff < 60) return tr('time.seconds_ago', diff)
+  if (diff < 3600) return tr('time.minutes_ago', Math.floor(diff / 60))
+  if (diff < 86400) return tr('time.hours_ago', Math.floor(diff / 3600))
+  if (diff < 604800) return tr('time.days_ago', Math.floor(diff / 86400))
+  return new Date(date).toLocaleDateString(tr('time.locale_code'))
 }
 
 /**
@@ -46,36 +51,31 @@ export function formatTemp(value, decimals = 1) {
  */
 export function formatDuration(seconds) {
   if (seconds == null || isNaN(seconds)) return '—'
-  if (seconds < 60) return `${seconds}с`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}хв ${seconds % 60}с`
+  const tr = get(t)
+  const suf_s = tr('time.s')
+  const suf_m = tr('time.min')
+  const suf_h = tr('time.h')
+
+  if (seconds < 60) return `${seconds}${suf_s}`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}${suf_m} ${seconds % 60}${suf_s}`
   const h = Math.floor(seconds / 3600)
   const m = Math.floor((seconds % 3600) / 60)
-  return `${h}год ${m}хв`
+  return `${h}${suf_h} ${m}${suf_m}`
 }
 
 /**
  * Human-readable alarm label (alarm_code → display name).
- */
-const ALARM_LABELS = {
-  high_temp_alarm:       'Висока температура',
-  low_temp_alarm:        'Низька температура',
-  sensor1_alarm:         'Датчик 1',
-  sensor2_alarm:         'Датчик 2',
-  door_alarm:            'Двері відкриті',
-  short_cycle_alarm:     'Короткий цикл',
-  rapid_cycle_alarm:     'Часті цикли',
-  continuous_run_alarm:  'Безперервна робота',
-  pulldown_alarm:        'Збій зниження',
-  rate_alarm:            'Швидкість зміни',
-}
-
-/**
- * Get human-readable alarm label.
+ * Uses i18n dictionary key `alarm.{code}` with fallback to humanized code.
  * @param {string} code
  * @returns {string}
  */
 export function alarmLabel(code) {
-  return ALARM_LABELS[code] || code.replace(/_/g, ' ')
+  const tr = get(t)
+  const key = `alarm.${code}`
+  const result = tr(key)
+  // If t() returns the key itself, it means no translation found — fallback
+  if (result === key) return code.replace(/_/g, ' ')
+  return result
 }
 
 /**
@@ -108,7 +108,8 @@ export function formatBytes(bytes) {
  */
 export function formatDate(date) {
   if (!date) return '—'
-  return new Date(date).toLocaleString('uk-UA', {
+  const tr = get(t)
+  return new Date(date).toLocaleString(tr('time.locale_code'), {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })

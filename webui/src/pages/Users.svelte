@@ -10,6 +10,7 @@
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
   import { toast } from '../lib/toast.js'
+  import { t } from '../lib/i18n.js'
 
   let users = []
   let loading = true
@@ -46,13 +47,13 @@
 
   async function handleCreate() {
     if (!newEmail.trim() || !newPassword) {
-      toast.warning('Email and password are required')
+      toast.warning($t('users.email_password_required'))
       return
     }
     creating = true
     try {
       await createUser({ email: newEmail.trim(), password: newPassword, role: newRole })
-      toast.success('User created')
+      toast.success($t('users.user_created'))
       showCreate = false
       newEmail = ''
       newPassword = ''
@@ -78,7 +79,7 @@
     saving = true
     try {
       await updateUser(userId, { role: editRole })
-      toast.success('Role updated')
+      toast.success($t('users.role_updated'))
       editId = null
       await loadUsers()
     } catch (e) {
@@ -91,7 +92,7 @@
   async function handleDeactivate(user) {
     try {
       await deleteUser(user.id)
-      toast.success(`${user.email} deactivated`)
+      toast.success($t('users.user_deactivated', user.email))
       await loadUsers()
     } catch (e) {
       toast.error(e.message)
@@ -101,7 +102,7 @@
   async function handleReactivate(user) {
     try {
       await updateUser(user.id, { active: true })
-      toast.success(`${user.email} reactivated`)
+      toast.success($t('users.user_reactivated', user.email))
       await loadUsers()
     } catch (e) {
       toast.error(e.message)
@@ -127,33 +128,33 @@
 </script>
 
 <div class="users-page">
-  <PageHeader title="Users" subtitle="Manage platform accounts and roles">
-    <Button variant="secondary" icon="refresh" on:click={loadUsers}>Refresh</Button>
-    <Button variant="primary" icon="plus" on:click={() => showCreate = true}>New User</Button>
+  <PageHeader title={$t('pages.users')} subtitle={$t('pages.users_sub')}>
+    <Button variant="secondary" icon="refresh" on:click={loadUsers}>{$t('common.refresh')}</Button>
+    <Button variant="primary" icon="plus" on:click={() => showCreate = true}>{$t('users.new_user')}</Button>
   </PageHeader>
 
   {#if loading}
     <Skeleton height="400px" />
   {:else if error}
-    <EmptyState icon="x-circle" title="Failed to load" message={error} />
+    <EmptyState icon="x-circle" title={$t('common.failed_to_load')} message={error} />
   {:else if users.length === 0}
-    <EmptyState icon="users" title="No users" message="Create the first user account to get started" />
+    <EmptyState icon="users" title={$t('users.no_users')} message={$t('users.no_users_hint')} />
   {:else}
     <section class="section-card">
       <div class="section-header">
         <Icon name="users" size={16} />
-        <span>Accounts</span>
+        <span>{$t('users.accounts')}</span>
         <Badge variant="neutral" size="sm">{users.length}</Badge>
       </div>
 
       <!-- Desktop table header -->
       <div class="user-table-header">
-        <span class="th th-email">User</span>
-        <span class="th th-role">Role</span>
-        <span class="th th-status">Status</span>
-        <span class="th th-created">Created</span>
-        <span class="th th-login">Last Login</span>
-        <span class="th th-actions">Actions</span>
+        <span class="th th-email">{$t('users.col_user')}</span>
+        <span class="th th-role">{$t('users.col_role')}</span>
+        <span class="th th-status">{$t('users.col_status')}</span>
+        <span class="th th-created">{$t('users.col_created')}</span>
+        <span class="th th-login">{$t('users.col_last_login')}</span>
+        <span class="th th-actions">{$t('common.actions')}</span>
       </div>
 
       <div class="user-list">
@@ -169,9 +170,9 @@
             <div class="cell cell-role">
               {#if editId === user.id}
                 <select bind:value={editRole} class="input input-sm">
-                  <option value="viewer">Viewer</option>
-                  <option value="technician">Technician</option>
-                  <option value="admin">Admin</option>
+                  <option value="viewer">{$t('users.role_viewer')}</option>
+                  <option value="technician">{$t('users.role_technician')}</option>
+                  <option value="admin">{$t('users.role_admin')}</option>
                 </select>
               {:else}
                 <Badge variant={roleVariant(user.role)} size="sm">{user.role}</Badge>
@@ -182,10 +183,10 @@
             <div class="cell cell-status">
               {#if user.active}
                 <StatusDot status="online" size="sm" />
-                <span class="status-text active">Active</span>
+                <span class="status-text active">{$t('common.active')}</span>
               {:else}
                 <StatusDot status="offline" size="sm" />
-                <span class="status-text">Inactive</span>
+                <span class="status-text">{$t('common.inactive')}</span>
               {/if}
             </div>
 
@@ -202,8 +203,8 @@
             <!-- Actions -->
             <div class="cell cell-actions">
               {#if editId === user.id}
-                <Button variant="primary" size="sm" loading={saving} on:click={() => saveEdit(user.id)}>Save</Button>
-                <Button variant="secondary" size="sm" on:click={cancelEdit}>Cancel</Button>
+                <Button variant="primary" size="sm" loading={saving} on:click={() => saveEdit(user.id)}>{$t('common.save')}</Button>
+                <Button variant="secondary" size="sm" on:click={cancelEdit}>{$t('common.cancel')}</Button>
               {:else}
                 <Button variant="secondary" size="sm" on:click={() => startEdit(user)} aria-label="Edit {user.email}">
                   <Icon name="edit" size={13} />
@@ -232,14 +233,14 @@
   <div class="modal-backdrop" on:click={handleBackdropClick} on:keydown={handleBackdropKey} role="dialog" aria-modal="true" aria-labelledby="create-user-title" tabindex="-1">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="create-user-title">Create User</h3>
+        <h3 id="create-user-title">{$t('users.create_user')}</h3>
         <button class="modal-close" on:click={closeModal} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
       </div>
       <form on:submit|preventDefault={handleCreate} class="modal-body">
         <div class="form-field">
-          <label class="field-label" for="user-email">Email</label>
+          <label class="field-label" for="user-email">{$t('login.email')}</label>
           <input
             id="user-email"
             type="email"
@@ -250,37 +251,37 @@
           />
         </div>
         <div class="form-field">
-          <label class="field-label" for="user-password">Password</label>
+          <label class="field-label" for="user-password">{$t('login.password')}</label>
           <input
             id="user-password"
             type="password"
             bind:value={newPassword}
-            placeholder="Minimum 6 characters"
+            placeholder={$t('users.min_password')}
             class="input"
             required
             minlength="6"
           />
         </div>
         <div class="form-field">
-          <label class="field-label" for="user-role">Role</label>
+          <label class="field-label" for="user-role">{$t('users.col_role')}</label>
           <select id="user-role" bind:value={newRole} class="input">
-            <option value="viewer">Viewer</option>
-            <option value="technician">Technician</option>
-            <option value="admin">Admin</option>
+            <option value="viewer">{$t('users.role_viewer')}</option>
+            <option value="technician">{$t('users.role_technician')}</option>
+            <option value="admin">{$t('users.role_admin')}</option>
           </select>
           <span class="field-hint">
             {#if newRole === 'admin'}
-              Full access — manage users, devices, firmware
+              {$t('users.role_hint_admin')}
             {:else if newRole === 'technician'}
-              Can view and control devices, manage alarms
+              {$t('users.role_hint_technician')}
             {:else}
-              Read-only access to dashboards and reports
+              {$t('users.role_hint_viewer')}
             {/if}
           </span>
         </div>
         <div class="modal-actions">
-          <Button variant="secondary" on:click={closeModal}>Cancel</Button>
-          <Button variant="primary" type="submit" loading={creating} icon="plus">Create User</Button>
+          <Button variant="secondary" on:click={closeModal}>{$t('common.cancel')}</Button>
+          <Button variant="primary" type="submit" loading={creating} icon="plus">{$t('users.create_user')}</Button>
         </div>
       </form>
     </div>

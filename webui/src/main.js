@@ -1,5 +1,6 @@
 import './styles/global.css';
 import './styles/animations.css';
+import './lib/theme.js';
 import App from './App.svelte';
 
 const app = new App({

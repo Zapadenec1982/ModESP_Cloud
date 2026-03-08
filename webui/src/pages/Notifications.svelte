@@ -8,6 +8,7 @@
     getNotificationLog,
   } from '../lib/api.js'
   import { timeAgo } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
   import Badge from '../components/ui/Badge.svelte'
@@ -48,7 +49,7 @@
 
   async function handleAdd() {
     if (!newAddress.trim()) {
-      toast.warning('Address is required')
+      toast.warning($t('notifications.address_required'))
       return
     }
     adding = true
@@ -58,7 +59,7 @@
         address: newAddress.trim(),
         label: newLabel.trim() || undefined,
       })
-      toast.success('Subscriber added')
+      toast.success($t('notifications.subscriber_added'))
       newAddress = ''
       newLabel = ''
       await load()
@@ -72,7 +73,7 @@
   async function handleDelete(sub) {
     try {
       await deleteSubscriber(sub.id)
-      toast.success('Subscriber removed')
+      toast.success($t('notifications.subscriber_removed'))
       await load()
     } catch (e) {
       toast.error(e.message)
@@ -85,9 +86,9 @@
     try {
       const result = await testNotification(sub.id)
       if (result.status === 'sent') {
-        toast.success(`Test sent to ${sub.label || sub.address}`)
+        toast.success($t('notifications.test_sent', sub.label || sub.address))
       } else {
-        toast.error(`Test failed: ${result.error}`)
+        toast.error($t('notifications.test_failed', result.error))
       }
     } catch (e) {
       toast.error(e.message)
@@ -107,8 +108,8 @@
 </script>
 
 <div class="notif-page">
-  <PageHeader title="Notifications" subtitle="Manage push notification subscribers and delivery">
-    <Button variant="secondary" icon="refresh" on:click={load}>Refresh</Button>
+  <PageHeader title={$t('pages.notifications')} subtitle={$t('pages.notifications_sub')}>
+    <Button variant="secondary" icon="refresh" on:click={load}>{$t('common.refresh')}</Button>
   </PageHeader>
 
   {#if loading}
@@ -122,32 +123,32 @@
     <section class="section-card">
       <div class="section-header">
         <Icon name="plus" size={16} />
-        <span>Add Subscriber</span>
+        <span>{$t('notifications.add_subscriber')}</span>
       </div>
       <form on:submit|preventDefault={handleAdd} class="add-form">
         <div class="form-field">
-          <label class="field-label" for="sub-channel">Channel</label>
+          <label class="field-label" for="sub-channel">{$t('notifications.channel')}</label>
           <select id="sub-channel" bind:value={newChannel} class="input">
             <option value="telegram">Telegram</option>
             <option value="fcm">FCM</option>
           </select>
         </div>
         <div class="form-field flex-grow">
-          <label class="field-label" for="sub-address">Address</label>
+          <label class="field-label" for="sub-address">{$t('notifications.address')}</label>
           <input
             id="sub-address"
             type="text"
             bind:value={newAddress}
-            placeholder={newChannel === 'telegram' ? 'Chat ID' : 'FCM Token'}
+            placeholder={newChannel === 'telegram' ? $t('notifications.chat_id') : $t('notifications.fcm_token')}
             class="input"
           />
         </div>
         <div class="form-field">
-          <label class="field-label" for="sub-label">Label</label>
-          <input id="sub-label" type="text" bind:value={newLabel} placeholder="Optional" class="input" />
+          <label class="field-label" for="sub-label">{$t('notifications.label')}</label>
+          <input id="sub-label" type="text" bind:value={newLabel} placeholder={$t('notifications.optional')} class="input" />
         </div>
         <div class="form-field form-action">
-          <Button variant="primary" type="submit" loading={adding} icon="plus">Add</Button>
+          <Button variant="primary" type="submit" loading={adding} icon="plus">{$t('common.add')}</Button>
         </div>
       </form>
     </section>
@@ -156,15 +157,15 @@
     <section class="section-card">
       <div class="section-header">
         <Icon name="bell" size={16} />
-        <span>Subscribers</span>
+        <span>{$t('notifications.subscribers')}</span>
         <Badge variant="neutral" size="sm">{subscribers.length}</Badge>
       </div>
 
       {#if subscribers.length === 0}
         <EmptyState
           icon="bell"
-          title="No subscribers"
-          message="Add a subscriber above or use /start in the Telegram bot"
+          title={$t('notifications.no_subscribers')}
+          message={$t('notifications.no_subscribers_hint')}
         />
       {:else}
         <div class="sub-list">
@@ -187,7 +188,7 @@
                   variant="secondary" size="sm"
                   loading={testingIds.has(sub.id)}
                   on:click={() => handleTest(sub)}
-                >Test</Button>
+                >{$t('common.test')}</Button>
                 <Button variant="danger" size="sm" on:click={() => handleDelete(sub)} aria-label="Remove {sub.label || sub.address}">
                   <Icon name="trash" size={13} />
                 </Button>
@@ -202,20 +203,20 @@
     <section class="section-card">
       <div class="section-header">
         <Icon name="activity" size={16} />
-        <span>Delivery Log</span>
+        <span>{$t('notifications.delivery_log')}</span>
       </div>
 
       {#if log.length === 0}
-        <EmptyState icon="clock" title="No notifications sent" message="Delivery history will appear here" />
+        <EmptyState icon="clock" title={$t('notifications.no_log')} message={$t('notifications.no_log_hint')} />
       {:else}
         <div class="log-table">
           <div class="log-header">
-            <span class="th">Time</span>
-            <span class="th">Channel</span>
-            <span class="th">Device</span>
-            <span class="th">Alarm</span>
-            <span class="th">Status</span>
-            <span class="th">Subscriber</span>
+            <span class="th">{$t('notifications.col_time')}</span>
+            <span class="th">{$t('notifications.col_channel')}</span>
+            <span class="th">{$t('notifications.col_device')}</span>
+            <span class="th">{$t('notifications.col_alarm')}</span>
+            <span class="th">{$t('notifications.col_status')}</span>
+            <span class="th">{$t('notifications.col_subscriber')}</span>
           </div>
           {#each log as entry (entry.id)}
             <div class="log-row">

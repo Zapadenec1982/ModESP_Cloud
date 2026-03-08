@@ -3,22 +3,24 @@
   import { authEnabled, authUser, sidebarCollapsed, sidebarOpen } from '../../lib/stores.js'
   import { logout } from '../../lib/api.js'
   import { disconnect } from '../../lib/ws.js'
+  import { t } from '../../lib/i18n.js'
   import Icon from '../ui/Icon.svelte'
   import ConnectionStatus from './ConnectionStatus.svelte'
+  import SettingsMenu from './SettingsMenu.svelte'
 
   export let alarmCount = 0
   export let pendingCount = 0
 
-  const navItems = [
-    { section: 'MONITORING' },
-    { path: '/',              icon: 'grid',     label: 'Dashboard' },
-    { path: '/alarms',        icon: 'alert-triangle', label: 'Alarms', badge: () => alarmCount },
-    { section: 'MANAGEMENT' },
-    { path: '/pending',       icon: 'wifi',     label: 'Pending',  badge: () => pendingCount },
-    { path: '/notifications', icon: 'bell',     label: 'Notifications' },
-    { path: '/firmware',      icon: 'upload',   label: 'Firmware', admin: true },
-    { section: 'ADMIN', admin: true },
-    { path: '/users',         icon: 'users',    label: 'Users',    admin: true },
+  $: navItems = [
+    { section: $t('nav.sections.monitoring') },
+    { path: '/',              icon: 'grid',     label: $t('nav.dashboard') },
+    { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
+    { section: $t('nav.sections.management') },
+    { path: '/pending',       icon: 'wifi',     label: $t('nav.pending'),  badge: () => pendingCount },
+    { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
+    { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware'), admin: true },
+    { section: $t('nav.sections.admin'), admin: true },
+    { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
   ]
 
   function isActive(itemPath, currentPath) {
@@ -100,6 +102,7 @@
   <!-- Footer -->
   <div class="sidebar-footer">
     <ConnectionStatus compact={$sidebarCollapsed} />
+    <SettingsMenu compact={$sidebarCollapsed} />
 
     {#if $authEnabled && $authUser}
       <div class="user-section" class:compact={$sidebarCollapsed}>

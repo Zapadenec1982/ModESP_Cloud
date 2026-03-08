@@ -3,6 +3,7 @@
   import { sendCommand, requestDeviceState } from '../../lib/api.js'
   import { loadMeta, groupByCategory } from '../../lib/meta.js'
   import { toast } from '../../lib/toast.js'
+  import { t } from '../../lib/i18n.js'
   import Icon from '../ui/Icon.svelte'
   import ParameterGroup from './ParameterGroup.svelte'
   import Skeleton from '../ui/Skeleton.svelte'
@@ -62,13 +63,13 @@
   {:else if groups.length === 0}
     <EmptyState
       icon="settings"
-      title="No parameters available"
-      message="Parameter metadata not loaded"
+      title={$t('device.no_params')}
+      message={$t('device.no_params_hint')}
     />
   {:else}
     <div class="editor-header">
       <div class="editor-stats">
-        <span class="stat-label">Parameters</span>
+        <span class="stat-label">{$t('device.param_count')}</span>
         <span class="stat-value">{liveCount}<span class="stat-total">/{totalCount}</span></span>
       </div>
       <button
@@ -82,7 +83,7 @@
         {:else}
           <Icon name="refresh" size={14} />
         {/if}
-        <span>Read from device</span>
+        <span>{$t('device.read_device')}</span>
       </button>
     </div>
 

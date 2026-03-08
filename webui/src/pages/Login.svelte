@@ -1,6 +1,7 @@
 <script>
   import { login } from '../lib/api.js'
   import { navigate } from '../lib/stores.js'
+  import { t } from '../lib/i18n.js'
 
   let email = ''
   let password = ''
@@ -24,25 +25,25 @@
 <div class="login-page">
   <form class="login-form" on:submit|preventDefault={handleSubmit}>
     <div class="login-brand">M</div>
-    <h1 class="login-title">ModESP Cloud</h1>
-    <p class="login-subtitle">Sign in to your account</p>
+    <h1 class="login-title">{$t('login.title')}</h1>
+    <p class="login-subtitle">{$t('login.subtitle')}</p>
 
     {#if error}
       <div class="error">{error}</div>
     {/if}
 
     <label class="field">
-      <span>Email</span>
+      <span>{$t('login.email')}</span>
       <input type="email" bind:value={email} placeholder="admin@example.com" required autocomplete="email" />
     </label>
 
     <label class="field">
-      <span>Password</span>
+      <span>{$t('login.password')}</span>
       <input type="password" bind:value={password} placeholder="••••••••" required autocomplete="current-password" />
     </label>
 
     <button type="submit" class="btn-login" disabled={loading}>
-      {loading ? 'Signing in...' : 'Sign In'}
+      {loading ? $t('login.signing_in') : $t('login.sign_in')}
     </button>
   </form>
 </div>

@@ -3,6 +3,7 @@
   import { getDevice } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState } from '../lib/stores.js'
+  import { t } from '../lib/i18n.js'
   import StatusDot from '../components/ui/StatusDot.svelte'
   import Badge from '../components/ui/Badge.svelte'
   import Icon from '../components/ui/Icon.svelte'
@@ -26,11 +27,11 @@
   let unsubs = []
 
   let activeTab = 'chart'
-  const tabs = [
-    { id: 'chart',  label: 'Chart' },
-    { id: 'params', label: 'Parameters' },
-    { id: 'alarms', label: 'Alarms' },
-    { id: 'state',  label: 'State' },
+  $: tabs = [
+    { id: 'chart',  label: $t('device.tab_chart') },
+    { id: 'params', label: $t('device.tab_params') },
+    { id: 'alarms', label: $t('device.tab_alarms') },
+    { id: 'state',  label: $t('device.tab_state') },
   ]
 
   async function loadDevice() {
@@ -77,7 +78,7 @@
   <div class="breadcrumb">
     <a href="#/" class="back-link">
       <Icon name="arrow-left" size={16} />
-      Dashboard
+      {$t('device.back_dashboard')}
     </a>
     <span class="breadcrumb-sep">/</span>
     <span class="breadcrumb-current">{resolvedId}</span>
@@ -88,7 +89,7 @@
     <Skeleton height="80px" />
     <Skeleton height="300px" />
   {:else if error}
-    <EmptyState icon="x-circle" title="Failed to load device" message={error} />
+    <EmptyState icon="x-circle" title={$t('device.load_error')} message={error} />
   {:else if device}
     <!-- Device header -->
     <div class="device-header">
@@ -96,10 +97,10 @@
         <StatusDot status={hasAlarm ? 'alarm' : (device.online ? 'online' : 'offline')} />
         <h1 class="device-title">{device.name || device.mqtt_device_id}</h1>
         <Badge variant={device.online ? 'success' : 'neutral'}>
-          {device.online ? 'Online' : 'Offline'}
+          {device.online ? $t('common.online') : $t('common.offline')}
         </Badge>
         {#if hasAlarm}
-          <Badge variant="danger" pulse>ALARM</Badge>
+          <Badge variant="danger" pulse>{$t('device.alarm_badge')}</Badge>
         {/if}
       </div>
       <div class="header-meta">

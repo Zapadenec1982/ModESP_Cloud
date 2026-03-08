@@ -4,6 +4,7 @@
   import { authEnabled, authUser, isAuthenticated, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
   import { connect, disconnect, reconnect, on } from './lib/ws.js'
+  import { t } from './lib/i18n.js'
   import Sidebar from './components/layout/Sidebar.svelte'
   import MobileHeader from './components/layout/MobileHeader.svelte'
   import ToastContainer from './components/ui/ToastContainer.svelte'
@@ -87,18 +88,19 @@
     unsubDeviceOffline?.()
   })
 
-  const pageTitles = {
-    '/': 'Dashboard',
-    '/alarms': 'Alarms',
-    '/pending': 'Pending Devices',
-    '/notifications': 'Notifications',
-    '/firmware': 'Firmware',
-    '/users': 'Users',
+  const pageTitleKeys = {
+    '/': 'pages.dashboard',
+    '/alarms': 'pages.alarms',
+    '/pending': 'pages.pending',
+    '/notifications': 'pages.notifications',
+    '/firmware': 'pages.firmware',
+    '/users': 'pages.users',
   }
 
   function handleRouteLoaded(e) {
     const path = e.detail.location
-    const title = pageTitles[path] || (path.startsWith('/device/') ? 'Device' : 'ModESP Cloud')
+    const key = pageTitleKeys[path]
+    const title = key ? $t(key) : (path.startsWith('/device/') ? $t('pages.device') : 'ModESP Cloud')
     document.title = `${title} — ModESP Cloud`
   }
 

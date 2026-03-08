@@ -3,6 +3,7 @@
   import { getDevices } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { devices } from '../lib/stores.js'
+  import { t } from '../lib/i18n.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
   import DeviceCard from '../components/DeviceCard.svelte'
@@ -50,7 +51,7 @@
   function groupByLocation(list) {
     const map = new Map()
     for (const d of list) {
-      const loc = d.location || 'Unassigned'
+      const loc = d.location || $t('dashboard.unassigned')
       if (!map.has(loc)) map.set(loc, [])
       map.get(loc).push(d)
     }
@@ -157,7 +158,7 @@
 </script>
 
 <div class="dashboard">
-  <PageHeader title="Dashboard" subtitle="Fleet overview and device monitoring" />
+  <PageHeader title={$t('pages.dashboard')} subtitle={$t('pages.dashboard_sub')} />
 
   <FleetSummaryBar
     online={onlineCount}
@@ -177,21 +178,21 @@
   {:else if error}
     <EmptyState
       icon="x-circle"
-      title="Failed to load devices"
+      title={$t('dashboard.load_error')}
       message={error}
     />
   {:else if filtered.length === 0}
     {#if search || filter !== 'all'}
       <EmptyState
         icon="search"
-        title="No matching devices"
-        message="Try adjusting your search or filter"
+        title={$t('dashboard.no_match')}
+        message={$t('dashboard.no_match_hint')}
       />
     {:else}
       <EmptyState
         icon="wifi"
-        title="No devices yet"
-        message="Connect an ESP32 controller to get started"
+        title={$t('dashboard.no_devices')}
+        message={$t('dashboard.no_devices_hint')}
       />
     {/if}
   {:else if view === 'list'}

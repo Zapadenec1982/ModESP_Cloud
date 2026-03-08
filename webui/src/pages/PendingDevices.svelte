@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { getPendingDevices, assignDevice } from '../lib/api.js'
   import { timeAgo } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
   import Badge from '../components/ui/Badge.svelte'
@@ -54,7 +55,7 @@
         name: assignName || undefined,
         location: assignLocation || undefined,
       })
-      toast.success(`Device ${assigningDevice.mqtt_device_id} assigned`)
+      toast.success($t('pending.device_assigned', assigningDevice.mqtt_device_id))
       assigningDevice = null
       await load()
     } catch (e) {
@@ -68,8 +69,8 @@
 </script>
 
 <div class="pending-page">
-  <PageHeader title="Pending Devices" subtitle="Unassigned devices waiting for tenant assignment">
-    <Button variant="secondary" icon="refresh" on:click={load}>Refresh</Button>
+  <PageHeader title={$t('pages.pending')} subtitle={$t('pages.pending_sub')}>
+    <Button variant="secondary" icon="refresh" on:click={load}>{$t('common.refresh')}</Button>
   </PageHeader>
 
   {#if loading}
@@ -83,8 +84,8 @@
   {:else if devices.length === 0}
     <EmptyState
       icon="wifi"
-      title="No pending devices"
-      message="New devices will appear here automatically when they connect for the first time"
+      title={$t('pending.no_pending')}
+      message={$t('pending.no_pending_hint')}
     />
   {:else}
     <div class="device-list">
@@ -108,7 +109,7 @@
           </div>
           <div class="device-actions">
             <Button variant="primary" size="sm" on:click={() => openAssign(dev)}>
-              Assign to Tenant
+              {$t('pending.assign_to_tenant')}
             </Button>
           </div>
         </div>
@@ -124,7 +125,7 @@
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
-        <h3 id="assign-modal-title">Assign Device</h3>
+        <h3 id="assign-modal-title">{$t('pending.assign_device')}</h3>
         <button class="close-btn" on:click={closeAssign} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
@@ -140,19 +141,19 @@
         </div>
 
         <label class="field">
-          <span>Device Name</span>
-          <input type="text" bind:value={assignName} placeholder="e.g. Cold Room #1" />
+          <span>{$t('pending.device_name')}</span>
+          <input type="text" bind:value={assignName} placeholder={$t('pending.device_name_placeholder')} />
         </label>
 
         <label class="field">
-          <span>Location</span>
-          <input type="text" bind:value={assignLocation} placeholder="e.g. Warehouse A" />
+          <span>{$t('device.location')}</span>
+          <input type="text" bind:value={assignLocation} placeholder={$t('pending.location_placeholder')} />
         </label>
       </div>
 
       <div class="modal-actions">
-        <Button variant="secondary" on:click={closeAssign} disabled={assigning}>Cancel</Button>
-        <Button variant="primary" on:click={confirmAssign} loading={assigning}>Assign</Button>
+        <Button variant="secondary" on:click={closeAssign} disabled={assigning}>{$t('common.cancel')}</Button>
+        <Button variant="primary" on:click={confirmAssign} loading={assigning}>{$t('common.assign')}</Button>
       </div>
     </div>
   </div>

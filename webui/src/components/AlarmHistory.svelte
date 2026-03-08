@@ -1,88 +1,64 @@
 <script>
-  import { onMount } from 'svelte';
-  import { getDeviceAlarms, getAlarms } from '../lib/api.js';
+  import { onMount } from 'svelte'
+  import { getDeviceAlarms, getAlarms } from '../lib/api.js'
+  import { alarmLabel, formatDate, formatDuration } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
 
-  export let deviceId = null;
-  export let limit = 20;
+  export let deviceId = null
+  export let limit = 20
 
-  const ALARM_LABELS = {
-    high_temp_alarm:     'High Temperature',
-    low_temp_alarm:      'Low Temperature',
-    sensor1_alarm:       'Sensor 1 Failure',
-    sensor2_alarm:       'Sensor 2 Failure',
-    door_alarm:          'Door Open',
-    short_cycle_alarm:   'Short Cycle',
-    rapid_cycle_alarm:   'Rapid Cycling',
-    continuous_run_alarm:'Continuous Run',
-    pulldown_alarm:      'Pulldown Timeout',
-    rate_alarm:          'Rate of Change',
-  };
-
-  let alarms = [];
-  let loading = true;
-  let error = '';
-
-  function alarmLabel(code) {
-    return ALARM_LABELS[code] || code;
-  }
-
-  function formatTime(ts) {
-    if (!ts) return '—';
-    const d = new Date(ts);
-    return d.toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  }
+  let alarms = []
+  let loading = true
+  let error = ''
 
   function duration(triggered, cleared) {
-    if (!cleared) return null;
-    const ms = new Date(cleared) - new Date(triggered);
-    const mins = Math.round(ms / 60000);
-    if (mins < 60) return `${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    const rem = mins % 60;
-    return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
+    if (!cleared) return null
+    const ms = new Date(cleared) - new Date(triggered)
+    const secs = Math.round(ms / 1000)
+    return formatDuration(secs)
   }
 
   onMount(async () => {
-    loading = true;
+    loading = true
     try {
       if (deviceId) {
-        alarms = await getDeviceAlarms(deviceId, { limit });
+        alarms = await getDeviceAlarms(deviceId, { limit })
       } else {
-        alarms = await getAlarms({ limit });
+        alarms = await getAlarms({ limit })
       }
     } catch (e) {
-      error = e.message;
+      error = e.message
     } finally {
-      loading = false;
+      loading = false
     }
-  });
+  })
 </script>
 
 <div class="alarm-history">
-  <h3>Alarm History</h3>
+  <h3>{$t('alarm.history')}</h3>
 
   {#if loading}
-    <p class="muted">Loading...</p>
+    <p class="muted">{$t('common.loading')}</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else if alarms.length === 0}
-    <p class="muted">No alarms recorded</p>
+    <p class="muted">{$t('alarm.no_recorded')}</p>
   {:else}
     <table class="table">
       <thead>
         <tr>
-          <th>Time</th>
-          {#if !deviceId}<th>Device</th>{/if}
-          <th>Alarm</th>
-          <th>Severity</th>
-          <th>Duration</th>
-          <th>Status</th>
+          <th>{$t('alarm.col_time')}</th>
+          {#if !deviceId}<th>{$t('alarm.col_device')}</th>{/if}
+          <th>{$t('alarm.col_type')}</th>
+          <th>{$t('alarm.col_severity')}</th>
+          <th>{$t('alarm.col_duration')}</th>
+          <th>{$t('alarm.col_status')}</th>
         </tr>
       </thead>
       <tbody>
         {#each alarms as alarm}
           <tr>
-            <td>{formatTime(alarm.triggered_at)}</td>
+            <td>{formatDate(alarm.triggered_at)}</td>
             {#if !deviceId}
               <td>{alarm.device_name || alarm.device_id}</td>
             {/if}
@@ -93,9 +69,9 @@
             <td>{duration(alarm.triggered_at, alarm.cleared_at) || '—'}</td>
             <td>
               {#if alarm.active}
-                <span class="status-active">Active</span>
+                <span class="status-active">{$t('common.active')}</span>
               {:else}
-                <span class="status-cleared">Cleared</span>
+                <span class="status-cleared">{$t('alarm.cleared')}</span>
               {/if}
             </td>
           </tr>
@@ -107,20 +83,21 @@
 
 <style>
   .alarm-history {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid #dfe6e9;
+    background: var(--bg-surface);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+    border: 1px solid var(--border-default);
   }
 
   h3 {
-    font-size: 1rem;
-    color: #2d3436;
-    margin: 0 0 1rem;
+    font-size: var(--text-base);
+    color: var(--text-primary);
+    margin: 0 0 var(--space-3);
+    font-weight: 600;
   }
 
-  .muted { color: #636e72; font-size: 0.9rem; }
-  .error { color: #d63031; font-size: 0.9rem; }
+  .muted { color: var(--text-muted); font-size: var(--text-sm); }
+  .error { color: var(--accent-red); font-size: var(--text-sm); }
 
   .table {
     width: 100%;
@@ -129,41 +106,43 @@
 
   .table th {
     text-align: left;
-    padding: 0.5rem 0.6rem;
-    font-size: 0.75rem;
+    padding: var(--space-2) var(--space-2);
+    font-size: var(--text-xs);
     font-weight: 600;
-    color: #636e72;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    border-bottom: 2px solid #f1f2f6;
+    border-bottom: 2px solid var(--border-muted);
   }
 
   .table td {
-    padding: 0.5rem 0.6rem;
-    font-size: 0.82rem;
-    border-bottom: 1px solid #f1f2f6;
+    padding: var(--space-2) var(--space-2);
+    font-size: var(--text-sm);
+    border-bottom: 1px solid var(--border-muted);
+    color: var(--text-secondary);
   }
 
   .badge {
     display: inline-block;
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
     font-weight: 600;
     text-transform: uppercase;
   }
 
-  .badge-critical { background: #ffeaea; color: #d63031; }
-  .badge-warning  { background: #fff3e0; color: #e17055; }
+  .badge-critical { background: rgba(239, 68, 68, 0.12); color: var(--accent-red); }
+  .badge-warning  { background: rgba(251, 191, 36, 0.12); color: var(--accent-orange); }
+  .badge-info     { background: rgba(74, 158, 255, 0.12); color: var(--accent-blue); }
 
   .status-active {
-    color: #d63031;
+    color: var(--accent-red);
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: var(--text-sm);
   }
 
   .status-cleared {
-    color: #636e72;
-    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
   }
 </style>

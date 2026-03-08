@@ -4,6 +4,7 @@
   import { on } from '../lib/ws.js'
   import { navigate } from '../lib/stores.js'
   import { timeAgo, alarmLabel, alarmSeverity } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Badge from '../components/ui/Badge.svelte'
   import Icon from '../components/ui/Icon.svelte'
@@ -48,19 +49,19 @@
 </script>
 
 <div class="alarms-page">
-  <PageHeader title="Alarms" subtitle="Active alarms and history" />
+  <PageHeader title={$t('pages.alarms')} subtitle={$t('pages.alarms_sub')} />
 
   {#if loading}
     <Skeleton height="120px" />
     <Skeleton height="300px" />
   {:else if error}
-    <EmptyState icon="x-circle" title="Failed to load alarms" message={error} />
+    <EmptyState icon="x-circle" title={$t('alarm.load_error')} message={error} />
   {:else}
     <!-- Active alarms -->
     <div class="section">
       <h2 class="section-title">
         <Icon name="alert-triangle" size={18} />
-        Active Alarms
+        {$t('alarm.active_alarms')}
         {#if activeAlarms.length > 0}
           <Badge variant="danger">{activeAlarms.length}</Badge>
         {/if}
@@ -69,7 +70,7 @@
       {#if activeAlarms.length === 0}
         <div class="no-alarms">
           <Icon name="check-circle" size={20} />
-          <span>No active alarms</span>
+          <span>{$t('alarm.no_active')}</span>
         </div>
       {:else}
         <div class="active-list">
@@ -100,19 +101,19 @@
     <div class="section">
       <h2 class="section-title">
         <Icon name="clock" size={18} />
-        History
+        {$t('alarm.history')}
       </h2>
 
       {#if historyAlarms.length === 0}
-        <EmptyState icon="clock" title="No alarm history" message="Resolved alarms will appear here" />
+        <EmptyState icon="clock" title={$t('alarm.no_history')} message={$t('alarm.no_history_hint')} />
       {:else}
         <div class="history-table">
           <div class="table-header">
-            <span class="th">Device</span>
-            <span class="th">Type</span>
-            <span class="th">Severity</span>
-            <span class="th">Triggered</span>
-            <span class="th">Resolved</span>
+            <span class="th">{$t('alarm.col_device')}</span>
+            <span class="th">{$t('alarm.col_type')}</span>
+            <span class="th">{$t('alarm.col_severity')}</span>
+            <span class="th">{$t('alarm.col_triggered')}</span>
+            <span class="th">{$t('alarm.col_resolved')}</span>
           </div>
           {#each historyAlarms as alarm}
             <button

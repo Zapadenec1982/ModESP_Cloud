@@ -2,6 +2,8 @@
  * Parameter metadata utilities.
  * Loads state_meta.json and provides helpers for the parameter editor.
  */
+import { get } from 'svelte/store'
+import { t } from './i18n.js'
 
 let metaCache = null
 
@@ -59,10 +61,14 @@ export function paramLabel(key) {
 }
 
 /**
- * Human-readable category name.
- * "thermostat" → "Thermostat"
+ * Human-readable category name with i18n.
+ * "thermostat" → "Термостат" (uk) / "Thermostat" (en)
  */
 export function categoryLabel(cat) {
+  const tr = get(t)
+  const key = `device.param_category.${cat}`
+  const result = tr(key)
+  if (result !== key) return result
   return cat.charAt(0).toUpperCase() + cat.slice(1)
 }
 

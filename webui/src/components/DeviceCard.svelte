@@ -1,6 +1,7 @@
 <script>
   import { navigate } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
   import StatusDot from './ui/StatusDot.svelte'
   import Icon from './ui/Icon.svelte'
 
@@ -8,9 +9,9 @@
 
   $: online = device.online
   $: temp = device.air_temp != null ? device.air_temp.toFixed(1) : '--'
-  $: statusLabel = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
+  $: statusKey = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
   $: hasAlarm = !!device.alarm_active
-  $: stripe = hasAlarm ? 'alarm' : online ? 'online' : 'offline'
+  $: stripe = hasAlarm ? 'alarm' : statusKey
 
   function handleClick() {
     navigate(`/device/${device.mqtt_device_id}`)
@@ -22,12 +23,12 @@
 
   <div class="card-inner">
     <div class="card-header">
-      <StatusDot status={hasAlarm ? 'alarm' : statusLabel} size="sm" />
+      <StatusDot status={hasAlarm ? 'alarm' : statusKey} size="sm" />
       <span class="device-name truncate">{device.name || device.mqtt_device_id}</span>
       {#if hasAlarm}
         <span class="alarm-badge">
           <Icon name="alert-triangle" size={12} />
-          ALARM
+          {$t('device.alarm_badge')}
         </span>
       {/if}
     </div>
@@ -38,7 +39,7 @@
         <span class="temp-unit">°C</span>
       </div>
       <div class="meta">
-        <span class="status-tag {statusLabel}">{statusLabel}</span>
+        <span class="status-tag {statusKey}">{$t(`common.${statusKey}`)}</span>
         <span class="last-seen">{timeAgo(device.last_seen)}</span>
       </div>
     </div>

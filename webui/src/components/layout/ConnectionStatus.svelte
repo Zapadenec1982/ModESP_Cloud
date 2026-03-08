@@ -1,5 +1,6 @@
 <script>
   import { wsConnected } from '../../lib/stores.js'
+  import { t } from '../../lib/i18n.js'
   import Icon from '../ui/Icon.svelte'
 
   export let compact = false
@@ -8,7 +9,7 @@
 <div class="connection" class:compact class:connected={$wsConnected}>
   <span class="dot" />
   {#if !compact}
-    <span class="label">{$wsConnected ? 'Connected' : 'Disconnected'}</span>
+    <span class="label">{$wsConnected ? $t('connection.connected') : $t('connection.disconnected')}</span>
   {/if}
 </div>
 

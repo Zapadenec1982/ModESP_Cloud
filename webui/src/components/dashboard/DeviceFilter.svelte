@@ -1,5 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte'
+  import { t } from '../../lib/i18n.js'
   import SearchInput from '../ui/SearchInput.svelte'
   import Icon from '../ui/Icon.svelte'
 
@@ -9,11 +10,11 @@
 
   const dispatch = createEventDispatcher()
 
-  const filters = [
-    { value: 'all',     label: 'All' },
-    { value: 'online',  label: 'Online' },
-    { value: 'offline', label: 'Offline' },
-    { value: 'alarm',   label: 'Alarm' },
+  $: filters = [
+    { value: 'all',     label: $t('dashboard.filter_all') },
+    { value: 'online',  label: $t('dashboard.filter_online') },
+    { value: 'offline', label: $t('dashboard.filter_offline') },
+    { value: 'alarm',   label: $t('dashboard.filter_alarm') },
   ]
 
   function setFilter(f) {
@@ -29,7 +30,7 @@
 
 <div class="filter-bar">
   <div class="search-wrap">
-    <SearchInput bind:value={search} placeholder="Search devices..." />
+    <SearchInput bind:value={search} placeholder={$t('common.search_placeholder')} />
   </div>
 
   <div class="pills">

@@ -7,6 +7,7 @@
     pauseRollout, resumeRollout, cancelRollout,
   } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/format.js'
+  import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
   import Badge from '../components/ui/Badge.svelte'
@@ -45,9 +46,9 @@
 
   // OTA activity tab
   let activeTab = 'jobs'
-  const activityTabs = [
-    { id: 'jobs', label: 'Jobs' },
-    { id: 'rollouts', label: 'Rollouts' },
+  $: activityTabs = [
+    { id: 'jobs', label: $t('firmware.jobs') },
+    { id: 'rollouts', label: $t('firmware.rollouts') },
   ]
   let refreshTimer = null
 
@@ -105,7 +106,7 @@
     uploading = true
     try {
       await uploadFirmware(uploadFile, uploadVersion.trim(), uploadNotes.trim())
-      toast.success(`Firmware ${uploadVersion.trim()} uploaded`)
+      toast.success($t('firmware.firmware_uploaded', uploadVersion.trim()))
       uploadFile = null
       uploadVersion = ''
       uploadNotes = ''
@@ -122,10 +123,10 @@
   // ── Delete ─────────────────────────────────────────────
 
   async function handleDelete(fw) {
-    if (!confirm(`Delete firmware ${fw.version}?`)) return
+    if (!confirm($t('firmware.delete_confirm', fw.version))) return
     try {
       await deleteFirmware(fw.id)
-      toast.success(`Firmware ${fw.version} deleted`)
+      toast.success($t('firmware.firmware_deleted', fw.version))
       await loadAll()
     } catch (e) {
       toast.error(e.message)
@@ -170,19 +171,19 @@
     deployError = null
     try {
       if (deployMode === 'single') {
-        if (!deployDeviceId) { deployError = 'Select a device'; deploying = false; return }
+        if (!deployDeviceId) { deployError = $t('firmware.select_device_error'); deploying = false; return }
         await deployOta(deployFirmware.id, deployDeviceId)
-        toast.success(`OTA deployed to ${deployDeviceId}`)
+        toast.success($t('firmware.ota_deployed', deployDeviceId))
       } else {
         const ids = [...selectedDevices]
-        if (ids.length === 0) { deployError = 'Select at least one device'; deploying = false; return }
+        if (ids.length === 0) { deployError = $t('firmware.select_devices_error'); deploying = false; return }
         await createRollout({
           firmwareId: deployFirmware.id,
           deviceIds: ids,
           batchSize: deployBatchSize,
           batchIntervalS: deployIntervalS,
         })
-        toast.success(`Rollout started for ${ids.length} devices`)
+        toast.success($t('firmware.rollout_started', ids.length))
       }
       closeDeploy()
       await refreshActivity()
@@ -197,18 +198,18 @@
   // ── Rollout actions ────────────────────────────────────
 
   async function handlePause(id) {
-    try { await pauseRollout(id); toast.info('Rollout paused'); await refreshActivity() }
+    try { await pauseRollout(id); toast.info($t('firmware.rollout_paused')); await refreshActivity() }
     catch (e) { toast.error(e.message) }
   }
 
   async function handleResume(id) {
-    try { await resumeRollout(id); toast.success('Rollout resumed'); await refreshActivity(); startAutoRefresh() }
+    try { await resumeRollout(id); toast.success($t('firmware.rollout_resumed')); await refreshActivity(); startAutoRefresh() }
     catch (e) { toast.error(e.message) }
   }
 
   async function handleCancel(id) {
-    if (!confirm('Cancel this rollout?')) return
-    try { await cancelRollout(id); toast.info('Rollout cancelled'); await refreshActivity() }
+    if (!confirm($t('firmware.cancel_confirm'))) return
+    try { await cancelRollout(id); toast.info($t('firmware.rollout_cancelled')); await refreshActivity() }
     catch (e) { toast.error(e.message) }
   }
 
@@ -239,8 +240,8 @@
 </script>
 
 <div class="firmware-page">
-  <PageHeader title="Firmware" subtitle="Upload, manage and deploy OTA firmware updates">
-    <Button variant="secondary" icon="refresh" on:click={loadAll}>Refresh</Button>
+  <PageHeader title={$t('pages.firmware')} subtitle={$t('pages.firmware_sub')}>
+    <Button variant="secondary" icon="refresh" on:click={loadAll}>{$t('common.refresh')}</Button>
   </PageHeader>
 
   {#if loading}
@@ -252,24 +253,24 @@
     <section class="section-card upload-section">
       <div class="section-header">
         <Icon name="upload" size={16} />
-        <span>Upload Firmware</span>
+        <span>{$t('firmware.upload_firmware')}</span>
       </div>
       <div class="upload-form">
         <div class="form-field">
-          <label class="field-label" for="fw-file">File (.bin)</label>
+          <label class="field-label" for="fw-file">{$t('firmware.file_bin')}</label>
           <input id="fw-file" type="file" accept=".bin" on:change={handleFileSelect} disabled={uploading} class="file-input" />
         </div>
         <div class="form-field">
-          <label class="field-label" for="fw-version">Version</label>
-          <input id="fw-version" type="text" bind:value={uploadVersion} placeholder="e.g. 1.2.3" disabled={uploading} class="input" />
+          <label class="field-label" for="fw-version">{$t('common.version')}</label>
+          <input id="fw-version" type="text" bind:value={uploadVersion} placeholder={$t('firmware.version_placeholder')} disabled={uploading} class="input" />
         </div>
         <div class="form-field flex-grow">
-          <label class="field-label" for="fw-notes">Notes</label>
-          <input id="fw-notes" type="text" bind:value={uploadNotes} placeholder="Release notes (optional)" disabled={uploading} class="input" />
+          <label class="field-label" for="fw-notes">{$t('firmware.notes')}</label>
+          <input id="fw-notes" type="text" bind:value={uploadNotes} placeholder={$t('firmware.notes_placeholder')} disabled={uploading} class="input" />
         </div>
         <div class="form-field form-action">
           <Button variant="primary" icon="upload" on:click={handleUpload} loading={uploading}
-            disabled={!uploadFile || !uploadVersion.trim()}>Upload</Button>
+            disabled={!uploadFile || !uploadVersion.trim()}>{$t('common.upload')}</Button>
         </div>
       </div>
     </section>
@@ -278,23 +279,23 @@
     <section class="section-card">
       <div class="section-header">
         <Icon name="cpu" size={16} />
-        <span>Firmware Library</span>
+        <span>{$t('firmware.library')}</span>
         <Badge variant="neutral" size="sm">{firmwares.length}</Badge>
       </div>
 
       {#if firmwares.length === 0}
-        <EmptyState icon="upload" title="No firmware uploaded" message="Upload a .bin file to get started" />
+        <EmptyState icon="upload" title={$t('firmware.no_firmware')} message={$t('firmware.no_firmware_hint')} />
       {:else}
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Version</th>
-                <th>Size</th>
-                <th>Checksum</th>
-                <th>Notes</th>
-                <th>Uploaded</th>
-                <th>Actions</th>
+                <th>{$t('firmware.col_version')}</th>
+                <th>{$t('firmware.col_size')}</th>
+                <th>{$t('firmware.col_checksum')}</th>
+                <th>{$t('firmware.col_notes')}</th>
+                <th>{$t('firmware.col_uploaded')}</th>
+                <th>{$t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -306,7 +307,7 @@
                   <td class="notes-cell">{fw.notes || '—'}</td>
                   <td class="text-muted">{formatDate(fw.created_at)}</td>
                   <td class="actions">
-                    <Button variant="primary" size="sm" on:click={() => openDeploy(fw)}>Deploy</Button>
+                    <Button variant="primary" size="sm" on:click={() => openDeploy(fw)}>{$t('common.deploy')}</Button>
                     <Button variant="danger" size="sm" on:click={() => handleDelete(fw)} aria-label="Delete firmware {fw.version}">
                       <Icon name="trash" size={13} />
                     </Button>
@@ -323,9 +324,9 @@
     <section class="section-card">
       <div class="section-header">
         <Icon name="activity" size={16} />
-        <span>OTA Activity</span>
+        <span>{$t('firmware.ota_activity')}</span>
         {#if hasActiveJobs}
-          <Badge variant="info" size="sm" pulse>Live</Badge>
+          <Badge variant="info" size="sm" pulse>{$t('firmware.live')}</Badge>
         {/if}
       </div>
 
@@ -335,18 +336,18 @@
 
       {#if activeTab === 'jobs'}
         {#if jobs.length === 0}
-          <div class="empty-pad"><EmptyState icon="zap" title="No OTA jobs" message="Deploy firmware to a device to create a job" /></div>
+          <div class="empty-pad"><EmptyState icon="zap" title={$t('firmware.no_jobs')} message={$t('firmware.no_jobs_hint')} /></div>
         {:else}
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Device</th>
-                  <th>Version</th>
-                  <th>Status</th>
-                  <th>Queued</th>
-                  <th>Completed</th>
-                  <th>Error</th>
+                  <th>{$t('common.device')}</th>
+                  <th>{$t('common.version')}</th>
+                  <th>{$t('common.status')}</th>
+                  <th>{$t('firmware.col_queued')}</th>
+                  <th>{$t('firmware.col_completed')}</th>
+                  <th>{$t('common.error')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -366,20 +367,20 @@
         {/if}
       {:else}
         {#if rollouts.length === 0}
-          <div class="empty-pad"><EmptyState icon="zap" title="No rollouts" message="Use group deploy to start a rollout" /></div>
+          <div class="empty-pad"><EmptyState icon="zap" title={$t('firmware.no_rollouts')} message={$t('firmware.no_rollouts_hint')} /></div>
         {:else}
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Version</th>
-                  <th>Devices</th>
-                  <th>OK</th>
-                  <th>Fail</th>
-                  <th>Queue</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Actions</th>
+                  <th>{$t('common.version')}</th>
+                  <th>{$t('firmware.col_devices')}</th>
+                  <th>{$t('firmware.col_ok')}</th>
+                  <th>{$t('firmware.col_fail')}</th>
+                  <th>{$t('firmware.col_queue')}</th>
+                  <th>{$t('common.status')}</th>
+                  <th>{$t('common.created')}</th>
+                  <th>{$t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -394,12 +395,12 @@
                     <td class="text-muted">{formatDate(r.created_at)}</td>
                     <td class="actions">
                       {#if r.status === 'running'}
-                        <Button variant="secondary" size="sm" on:click={() => handlePause(r.id)}>Pause</Button>
+                        <Button variant="secondary" size="sm" on:click={() => handlePause(r.id)}>{$t('common.pause')}</Button>
                       {:else if r.status === 'paused'}
-                        <Button variant="primary" size="sm" on:click={() => handleResume(r.id)}>Resume</Button>
+                        <Button variant="primary" size="sm" on:click={() => handleResume(r.id)}>{$t('common.resume')}</Button>
                       {/if}
                       {#if r.status === 'running' || r.status === 'paused'}
-                        <Button variant="danger" size="sm" on:click={() => handleCancel(r.id)}>Cancel</Button>
+                        <Button variant="danger" size="sm" on:click={() => handleCancel(r.id)}>{$t('common.cancel')}</Button>
                       {/if}
                     </td>
                   </tr>
@@ -420,7 +421,7 @@
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
-        <h3 id="deploy-modal-title">Deploy {deployFirmware?.version}</h3>
+        <h3 id="deploy-modal-title">{$t('firmware.deploy_title', deployFirmware?.version)}</h3>
         <button class="close-btn" on:click={closeDeploy} aria-label="Close dialog">
           <Icon name="x" size={18} />
         </button>
@@ -430,11 +431,11 @@
         <div class="deploy-mode">
           <label class="mode-option">
             <input type="radio" bind:group={deployMode} value="single" />
-            <span>Single Device</span>
+            <span>{$t('firmware.single_device')}</span>
           </label>
           <label class="mode-option">
             <input type="radio" bind:group={deployMode} value="group" />
-            <span>Group Rollout</span>
+            <span>{$t('firmware.group_rollout')}</span>
           </label>
         </div>
 
@@ -449,7 +450,7 @@
           </div>
         {:else}
           <div class="device-checklist">
-            <span class="field-label" id="device-select-label">Select devices</span>
+            <span class="field-label" id="device-select-label">{$t('firmware.select_devices')}</span>
             <div class="checklist-inner" role="group" aria-labelledby="device-select-label">
               {#each devices as d}
                 <label class="device-check">
@@ -466,11 +467,11 @@
           </div>
           <div class="rollout-opts">
             <div class="field">
-              <label class="field-label" for="batch-size">Batch size</label>
+              <label class="field-label" for="batch-size">{$t('firmware.batch_size')}</label>
               <input id="batch-size" type="number" bind:value={deployBatchSize} min="1" max="50" class="input input-sm" />
             </div>
             <div class="field">
-              <label class="field-label" for="batch-interval">Interval (sec)</label>
+              <label class="field-label" for="batch-interval">{$t('firmware.interval_sec')}</label>
               <input id="batch-interval" type="number" bind:value={deployIntervalS} min="30" max="3600" class="input input-sm" />
             </div>
           </div>

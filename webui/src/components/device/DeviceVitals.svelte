@@ -1,6 +1,7 @@
 <script>
   import Icon from '../ui/Icon.svelte'
   import { formatDuration } from '../../lib/format.js'
+  import { t } from '../../lib/i18n.js'
 
   export let state = {}
 
@@ -26,7 +27,7 @@
         {temp != null ? temp.toFixed(1) : '--'}
         <span class="vital-unit">°C</span>
       </span>
-      <span class="vital-label">Temperature</span>
+      <span class="vital-label">{$t('device.temperature')}</span>
     </div>
     <div class="vital-accent temp" />
   </div>
@@ -40,7 +41,7 @@
         {setpoint != null ? setpoint.toFixed(1) : '--'}
         <span class="vital-unit">°C</span>
       </span>
-      <span class="vital-label">Setpoint</span>
+      <span class="vital-label">{$t('device.setpoint')}</span>
     </div>
     <div class="vital-accent setpoint" />
   </div>
@@ -51,12 +52,12 @@
     </div>
     <div class="vital-data">
       <span class="vital-value" class:on={compressorOn}>
-        {compressorOn ? 'ON' : 'OFF'}
+        {compressorOn ? $t('device.on') : $t('device.off')}
         {#if compressorOn && compressorRuntime}
           <span class="vital-detail">{formatDuration(compressorRuntime)}</span>
         {/if}
       </span>
-      <span class="vital-label">Compressor</span>
+      <span class="vital-label">{$t('device.compressor')}</span>
     </div>
     <div class="vital-accent" class:compressor-active={compressorOn} />
   </div>
@@ -67,9 +68,9 @@
     </div>
     <div class="vital-data">
       <span class="vital-value" class:on={defrostActive}>
-        {defrostActive ? (defrostPhase || 'Active') : 'OFF'}
+        {defrostActive ? (defrostPhase || $t('common.active')) : $t('device.off')}
       </span>
-      <span class="vital-label">Defrost</span>
+      <span class="vital-label">{$t('device.defrost')}</span>
     </div>
     <div class="vital-accent" class:defrost-active={defrostActive} />
   </div>
