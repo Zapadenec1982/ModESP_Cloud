@@ -206,6 +206,16 @@ export function sendCommand(deviceId, key, value) {
   });
 }
 
+/**
+ * Request full state dump from device via MQTT.
+ * The device clears its delta cache and re-publishes all 48 state keys.
+ */
+export function requestDeviceState(deviceId) {
+  return request(`/devices/${deviceId}/request-state`, {
+    method: 'POST',
+  });
+}
+
 // ── Telemetry ────────────────────────────────────────────
 
 export function getTelemetry(deviceId, { hours, from, to, channels } = {}) {

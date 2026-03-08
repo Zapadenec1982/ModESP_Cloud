@@ -1,8 +1,9 @@
 <script>
   import { onMount } from 'svelte'
-  import { sendCommand } from '../../lib/api.js'
+  import { sendCommand, requestDeviceState } from '../../lib/api.js'
   import { loadMeta, groupByCategory } from '../../lib/meta.js'
   import { toast } from '../../lib/toast.js'
+  import Icon from '../ui/Icon.svelte'
   import ParameterGroup from './ParameterGroup.svelte'
   import Skeleton from '../ui/Skeleton.svelte'
   import EmptyState from '../ui/EmptyState.svelte'
@@ -13,6 +14,12 @@
   let groups = []
   let loading = true
   let sendingKey = null
+  let requesting = false
+
+  // Count how many parameters have a live value
+  $: paramKeys = groups.flatMap(g => g.params.map(p => p.key))
+  $: liveCount = paramKeys.filter(k => state[k] !== undefined).length
+  $: totalCount = paramKeys.length
 
   onMount(async () => {
     const meta = await loadMeta()
@@ -35,6 +42,18 @@
       sendingKey = null
     }
   }
+
+  async function handleRequestState() {
+    requesting = true
+    try {
+      await requestDeviceState(deviceId)
+      toast.info('Requested full state from device')
+    } catch (err) {
+      toast.error(`Request failed: ${err.message}`)
+    } finally {
+      requesting = false
+    }
+  }
 </script>
 
 <div class="param-editor">
@@ -47,6 +66,26 @@
       message="Parameter metadata not loaded"
     />
   {:else}
+    <div class="editor-header">
+      <div class="editor-stats">
+        <span class="stat-label">Parameters</span>
+        <span class="stat-value">{liveCount}<span class="stat-total">/{totalCount}</span></span>
+      </div>
+      <button
+        class="request-btn"
+        on:click={handleRequestState}
+        disabled={requesting}
+        title="Request full state dump from device via MQTT"
+      >
+        {#if requesting}
+          <span class="spinner" />
+        {:else}
+          <Icon name="refresh" size={14} />
+        {/if}
+        <span>Read from device</span>
+      </button>
+    </div>
+
     <div class="groups">
       {#each groups as { cat, params }}
         <ParameterGroup
@@ -68,9 +107,82 @@
     gap: var(--space-3);
   }
 
+  .editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) 0;
+  }
+
+  .editor-stats {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .stat-label {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .stat-value {
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--accent-blue);
+    font-family: var(--font-mono);
+  }
+
+  .stat-total {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .request-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    background: rgba(88, 166, 255, 0.08);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--accent-blue);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .request-btn:hover:not(:disabled) {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: var(--accent-blue);
+  }
+
+  .request-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
   .groups {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  @media (max-width: 640px) {
+    .editor-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-2);
+    }
   }
 </style>
