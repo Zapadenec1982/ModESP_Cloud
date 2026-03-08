@@ -9,16 +9,18 @@
   const CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
 
   const PRESETS = [
+    { label: '1h',  hours: 1 },
+    { label: '6h',  hours: 6 },
     { label: '24h', hours: 24 },
     { label: '7d',  hours: 168 },
     { label: '30d', hours: 720 },
   ];
 
   const SERIES_CONFIG = {
-    air:      { label: 'Air',        stroke: '#0984e3', width: 2 },
-    evap:     { label: 'Evaporator', stroke: '#00b894', width: 2 },
-    cond:     { label: 'Condenser',  stroke: '#e17055', width: 2 },
-    setpoint: { label: 'Setpoint',   stroke: '#fdcb6e', width: 2, dash: [5, 5] },
+    air:      { label: 'Air',        stroke: '#22d3ee', width: 2 },
+    evap:     { label: 'Evaporator', stroke: '#34d399', width: 2 },
+    cond:     { label: 'Condenser',  stroke: '#f97316', width: 2 },
+    setpoint: { label: 'Setpoint',   stroke: '#a78bfa', width: 2, dash: [5, 5] },
   };
 
   // ── Date range state ─────────────────────────────────────
@@ -98,19 +100,19 @@
       },
       axes: [
         {
-          stroke: '#636e72',
-          grid: { stroke: '#f1f2f6' },
-          font: '11px system-ui',
-          ticks: { stroke: '#f1f2f6' },
+          stroke: 'rgba(139, 148, 158, 0.6)',
+          grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
+          font: '11px "IBM Plex Sans", system-ui',
+          ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
         },
         {
-          stroke: '#636e72',
-          grid: { stroke: '#f1f2f6' },
+          stroke: 'rgba(139, 148, 158, 0.6)',
+          grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
           size: 55,
           label: '\u00B0C',
-          font: '11px system-ui',
-          labelFont: 'bold 12px system-ui',
-          ticks: { stroke: '#f1f2f6' },
+          font: '11px "IBM Plex Sans", system-ui',
+          labelFont: 'bold 12px "IBM Plex Sans", system-ui',
+          ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
         },
       ],
       series: [
@@ -273,47 +275,48 @@
 
 <style>
   .telemetry-chart {
-    background: white;
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid #dfe6e9;
+    background: var(--bg-surface);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    border: 1px solid var(--border-default);
   }
 
   .chart-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.75rem;
+    margin-bottom: var(--space-3);
   }
 
   h3 {
-    font-size: 1rem;
-    color: #2d3436;
+    font-size: var(--text-base);
+    color: var(--text-primary);
+    font-weight: 600;
     margin: 0;
   }
 
   .presets {
     display: flex;
-    gap: 0.25rem;
+    gap: var(--space-1);
   }
 
   .presets button {
     padding: 0.3rem 0.6rem;
-    border: 1px solid #dfe6e9;
-    border-radius: 4px;
-    background: white;
-    font-size: 0.75rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: var(--text-xs);
     cursor: pointer;
-    color: #636e72;
+    color: var(--text-secondary);
     transition: all 0.2s;
   }
 
-  .presets button:hover { background: #f8f9fa; }
+  .presets button:hover { background: var(--bg-hover); color: var(--text-primary); }
 
   .presets button.active {
-    background: #0984e3;
-    color: white;
-    border-color: #0984e3;
+    background: var(--accent-blue);
+    color: #fff;
+    border-color: var(--accent-blue);
   }
 
   .presets button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -323,8 +326,8 @@
   .range-picker {
     display: flex;
     align-items: flex-end;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
     flex-wrap: wrap;
   }
 
@@ -335,8 +338,8 @@
   }
 
   .range-picker span {
-    font-size: 0.7rem;
-    color: #636e72;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
     text-transform: uppercase;
     font-weight: 600;
     letter-spacing: 0.03em;
@@ -344,17 +347,19 @@
 
   .range-picker input {
     padding: 0.35rem 0.5rem;
-    border: 1px solid #dfe6e9;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    color: #2d3436;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
     font-family: inherit;
     outline: none;
     transition: border-color 0.2s;
+    color-scheme: dark;
   }
 
   .range-picker input:focus {
-    border-color: #0984e3;
+    border-color: var(--accent-blue);
   }
 
   .range-picker input:disabled {
@@ -363,19 +368,19 @@
 
   .btn-apply {
     padding: 0.4rem 0.8rem;
-    border: 1px solid #0984e3;
-    border-radius: 4px;
-    background: white;
-    color: #0984e3;
-    font-size: 0.8rem;
+    border: 1px solid var(--accent-blue);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--accent-blue);
+    font-size: var(--text-sm);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .btn-apply:hover {
-    background: #0984e3;
-    color: white;
+    background: var(--accent-blue);
+    color: #fff;
   }
 
   .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -397,14 +402,29 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #636e72;
-    font-size: 0.9rem;
-    background: rgba(255, 255, 255, 0.8);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    background: rgba(13, 17, 23, 0.7);
     z-index: 1;
   }
 
   .telemetry-chart :global(.u-legend) {
-    font-size: 0.8rem;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
     padding: 0.25rem 0;
+  }
+
+  .telemetry-chart :global(.u-legend .u-label) {
+    color: var(--text-secondary);
+  }
+
+  .telemetry-chart :global(.u-legend .u-value) {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+  }
+
+  /* Override uPlot cursor tooltip */
+  .telemetry-chart :global(.u-cursor-pt) {
+    border-color: var(--accent-blue) !important;
   }
 </style>
