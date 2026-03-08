@@ -50,6 +50,12 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+// ── Parameter metadata (no auth — same for all devices) ──────────
+const stateMeta = require('./config/state_meta.json');
+app.get('/api/meta', (_req, res) => {
+  res.json(stateMeta);
+});
+
 // ── Debug: stateMap diagnostics (localhost only, no auth) ─────────
 app.get('/api/debug/state/:deviceId', (req, res) => {
   // Only allow from localhost
