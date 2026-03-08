@@ -90,6 +90,7 @@
   // ── Service records state ──
   let serviceRecords = []
   let serviceLoading = false
+  let serviceLoaded = false
   let showAddService = false
   let serviceForm = { service_date: '', technician: '', reason: '', work_done: '' }
   let serviceSaving = false
@@ -102,6 +103,7 @@
       serviceRecords = []
     } finally {
       serviceLoading = false
+      serviceLoaded = true
     }
   }
 
@@ -143,7 +145,7 @@
   }
 
   // Load service records when switching to service tab
-  $: if (activeTab === 'service' && device && serviceRecords.length === 0 && !serviceLoading) {
+  $: if (activeTab === 'service' && device && !serviceLoaded && !serviceLoading) {
     loadServiceRecords()
   }
 
