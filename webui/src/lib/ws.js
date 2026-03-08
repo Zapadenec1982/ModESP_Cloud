@@ -4,8 +4,9 @@
  * In dev mode, Vite proxies /ws → ws://localhost:3000/ws.
  */
 
-import { getAccessToken } from './api.js';
-import { wsConnected } from './stores.js';
+import { getAccessToken, restoreSession } from './api.js';
+import { wsConnected, authEnabled } from './stores.js';
+import { get } from 'svelte/store';
 
 /** @type {WebSocket | null} */
 let socket = null;
@@ -57,9 +58,20 @@ export function connect() {
     }
   };
 
-  socket.onclose = () => {
-    console.log('[WS] Disconnected, reconnecting in', reconnectDelay, 'ms');
+  socket.onclose = (event) => {
     wsConnected.set(false);
+
+    // Server rejects WS handshake with 401 → browser sees code 1006 (abnormal)
+    // Also handle explicit auth codes: 4401, 1008
+    const authFailed = event.code === 4401 || event.code === 1008
+      || (event.code === 1006 && get(authEnabled) && getAccessToken());
+    if (authFailed) {
+      console.log('[WS] Auth failed (code:', event.code, '), refreshing token before reconnect');
+      handleAuthReconnect();
+      return;
+    }
+
+    console.log('[WS] Disconnected (code:', event.code, '), reconnecting in', reconnectDelay, 'ms');
     scheduleReconnect();
   };
 
@@ -146,4 +158,31 @@ function scheduleReconnect() {
     reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
     connect();
   }, reconnectDelay);
+}
+
+/**
+ * Handle WS disconnection due to auth failure:
+ * try to refresh the token, then reconnect.
+ */
+async function handleAuthReconnect() {
+  if (!get(authEnabled)) {
+    // Auth not enabled — just reconnect normally
+    scheduleReconnect();
+    return;
+  }
+
+  try {
+    const restored = await restoreSession();
+    if (restored) {
+      console.log('[WS] Token refreshed, reconnecting');
+      reconnectDelay = 1000;
+      connect();
+    } else {
+      console.log('[WS] Token refresh failed — session expired');
+      // Don't reconnect; user needs to log in again
+    }
+  } catch {
+    console.log('[WS] Token refresh error, retrying later');
+    scheduleReconnect();
+  }
 }

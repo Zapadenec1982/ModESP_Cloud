@@ -114,6 +114,28 @@ function handleClientMessage(ws, msg) {
 }
 
 async function subscribe(ws, deviceId) {
+  // ── Tenant isolation: verify device belongs to user's tenant ──
+  let dbState = {};
+  try {
+    const params = [deviceId];
+    let sql = 'SELECT last_state, tenant_id FROM devices WHERE mqtt_device_id = $1';
+    if (AUTH_ENABLED && ws._user) {
+      sql += ' AND tenant_id = $2';
+      params.push(ws._user.tenantId);
+    }
+    sql += ' LIMIT 1';
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) {
+      return sendJSON(ws, { type: 'error', message: 'Device not found or access denied' });
+    }
+    if (rows[0].last_state) {
+      dbState = rows[0].last_state;
+    }
+  } catch (err) {
+    logger.warn({ err, deviceId }, 'Failed to load device state for WS subscribe');
+    return sendJSON(ws, { type: 'error', message: 'Failed to load device' });
+  }
+
   // Add to subscription map
   if (!subscriptions.has(deviceId)) {
     subscriptions.set(deviceId, new Set());
@@ -122,22 +144,8 @@ async function subscribe(ws, deviceId) {
   ws._subscriptions.add(deviceId);
 
   // Send current state snapshot: merge DB last_state with live stateMap
-  // stateMap may not have all keys if device hasn't published deltas since backend start
   const liveState = mqttSvc.getDeviceState(deviceId);
   const meta      = mqttSvc.getDeviceMeta(deviceId);
-
-  let dbState = {};
-  try {
-    const { rows } = await db.query(
-      `SELECT last_state FROM devices WHERE mqtt_device_id = $1 LIMIT 1`,
-      [deviceId]
-    );
-    if (rows.length > 0 && rows[0].last_state) {
-      dbState = rows[0].last_state;
-    }
-  } catch (err) {
-    logger.warn({ err, deviceId }, 'Failed to load DB state for WS subscribe');
-  }
 
   // DB state as base, live stateMap overrides (fresher data wins)
   const mergedState = { ...dbState, ...(liveState || {}) };

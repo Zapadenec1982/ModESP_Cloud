@@ -4,6 +4,7 @@
  */
 
 import { authUser, authEnabled, navigate } from './stores.js';
+import { toast } from './toast.js';
 
 const BASE = '/api';
 
@@ -48,8 +49,9 @@ async function request(path, options = {}) {
       headers['Authorization'] = `Bearer ${accessToken}`;
       res = await fetch(url, { ...options, headers, _noRetry: true });
     } else {
-      // Refresh failed — force logout
+      // Refresh failed — force logout with notification
       clearAuth();
+      toast.warning('Session expired — please log in again');
       navigate('/');
       throw Object.assign(new Error('Session expired'), { status: 401 });
     }
