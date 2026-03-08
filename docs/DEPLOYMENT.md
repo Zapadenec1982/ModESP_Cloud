@@ -38,6 +38,42 @@ Ubuntu 24.04
 
 ---
 
+## Структура на сервері
+
+```
+/opt/modesp-cloud/
+├── backend/
+│   ├── src/
+│   │   ├── index.js                 # точка входу
+│   │   ├── db/
+│   │   │   ├── schema.sql           # повна схема
+│   │   │   └── migrations/
+│   │   │       ├── 002_notification_tables.sql
+│   │   │       ├── 003_ota_tables.sql
+│   │   │       ├── 004_ota_pre_version.sql
+│   │   │       ├── 005_device_model_comment.sql
+│   │   │       ├── 006_device_rbac.sql
+│   │   │       └── 007_firmware_board_type.sql
+│   │   └── ...
+│   ├── scripts/
+│   │   ├── grant-all-devices.js     # backward compat RBAC migration
+│   │   └── cleanup-telemetry.js     # retention: видаляє партиції >90 днів
+│   ├── .env                         # конфігурація (не в git!)
+│   └── package.json
+├── webui/
+│   ├── dist/                        # збілджений SPA (Nginx serve)
+│   └── package.json
+└── infra/
+    ├── systemd/
+    │   ├── modesp-backend.service
+    │   ├── modesp-telemetry-partition.service
+    │   └── modesp-telemetry-partition.timer
+    ├── nginx/
+    └── mosquitto/
+```
+
+---
+
 ## Кроки розгортання
 
 ### 1. Базове налаштування сервера
@@ -70,7 +106,41 @@ CREATE DATABASE modesp_cloud OWNER modesp_cloud;
 EOF
 
 # Застосувати схему
-psql -U modesp_cloud -d modesp_cloud -f /opt/modesp-cloud/docs/schema.sql
+sudo -u postgres psql -d modesp_cloud \
+  -f /opt/modesp-cloud/backend/src/db/schema.sql
+```
+
+**Застосування міграцій** (завжди через `sudo -u postgres`):
+
+```bash
+cd /opt/modesp-cloud
+
+# Застосувати всі міграції по порядку
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/002_notification_tables.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/003_ota_tables.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/004_ota_pre_version.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/005_device_model_comment.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/006_device_rbac.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/007_firmware_board_type.sql
+```
+
+**Після міграції 006** (RBAC) — призначити всі пристрої існуючим юзерам:
+
+```bash
+cd /opt/modesp-cloud/backend
+node scripts/grant-all-devices.js          # dry-run (перегляд)
+node scripts/grant-all-devices.js --apply  # виконати
 ```
 
 ### 3. Mosquitto
@@ -124,20 +194,32 @@ systemctl start mosquitto
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt install -y nodejs
 
-# Розгорнути бекенд
+# Створити системного користувача
+useradd -r -s /usr/sbin/nologin -d /opt/modesp-cloud modesp
+
+# Розгорнути код
 mkdir -p /opt/modesp-cloud
 cd /opt/modesp-cloud
-git clone https://github.com/youruser/ModESP_Cloud.git .
+git clone https://github.com/Zapadenec1982/ModESP_Cloud.git .
+chown -R modesp:modesp /opt/modesp-cloud
+
+# Встановити залежності бекенду
 cd backend
 npm install --production
 
-# .env файл
+# Створити .env файл
 cp .env.example .env
 nano .env
+
+# Зібрати WebUI
+cd ../webui
+npm install
+npm run build
 ```
 
+`.env` файл (`/opt/modesp-cloud/backend/.env`):
+
 ```bash
-# /opt/modesp-cloud/backend/.env
 NODE_ENV=production
 PORT=3000
 
@@ -159,43 +241,81 @@ JWT_SECRET=LONG_RANDOM_SECRET_HERE
 JWT_EXPIRES_IN=900
 JWT_REFRESH_EXPIRES_IN=2592000
 
-# Firebase FCM
+# Auth (true для production, false для розробки без логіну)
+AUTH_ENABLED=true
+
+# Firebase FCM (опціонально)
 FCM_SERVER_KEY=your_fcm_server_key
 
-# Telegram
+# Telegram (опціонально)
 TELEGRAM_BOT_TOKEN=your_bot_token
+```
+
+Створити адміністратора:
+
+```bash
+cd /opt/modesp-cloud/backend
+node src/db/seed-admin.js
 ```
 
 ### 5. systemd юніт для Node.js
 
+```bash
+# Скопіювати юніт файли з репо
+cp infra/systemd/modesp-backend.service /etc/systemd/system/
+cp infra/systemd/modesp-telemetry-partition.service /etc/systemd/system/
+cp infra/systemd/modesp-telemetry-partition.timer /etc/systemd/system/
+
+systemctl daemon-reload
+
+# Бекенд — автозапуск
+systemctl enable modesp-backend
+systemctl start modesp-backend
+
+# Таймер партицій телеметрії — створює партицію на 2 місяці вперед, 25-го числа
+systemctl enable modesp-telemetry-partition.timer
+systemctl start modesp-telemetry-partition.timer
+```
+
+Зміст `/etc/systemd/system/modesp-backend.service`:
+
 ```ini
-# /etc/systemd/system/modesp-cloud.service
 [Unit]
 Description=ModESP Cloud Backend
+Documentation=https://github.com/Zapadenec1982/ModESP_Cloud
 After=network.target postgresql.service mosquitto.service
+Requires=postgresql.service mosquitto.service
 
 [Service]
 Type=simple
-User=www-data
+User=modesp
+Group=modesp
 WorkingDirectory=/opt/modesp-cloud/backend
 ExecStart=/usr/bin/node src/index.js
-Restart=always
-RestartSec=10
-Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=5s
+
+# Environment
 EnvironmentFile=/opt/modesp-cloud/backend/.env
 
-# Обмеження ресурсів
-MemoryLimit=512M
-CPUQuota=80%
+# Limits
+LimitNOFILE=65536
+MemoryMax=256M
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/modesp-cloud/backend
+PrivateTmp=true
+
+# Logging (journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-backend
 
 [Install]
 WantedBy=multi-user.target
-```
-
-```bash
-systemctl daemon-reload
-systemctl enable modesp-cloud
-systemctl start modesp-cloud
 ```
 
 ### 6. Nginx
@@ -257,20 +377,77 @@ nginx -t && systemctl reload nginx
 
 ---
 
+## Оновлення (deploy update)
+
+Стандартна процедура після `git push` з локальної машини:
+
+```bash
+cd /opt/modesp-cloud
+
+# 1. Підтягнути код
+git pull origin main
+
+# 2. Застосувати нові міграції (якщо є)
+#    Перевірити які міграції вже застосовані і запустити нові
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/NNN_new_migration.sql
+
+# 3. Оновити залежності бекенду (якщо змінився package.json)
+cd backend
+npm install --production
+
+# 4. Перезібрати WebUI (якщо змінився webui/)
+cd ../webui
+npm install
+npm run build
+
+# 5. Перезапустити бекенд
+sudo systemctl restart modesp-backend
+
+# 6. Перевірити
+sudo systemctl status modesp-backend
+curl -s http://localhost:3000/api/health | jq .
+```
+
+---
+
+## Cron задачі
+
+```bash
+# Редагувати crontab для користувача modesp
+sudo crontab -u modesp -e
+```
+
+```cron
+# Очистка старих партицій телеметрії (>90 днів), щодня о 3:00
+0 3 * * * cd /opt/modesp-cloud/backend && /usr/bin/node scripts/cleanup-telemetry.js >> /var/log/modesp-cleanup.log 2>&1
+```
+
+**Примітка:** партиції на наступні місяці створюються автоматично через systemd timer `modesp-telemetry-partition.timer` (25-го числа кожного місяця о 3:00).
+
+---
+
 ## Моніторинг
 
 ```bash
-# Перевірка статусу сервісів
-systemctl status modesp-cloud mosquitto nginx postgresql
+# Перевірка статусу всіх сервісів
+systemctl status modesp-backend mosquitto nginx postgresql
 
-# Логи бекенду
-journalctl -u modesp-cloud -f
+# Логи бекенду (live)
+journalctl -u modesp-backend -f
+
+# Логи бекенду (останні 100 рядків)
+journalctl -u modesp-backend --no-pager -n 100
 
 # Логи Mosquitto
 tail -f /var/log/mosquitto/mosquitto.log
 
-# Heap і з'єднання PostgreSQL
-psql -U modesp_cloud -c "SELECT count(*) FROM pg_stat_activity;"
+# Кількість з'єднань PostgreSQL
+sudo -u postgres psql -d modesp_cloud \
+  -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
+
+# Статус таймерів
+systemctl list-timers modesp-*
 ```
 
 ### Healthcheck endpoint
@@ -292,11 +469,19 @@ GET /api/health
 ## Backup
 
 ```bash
-# Щоденний backup PostgreSQL (cron)
-0 2 * * * pg_dump -U modesp_cloud modesp_cloud | gzip > /backup/modesp_$(date +%Y%m%d).sql.gz
+# Щоденний backup PostgreSQL (cron для root)
+sudo crontab -e
+```
 
-# Зберігати останні 30 днів
-find /backup -name "modesp_*.sql.gz" -mtime +30 -delete
+```cron
+# Backup БД щодня о 2:00, зберігати 30 днів
+0 2 * * * pg_dump -U postgres modesp_cloud | gzip > /backup/modesp_$(date +\%Y\%m\%d).sql.gz
+30 2 * * * find /backup -name "modesp_*.sql.gz" -mtime +30 -delete
+```
+
+```bash
+# Створити директорію для бекапів
+mkdir -p /backup
 ```
 
 ---
@@ -304,3 +489,4 @@ find /backup -name "modesp_*.sql.gz" -mtime +30 -delete
 ## Changelog
 
 - 2026-03-07 — Створено. Повний гайд розгортання: PostgreSQL, Mosquitto, Node.js, Nginx, systemd, backup.
+- 2026-03-08 — Оновлено. Виправлені шляхи і команди за результатами реального розгортання: systemd юніт `modesp-backend` (не modesp-cloud), міграція `006_device_rbac.sql` (не user_devices), скрипти в `backend/scripts/` (не src/db), PostgreSQL auth через `sudo -u postgres`, додано секцію "Оновлення", cron задачі, структуру файлів на сервері.
