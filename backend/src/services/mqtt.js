@@ -696,6 +696,16 @@ function sendCommand(tenantSlug, deviceId, key, value) {
   const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/${key}`;
   client.publish(topic, String(value), { qos: 0 });
   logger.info({ tenantSlug, deviceId, key, value }, 'Command sent');
+
+  // Optimistic echo: update stateMap and broadcast via WebSocket
+  // so the UI immediately reflects the sent value
+  const parsed = parseScalar(String(value));
+  const state = stateMap.get(deviceId);
+  if (state) {
+    state[key] = parsed;
+    state._dirty = true;
+    emitter.emit('state_delta', { tenantSlug, deviceId, changes: { [key]: parsed } });
+  }
 }
 
 /**
