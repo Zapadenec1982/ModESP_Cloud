@@ -50,6 +50,35 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+// ── Debug: stateMap diagnostics (localhost only, no auth) ─────────
+app.get('/api/debug/state/:deviceId', (req, res) => {
+  // Only allow from localhost
+  const ip = req.ip || req.connection.remoteAddress;
+  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
+    return res.status(403).json({ error: 'localhost only' });
+  }
+  const state = mqttSvc.getDeviceState(req.params.deviceId);
+  const meta  = mqttSvc.getDeviceMeta(req.params.deviceId);
+  if (!state) {
+    return res.json({ found: false, deviceId: req.params.deviceId });
+  }
+  // Separate internal keys from state keys
+  const stateKeys = {};
+  const internal = {};
+  for (const [k, v] of Object.entries(state)) {
+    if (k.startsWith('_')) internal[k] = v;
+    else stateKeys[k] = v;
+  }
+  res.json({
+    found: true,
+    deviceId: req.params.deviceId,
+    stateKeyCount: Object.keys(stateKeys).length,
+    online: meta ? meta.online : false,
+    internal,
+    state: stateKeys,
+  });
+});
+
 // ── Firmware binary download (no auth — ESP32 downloads directly) ───
 const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
   || path.join(__dirname, '../firmware');

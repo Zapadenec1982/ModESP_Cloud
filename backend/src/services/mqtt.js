@@ -572,6 +572,10 @@ async function bootstrapStateMap() {
       }
 
       stateMap.set(row.mqtt_device_id, state);
+
+      // Count state keys (exclude internal _ prefixed)
+      const stateKeyCount = Object.keys(state).filter(k => !k.startsWith('_')).length;
+      logger.info({ deviceId: row.mqtt_device_id, keys: stateKeyCount }, 'StateMap bootstrapped device');
     }
 
     logger.info({ devices: rows.length }, 'StateMap bootstrapped from DB');
