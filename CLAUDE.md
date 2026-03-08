@@ -314,7 +314,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 6: Fleet OTA** — реалізовано (cloud side)
+**Фаза 6: Fleet OTA** — повністю завершено (cloud + firmware)
 
 | Компонент | Статус |
 |-----------|--------|
@@ -329,7 +329,7 @@ git push origin main
 | Push Notifications (Phase 3) | ✅ push.js, telegram.js, fcm.js, REST API, WebUI |
 | Auth (Phase 4) | ✅ auth.js service, JWT middleware, login/refresh/logout, users CRUD, WebUI Login/Users |
 | History & Analytics (Phase 5) | ✅ telemetry stats, alarm stats, fleet summary, uPlot chart, AlarmHistory, Dashboard fleet bar |
-| Fleet OTA (Phase 6) | ✅ firmware upload/list/delete, OTA deploy/rollout, batch scheduling, status checker, Firmware WebUI page |
+| Fleet OTA (Phase 6) | ✅ Cloud: firmware upload/list/delete, deploy/rollout, status checker. Firmware: OTA handler E2E verified (~8s) |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
 | VPS розгортання | ⬜ Не розпочато |
 
@@ -356,3 +356,4 @@ git push origin main
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service (bcrypt/JWT), auth middleware, auth/users routes, seed-admin script, WebSocket JWT auth, WebUI Login/Users pages, AUTH_ENABLED toggle.
 - 2026-03-07 — Phase 5: History & Analytics — telemetry from/to + bucketed stats API, alarm stats API, fleet summary API, uPlot TelemetryChart, AlarmHistory component, Dashboard fleet summary bar, ensure-partitions.js script.
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete API (multer), OTA deploy + group rollout API, ota.js service (batch scheduling, periodic status checker, auto-pause on failure threshold), sendJsonCommand (QoS 1), Firmware.svelte WebUI page with deploy modal.
+- 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler verified E2E (~8s). Partition table fix (otadata + ota_1 for rollback). ROADMAP оновлено.

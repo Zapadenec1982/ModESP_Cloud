@@ -105,7 +105,7 @@
 ### Фаза 6: Fleet OTA
 **Ціль:** Оновлення прошивки на всіх пристроях без виїзду на об'єкт.
 
-- [ ] **ModESP_v4:** додати MQTT OTA handler (підписка на `cmd/_ota`, download firmware by URL)
+- [x] **ModESP_v4:** MQTT OTA handler (cmd/_ota → HTTP download → SHA256 → flash → reboot, ~8s E2E)
 - [x] REST API: завантаження firmware файлів (multer, SHA256 checksum)
 - [x] REST API: запуск OTA на окремому пристрої
 - [x] Груповий rollout з batch_size і інтервалом
@@ -136,10 +136,12 @@
 - [x] HTTP API: tenant field в GET/POST `/api/mqtt`
 - [x] RAM overhead: ≤ 2KB (80KB вільної залишиться ≥ 78KB)
 
-### ModESP_v4 → Phase 6 (MQTT OTA)
-- [ ] Підписка на `cmd/_ota` з URL firmware
-- [ ] HTTPS download → esp_ota_begin/write/end
-- [ ] Publish OTA status/progress
+### ModESP_v4 → Phase 6 (MQTT OTA) ✅
+- [x] Підписка на `cmd/_ota` з URL firmware
+- [x] HTTP download → esp_ota_begin/write/end (з SHA256, magic byte, board match)
+- [x] Publish OTA status/progress (_ota.status, _ota.progress, _ota.error)
+- [x] Partition table: otadata + ota_0 + ota_1 (rollback support)
+- [x] E2E тест: download → verify → flash → reboot ~8 сек
 
 ---
 
@@ -153,3 +155,4 @@
 - 2026-03-07 — Phase 4: Auth & User Management — auth.js service, JWT middleware, login/refresh/logout routes, users CRUD, seed-admin script, WebSocket JWT, WebUI Login/Users pages, AUTH_ENABLED toggle.
 - 2026-03-07 — Phase 5: History & Analytics — telemetry stats (bucketed aggregation), alarm stats, fleet summary API, uPlot TelemetryChart, AlarmHistory table, Dashboard fleet summary bar, ensure-partitions.js.
 - 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete, OTA deploy + group rollout with batching, ota.js service (status checker, auto-pause), sendJsonCommand QoS 1, Firmware WebUI page, migration 003.
+- 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler (ota_handler.cpp) — E2E verified. Partition table fix (otadata + ota_1 for rollback).
