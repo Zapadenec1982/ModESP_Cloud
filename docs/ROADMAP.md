@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Фаза 7d: OTA Board Compatibility — реалізовано**
+**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified**
 
 ---
 
@@ -20,7 +20,7 @@
 - [x] Тестування: compile, flash, verify MQTT topics
 
 **Cloud infrastructure:**
-- [ ] VPS налаштування (Ubuntu 24, firewall, fail2ban) — setup.sh готовий
+- [x] VPS налаштування (Ubuntu 24, firewall, fail2ban)
 - [x] Mosquitto broker з ACL і TLS — конфіги готові
 - [x] PostgreSQL: базова схема (tenants, devices, alarms, telemetry, events)
 - [x] Node.js: MqttService (підписка, topic parsing, state aggregation)
@@ -48,7 +48,7 @@
 - [x] Svelte: список пристроїв з online/offline статусом
 - [x] Svelte: перегляд стану контролера в реальному часі
 - [x] Svelte: auto-discovery UI (pending devices list, assign to tenant)
-- [ ] Svelte: розгортання через Nginx
+- [x] Svelte: розгортання через Nginx
 
 **Результат:** Повноцінний віддалений моніторинг без додаткового обладнання.
 
@@ -225,3 +225,4 @@
 - 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout, batch state writer (N→1 query), heartbeat write dedup, event INSERT batching (1s flush), cleanup-telemetry.js (90-day retention), telemetry LIMIT 10000, WS backpressure (64KB), StateMap monitoring (60s stats).
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), route guards (admin-only pages via svelte-spa-router wrap), device assignment modal on Users page (search, select all/none, bulk PUT), i18n keys (uk+en).
 - 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal).
+- 2026-03-08 — VPS Production Deployment: backend (modesp-backend.service), WebUI via Nginx, MQTT bidirectional, OTA E2E confirmed, admin + viewer accounts, ESP32 connected and operational.

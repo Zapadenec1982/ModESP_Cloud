@@ -349,7 +349,7 @@ git push origin main
 | Frontend RBAC (Phase 7c) | ✅ isAdmin/canWrite stores, conditional UI, route guards, device assignment modal, i18n |
 | OTA Board Compatibility (Phase 7d) | ✅ migration 007, board_type on upload/deploy, board validation, Firmware WebUI board awareness |
 | Mosquitto конфіг (prod) | ✅ Конфіги готові |
-| VPS розгортання | 🔄 В процесі |
+| VPS розгортання | ✅ Production: backend, WebUI, MQTT bidirectional, OTA E2E verified |
 
 ---
 
@@ -380,3 +380,4 @@ git push origin main
 - 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout 30s, batch state writer (N→1 multi-row UPDATE), heartbeat write dedup (_lastFw), event INSERT batching (1s flush), cleanup-telemetry.js (90-day partition retention), telemetry LIMIT 10000 + X-Truncated, WS backpressure (64KB), StateMap monitoring (60s stats).
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), admin-only route guards (wrap from svelte-spa-router), device assignment modal on Users page (search, select all/none, checklist, bulk PUT), i18n keys (uk+en).
 - 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal, incompatible devices disabled).
+- 2026-03-08 — VPS deployment complete: backend running (modesp-backend.service), WebUI via Nginx, MQTT bidirectional verified, OTA E2E confirmed, admin + viewer accounts created, ESP32 connected.

@@ -281,7 +281,7 @@ sudo systemctl restart modesp-backend
 | 7b | Backend Scalability (Batch Writes, Retention) | ✅ |
 | 7c | Frontend RBAC (Conditional UI, Route Guards) | ✅ |
 | 7d | OTA Board Compatibility | ✅ |
-| — | VPS Deployment | 🔄 В процесі |
+| — | VPS Deployment | ✅ Production |
 
 **Наступні фази** (Phase 8+): ML predictive maintenance, anomaly detection, PDF reports, ERP integration.
 
