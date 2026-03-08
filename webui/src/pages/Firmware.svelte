@@ -386,8 +386,8 @@
 
 <!-- ── Deploy Modal ──────────────────────────────── -->
 {#if showDeploy}
-  <div class="modal-backdrop" on:click={closeDeploy} on:keydown={() => {}}>
-    <div class="modal" on:click|stopPropagation on:keydown={() => {}}>
+  <div class="modal-backdrop" role="presentation" on:click={closeDeploy} on:keydown={() => {}}>
+    <div class="modal" role="dialog" on:click|stopPropagation on:keydown={() => {}}>
       <h3>Deploy {deployFirmware?.version}</h3>
 
       <div class="deploy-mode">

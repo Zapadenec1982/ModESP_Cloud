@@ -50,7 +50,7 @@
 
 <!-- Mobile backdrop -->
 {#if $sidebarOpen}
-  <div class="backdrop" on:click={closeMobile} on:keydown={() => {}} />
+  <div class="backdrop" role="presentation" on:click={closeMobile} on:keydown={() => {}} />
 {/if}
 
 <aside class="sidebar" class:collapsed={$sidebarCollapsed} class:mobile-open={$sidebarOpen}>

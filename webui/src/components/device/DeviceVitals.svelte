@@ -5,7 +5,7 @@
   export let state = {}
 
   $: temp = state['equipment.air_temp']
-  $: setpoint = state['thermostat.setpoint']
+  $: setpoint = state['thermostat.setpoint'] ?? state['thermostat.effective_setpoint']
   $: compressorOn = state['thermostat.compressor_on']
   $: compressorRuntime = state['thermostat.compressor_runtime']
   $: defrostActive = state['defrost.active']
