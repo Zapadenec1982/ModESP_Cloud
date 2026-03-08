@@ -20,6 +20,8 @@
   let assigningDevice = null
   let assignName = ''
   let assignLocation = ''
+  let assignModel = ''
+  let assignSerial = ''
   let assigning = false
 
   async function load() {
@@ -37,6 +39,8 @@
     assigningDevice = dev
     assignName = ''
     assignLocation = ''
+    assignModel = ''
+    assignSerial = ''
   }
 
   function closeAssign() {
@@ -54,6 +58,8 @@
       await assignDevice(assigningDevice.mqtt_device_id, {
         name: assignName || undefined,
         location: assignLocation || undefined,
+        model: assignModel || undefined,
+        serial_number: assignSerial || undefined,
       })
       toast.success($t('pending.device_assigned', assigningDevice.mqtt_device_id))
       assigningDevice = null
@@ -148,6 +154,16 @@
         <label class="field">
           <span>{$t('device.location')}</span>
           <input type="text" bind:value={assignLocation} placeholder={$t('pending.location_placeholder')} />
+        </label>
+
+        <label class="field">
+          <span>{$t('device.model')}</span>
+          <input type="text" bind:value={assignModel} placeholder={$t('pending.model_placeholder')} />
+        </label>
+
+        <label class="field">
+          <span>{$t('device.serial_number')}</span>
+          <input type="text" bind:value={assignSerial} placeholder={$t('pending.serial_placeholder')} />
         </label>
       </div>
 

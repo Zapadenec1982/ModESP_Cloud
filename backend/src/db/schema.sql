@@ -31,6 +31,9 @@ CREATE TABLE devices (
   serial_number    VARCHAR(64),
   name             VARCHAR(128),
   location         VARCHAR(256),
+  model            VARCHAR(64),
+  comment          TEXT,
+  manufactured_at  DATE,
   firmware_version VARCHAR(16),
   proto_version    SMALLINT     NOT NULL DEFAULT 1,
   last_seen        TIMESTAMPTZ,
@@ -76,6 +79,23 @@ CREATE TABLE user_devices (
   device_id  UUID REFERENCES devices(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, device_id)
 );
+
+-- ============================================================
+-- Service Records (maintenance/repair journal per device)
+-- ============================================================
+CREATE TABLE service_records (
+  id           BIGSERIAL    PRIMARY KEY,
+  tenant_id    UUID         NOT NULL REFERENCES tenants(id),
+  device_id    UUID         NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  service_date DATE         NOT NULL,
+  technician   VARCHAR(128) NOT NULL,
+  reason       TEXT         NOT NULL,
+  work_done    TEXT         NOT NULL,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_service_records_device
+  ON service_records(tenant_id, device_id, service_date DESC);
 
 -- ============================================================
 -- Alarms

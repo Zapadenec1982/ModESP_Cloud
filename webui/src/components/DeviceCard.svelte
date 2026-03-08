@@ -44,12 +44,18 @@
       </div>
     </div>
 
-    {#if device.location || device.firmware_version}
+    {#if device.location || device.model || device.firmware_version}
       <div class="card-footer">
         {#if device.location}
           <span class="footer-item">
             <Icon name="map-pin" size={12} />
             {device.location}
+          </span>
+        {/if}
+        {#if device.model}
+          <span class="footer-item">
+            <Icon name="cpu" size={12} />
+            {device.model}
           </span>
         {/if}
         {#if device.firmware_version}

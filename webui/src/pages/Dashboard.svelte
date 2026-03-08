@@ -39,7 +39,9 @@
       result = result.filter(d =>
         (d.name || '').toLowerCase().includes(lq) ||
         (d.mqtt_device_id || '').toLowerCase().includes(lq) ||
-        (d.location || '').toLowerCase().includes(lq)
+        (d.location || '').toLowerCase().includes(lq) ||
+        (d.model || '').toLowerCase().includes(lq) ||
+        (d.serial_number || '').toLowerCase().includes(lq)
       )
     }
     if (f === 'online')  result = result.filter(d => d.online)

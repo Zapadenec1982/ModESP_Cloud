@@ -260,10 +260,17 @@ export function getPendingDevices() {
   return request('/devices/pending');
 }
 
-export function assignDevice(mqttId, { name, location } = {}) {
+export function assignDevice(mqttId, { name, location, model, serial_number, comment } = {}) {
   return request(`/devices/pending/${mqttId}/assign`, {
     method: 'POST',
-    body: JSON.stringify({ name, location }),
+    body: JSON.stringify({ name, location, model, serial_number, comment }),
+  });
+}
+
+export function updateDevice(id, data) {
+  return request(`/devices/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
   });
 }
 
@@ -281,6 +288,25 @@ export function sendCommand(deviceId, key, value) {
 export function requestDeviceState(deviceId) {
   return request(`/devices/${deviceId}/request-state`, {
     method: 'POST',
+  });
+}
+
+// ── Service Records ─────────────────────────────────────
+
+export function getServiceRecords(deviceId) {
+  return request(`/devices/${deviceId}/service-records`);
+}
+
+export function createServiceRecord(deviceId, data) {
+  return request(`/devices/${deviceId}/service-records`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteServiceRecord(deviceId, recordId) {
+  return request(`/devices/${deviceId}/service-records/${recordId}`, {
+    method: 'DELETE',
   });
 }
 
