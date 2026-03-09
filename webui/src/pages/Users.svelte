@@ -373,7 +373,7 @@
                 <!-- Change tenant (superadmin only, not for superadmin users) -->
                 {#if $isSuperAdmin && user.role !== 'superadmin'}
                   <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.change_tenant')} {user.email}">
-                    <Icon name="layers" size={13} />
+                    <Icon name="grid" size={13} />
                   </Button>
                 {/if}
                 <!-- Deactivate/Reactivate (not for superadmin rows) -->
