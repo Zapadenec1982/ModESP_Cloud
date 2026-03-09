@@ -169,6 +169,14 @@ export default {
     work_done_placeholder: 'Description of work performed',
     delete_service_confirm: 'Delete this service record?',
     access_denied: 'Access denied',
+    // Tenant reassignment
+    tenant: 'Tenant',
+    change_tenant: 'Change Tenant',
+    select_tenant: 'Select Target Tenant',
+    reassign_confirm: 'Move this device to tenant "{0}"? MQTT credentials will be rotated.',
+    reassign_warning: 'Device will receive new MQTT credentials and reconnect under the new tenant. Existing user access will be cleared.',
+    reassigned: 'Device moved to tenant {0}',
+    no_other_tenants: 'No other active tenants available',
     // MQTT auth
     mqtt_auth: 'MQTT Auth',
     mqtt_configured: 'Configured',
@@ -246,6 +254,7 @@ export default {
     no_pending_hint: 'New devices will appear here automatically when they connect for the first time',
     assign_to_tenant: 'Assign to Tenant',
     assign_device: 'Assign Device',
+    target_tenant: 'Target Tenant',
     device_name: 'Device Name',
     device_name_placeholder: 'e.g. Cold Room #1',
     location_placeholder: 'e.g. Warehouse A',

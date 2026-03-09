@@ -169,6 +169,14 @@ export default {
     work_done_placeholder: 'Опис виконаних робіт',
     delete_service_confirm: 'Видалити цей сервісний запис?',
     access_denied: 'Доступ заборонено',
+    // Tenant reassignment
+    tenant: 'Тенант',
+    change_tenant: 'Змінити тенант',
+    select_tenant: 'Оберіть цільовий тенант',
+    reassign_confirm: 'Перемістити пристрій до тенанту "{0}"? MQTT credentials буде ротовано.',
+    reassign_warning: 'Пристрій отримає нові MQTT credentials та перепідключиться під новим тенантом. Існуючий доступ користувачів буде очищено.',
+    reassigned: 'Пристрій переміщено до тенанту {0}',
+    no_other_tenants: 'Немає інших активних тенантів',
     // MQTT auth
     mqtt_auth: 'MQTT авторизація',
     mqtt_configured: 'Налаштовано',
@@ -246,6 +254,7 @@ export default {
     no_pending_hint: 'Нові пристрої з\'являться тут автоматично при першому підключенні',
     assign_to_tenant: 'Призначити тенанту',
     assign_device: 'Призначити пристрій',
+    target_tenant: 'Цільовий тенант',
     device_name: 'Назва пристрою',
     device_name_placeholder: 'напр. Холодильна камера №1',
     location_placeholder: 'напр. Склад А',

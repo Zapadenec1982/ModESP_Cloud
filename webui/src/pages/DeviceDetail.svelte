@@ -1,8 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials } from '../lib/api.js'
+  import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { navigate, liveState, canWrite, isAdmin } from '../lib/stores.js'
+  import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import StatusDot from '../components/ui/StatusDot.svelte'
@@ -191,6 +191,52 @@
     }
   }
 
+  // ── Tenant reassignment (superadmin only) ──
+  let showReassign = false
+  let reassignTenants = []
+  let selectedTenantId = ''
+  let reassigning = false
+
+  async function openReassign() {
+    try {
+      reassignTenants = await getTenants()
+      // Filter out current tenant and system tenant
+      reassignTenants = reassignTenants.filter(t =>
+        t.id !== device.tenant_id &&
+        t.id !== '00000000-0000-0000-0000-000000000000' &&
+        t.active
+      )
+      selectedTenantId = reassignTenants.length > 0 ? reassignTenants[0].id : ''
+      showReassign = true
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  function closeReassign() {
+    showReassign = false
+    selectedTenantId = ''
+  }
+
+  async function handleReassign() {
+    if (!selectedTenantId) return
+    const tenant = reassignTenants.find(t => t.id === selectedTenantId)
+    if (!confirm($t('device.reassign_confirm').replace('{0}', tenant?.name || selectedTenantId))) return
+
+    reassigning = true
+    try {
+      const result = await reassignDevice(resolvedId, selectedTenantId)
+      toast.success($t('device.reassigned').replace('{0}', result.new_tenant))
+      closeReassign()
+      // Reload device to reflect new tenant
+      await loadDevice()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      reassigning = false
+    }
+  }
+
   // ── Data loading ──
   async function loadDevice() {
     try {
@@ -341,6 +387,21 @@
                 {$t('device.mqtt_revoke')}
               </button>
             {/if}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Tenant reassignment (superadmin only) -->
+      {#if $isSuperAdmin}
+        <div class="reassign-row">
+          <Icon name="layers" size={14} />
+          <span class="mqtt-label">{$t('device.tenant')}:</span>
+          <Badge variant="info" size="sm">{device.tenant_slug || '—'}</Badge>
+          <div class="mqtt-actions">
+            <button class="btn btn-sm btn-ghost" on:click={openReassign}>
+              <Icon name="repeat" size={12} />
+              {$t('device.change_tenant')}
+            </button>
           </div>
         </div>
       {/if}
@@ -561,6 +622,50 @@
           disabled={serviceSaving || !serviceForm.technician || !serviceForm.reason || !serviceForm.work_done}>
           {serviceSaving ? $t('common.loading') : $t('common.save')}
         </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Tenant Reassign Modal -->
+{#if showReassign}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={closeReassign}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h2>{$t('device.change_tenant')}</h2>
+        <button class="modal-close" on:click={closeReassign}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        {#if reassignTenants.length === 0}
+          <p class="reassign-empty">{$t('device.no_other_tenants')}</p>
+        {:else}
+          <div class="form-group">
+            <label for="reassign-tenant">{$t('device.select_tenant')}</label>
+            <select id="reassign-tenant" bind:value={selectedTenantId}>
+              {#each reassignTenants as tenant}
+                <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+              {/each}
+            </select>
+          </div>
+          <div class="reassign-warning">
+            <Icon name="alert-triangle" size={14} />
+            <span>{$t('device.reassign_warning')}</span>
+          </div>
+        {/if}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" on:click={closeReassign}>{$t('common.cancel')}</button>
+        {#if reassignTenants.length > 0}
+          <button class="btn btn-primary" on:click={handleReassign} disabled={reassigning || !selectedTenantId}>
+            {reassigning ? $t('common.loading') : $t('device.change_tenant')}
+          </button>
+        {/if}
       </div>
     </div>
   </div>
@@ -939,6 +1044,54 @@
     color: var(--text-muted);
     white-space: nowrap;
     min-width: fit-content;
+  }
+
+  /* Tenant reassignment */
+  .reassign-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin-top: var(--space-2);
+  }
+
+  .reassign-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--accent-amber, #fbbf24);
+  }
+
+  .reassign-empty {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    text-align: center;
+    padding: var(--space-4);
+  }
+
+  .form-group select {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-family: inherit;
+    transition: border-color var(--transition-fast);
+  }
+
+  .form-group select:focus {
+    outline: none;
+    border-color: var(--accent-blue);
   }
 
   /* MQTT Auth */

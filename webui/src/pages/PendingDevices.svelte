@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { getPendingDevices, assignDevice } from '../lib/api.js'
+  import { getPendingDevices, assignDevice, getTenants } from '../lib/api.js'
+  import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -22,7 +23,12 @@
   let assignLocation = ''
   let assignModel = ''
   let assignSerial = ''
+  let assignTenantId = ''
   let assigning = false
+
+  // Tenants list for superadmin
+  let tenantsList = []
+  let tenantsLoaded = false
 
   // Credentials result after assign
   let credsResult = null
@@ -53,12 +59,29 @@
     }
   }
 
-  function openAssign(dev) {
+  async function openAssign(dev) {
     assigningDevice = dev
     assignName = ''
     assignLocation = ''
     assignModel = ''
     assignSerial = ''
+    assignTenantId = ''
+
+    // Load tenants for superadmin dropdown
+    if ($isSuperAdmin && !tenantsLoaded) {
+      try {
+        const all = await getTenants()
+        tenantsList = all.filter(t =>
+          t.id !== '00000000-0000-0000-0000-000000000000' && t.active
+        )
+        tenantsLoaded = true
+        if (tenantsList.length > 0) assignTenantId = tenantsList[0].id
+      } catch (e) {
+        toast.error(e.message)
+      }
+    } else if ($isSuperAdmin && tenantsList.length > 0) {
+      assignTenantId = tenantsList[0].id
+    }
   }
 
   function closeAssign() {
@@ -73,12 +96,17 @@
     if (!assigningDevice) return
     assigning = true
     try {
-      const result = await assignDevice(assigningDevice.mqtt_device_id, {
+      const opts = {
         name: assignName || undefined,
         location: assignLocation || undefined,
         model: assignModel || undefined,
         serial_number: assignSerial || undefined,
-      })
+      }
+      // Superadmin can assign to a specific tenant
+      if ($isSuperAdmin && assignTenantId) {
+        opts.tenant_id = assignTenantId
+      }
+      const result = await assignDevice(assigningDevice.mqtt_device_id, opts)
       toast.success($t('pending.device_assigned', assigningDevice.mqtt_device_id))
       assigningDevice = null
       // Show credentials result if present
@@ -167,6 +195,17 @@
             <Badge variant="neutral" size="sm">v{assigningDevice.firmware_version}</Badge>
           {/if}
         </div>
+
+        {#if $isSuperAdmin && tenantsList.length > 0}
+          <label class="field">
+            <span>{$t('pending.target_tenant')}</span>
+            <select bind:value={assignTenantId} class="tenant-select">
+              {#each tenantsList as tenant}
+                <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
 
         <label class="field">
           <span>{$t('pending.device_name')}</span>
@@ -411,10 +450,22 @@
     color: var(--text-muted);
   }
 
-  .field input:focus {
+  .field input:focus,
+  .field select:focus {
     outline: none;
     border-color: var(--accent-blue);
     box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+  }
+
+  .tenant-select {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    transition: border-color var(--transition-fast);
   }
 
   .modal-actions {

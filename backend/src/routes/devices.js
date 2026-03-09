@@ -110,7 +110,11 @@ router.get('/pending', async (req, res, next) => {
 router.post('/pending/:mqttId/assign', async (req, res, next) => {
   try {
     const { mqttId } = req.params;
-    const { name, location, model, serial_number, comment } = req.body || {};
+    const { name, location, model, serial_number, comment, tenant_id } = req.body || {};
+
+    // Superadmin can assign to any tenant; regular admin assigns to own tenant
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+    const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
 
     // Verify device exists and is pending
     const { rows } = await db.query(
@@ -130,7 +134,7 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
     // Look up tenant slug for MQTT command
     const tenantRes = await db.query(
       `SELECT slug FROM tenants WHERE id = $1`,
-      [req.tenantId]
+      [targetTenantId]
     );
     if (tenantRes.rows.length === 0) {
       return res.status(400).json({
@@ -149,12 +153,12 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
            model = COALESCE($4, model), serial_number = COALESCE($5, serial_number),
            comment = COALESCE($6, comment)
        WHERE id = $7`,
-      [req.tenantId, name || null, location || null, model || null,
+      [targetTenantId, name || null, location || null, model || null,
        serial_number || null, comment || null, rows[0].id]
     );
 
     // Generate unique MQTT credentials (replaces bootstrap password)
-    const creds = await mqttAuth.provisionDevice(req.tenantId, mqttId);
+    const creds = await mqttAuth.provisionDevice(targetTenantId, mqttId);
 
     // Send credentials + tenant via MQTT (zero-touch provisioning)
     let sentCreds = false;
@@ -180,7 +184,7 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
       data: {
         device_id: rows[0].id,
         mqtt_device_id: mqttId,
-        tenant_id: req.tenantId,
+        tenant_id: targetTenantId,
         status: 'active',
         mqtt_credentials: {
           username: creds.username,
@@ -204,17 +208,30 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
 
     // Support both UUID and mqtt_device_id
     const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+    // Superadmin can view any device; regular users scoped to their tenant
+    let whereClause, params;
+    if (isSuperAdmin) {
+      whereClause = isUuid ? 'd.id = $1' : 'd.mqtt_device_id = $1';
+      params = [id];
+    } else {
+      whereClause = isUuid
+        ? 'd.id = $1 AND d.tenant_id = $2'
+        : 'd.mqtt_device_id = $1 AND d.tenant_id = $2';
+      params = [id, req.tenantId];
+    }
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, name, location, serial_number,
-              model, comment, manufactured_at, firmware_version, proto_version,
-              online, status, last_seen, last_state, created_at,
-              mqtt_username, (mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials
-       FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
+              d.model, d.comment, d.manufactured_at, d.firmware_version, d.proto_version,
+              d.online, d.status, d.last_seen, d.last_state, d.created_at,
+              d.mqtt_username, (d.mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials,
+              d.tenant_id, t.slug AS tenant_slug
+       FROM devices d
+       JOIN tenants t ON t.id = d.tenant_id
+       WHERE ${whereClause}`,
+      params
     );
 
     if (rows.length === 0) {
