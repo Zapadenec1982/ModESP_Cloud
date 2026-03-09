@@ -220,14 +220,17 @@ chmod 600 /etc/mosquitto/certs/server.key
 #### Auto-renewal hook
 
 ```bash
-cat > /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh << 'EOF'
+cat > /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh << 'EOF'
 #!/bin/bash
+# Mosquitto TLS certs
 cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
 cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
 chown mosquitto:mosquitto /etc/mosquitto/certs/*
 systemctl restart mosquitto
+# Nginx picks up new certs automatically, just reload
+systemctl reload nginx
 EOF
-chmod +x /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
 ```
 
 ESP32 firmware автоматично включає TLS при порті 8883 (`esp_crt_bundle_attach` — вбудований CA bundle включає Let's Encrypt).
@@ -316,7 +319,7 @@ AUTH_ENABLED=true
 
 # MQTT Bootstrap (shared password for new ESP32 devices)
 MQTT_BOOTSTRAP_PASSWORD=shared_bootstrap_password_here
-MQTT_PUBLIC_HOST=cloud.example.com
+MQTT_PUBLIC_HOST=modesp.com.ua
 
 # Firebase FCM (опціонально)
 FCM_SERVER_KEY=your_fcm_server_key
@@ -392,62 +395,38 @@ SyslogIdentifier=modesp-backend
 WantedBy=multi-user.target
 ```
 
-### 6. Nginx
+### 6. Nginx (HTTPS)
 
 ```bash
-apt install -y nginx certbot python3-certbot-nginx
-
-# Отримати SSL сертифікат
-certbot --nginx -d cloud.example.com
+apt install -y nginx
 ```
 
-```nginx
-# /etc/nginx/sites-available/modesp-cloud
-server {
-    listen 443 ssl;
-    server_name cloud.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/cloud.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cloud.example.com/privkey.pem;
-
-    # Статичний Svelte WebUI
-    root /opt/modesp-cloud/webui/dist;
-    index index.html;
-
-    # SPA fallback
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # API proxy
-    location /api/ {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # WebSocket proxy
-    location /ws {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600;
-    }
-}
-
-server {
-    listen 80;
-    server_name cloud.example.com;
-    return 301 https://$host$request_uri;
-}
-```
+Скопіювати конфіг з репо та налаштувати:
 
 ```bash
-ln -s /etc/nginx/sites-available/modesp-cloud /etc/nginx/sites-enabled/
+# Скопіювати конфіг
+cp /opt/modesp-cloud/infra/nginx/modesp.conf /etc/nginx/sites-available/modesp
+
+# Увімкнути сайт, прибрати default
+ln -s /etc/nginx/sites-available/modesp /etc/nginx/sites-enabled/modesp
+rm -f /etc/nginx/sites-enabled/default
+
+# Додати rate limit zone в nginx.conf (http block)
+# Якщо ще немає:
+grep -q "limit_req_zone" /etc/nginx/nginx.conf || \
+  sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;' /etc/nginx/nginx.conf
+
+# Створити symlink для WebUI статики
+mkdir -p /var/www/modesp
+ln -s /opt/modesp-cloud/webui/dist /var/www/modesp/webui
+
+# Перевірити і запустити
 nginx -t && systemctl reload nginx
 ```
+
+Повний конфіг: `infra/nginx/modesp.conf` (HTTP→HTTPS redirect, TLS, API proxy, WebSocket, rate limiting).
+
+**Важливо:** Nginx використовує той самий Let's Encrypt сертифікат, що й Mosquitto. Шляхи до сертифікатів — напряму з `/etc/letsencrypt/live/YOUR_DOMAIN/`.
 
 ---
 
@@ -566,3 +545,4 @@ mkdir -p /backup
 - 2026-03-08 — Оновлено. Виправлені шляхи і команди за результатами реального розгортання: systemd юніт `modesp-backend` (не modesp-cloud), міграція `006_device_rbac.sql` (не user_devices), скрипти в `backend/scripts/` (не src/db), PostgreSQL auth через `sudo -u postgres`, додано секцію "Оновлення", cron задачі, структуру файлів на сервері.
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
+- 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.

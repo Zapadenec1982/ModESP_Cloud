@@ -114,15 +114,18 @@ if [ ! -d /etc/mosquitto/certs ] || [ ! -f /etc/mosquitto/certs/server.crt ]; th
 
     # Auto-renewal hook
     mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-    cat > /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh <<RENEWEOF
+    cat > /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh <<RENEWEOF
 #!/bin/bash
+# Mosquitto TLS certs
 cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
 cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
 chown mosquitto:mosquitto /etc/mosquitto/certs/*
 systemctl restart mosquitto
+# Nginx picks up new certs automatically, just reload
+systemctl reload nginx
 RENEWEOF
-    chmod +x /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
-    info "TLS certificates installed + auto-renewal hook created."
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+    info "TLS certificates installed + auto-renewal hook created (Mosquitto + Nginx)."
 else
     info "Step 5b: TLS certificates already present, skipping."
 fi

@@ -351,7 +351,8 @@ git push origin main
 | Dynamic MQTT Auth (Phase 4) | ✅ mosquitto-go-auth + PostgreSQL, bootstrap provisioning, credentials lifecycle API, WebUI |
 | TLS (Let's Encrypt) | ✅ modesp.com.ua, порт 8883, auto-renewal hook, ESP32 CA bundle verified |
 | Mosquitto конфіг (prod) | ✅ mosquitto-go-auth + TLS + per_listener_settings + SQL ACL |
-| VPS розгортання | ✅ Production: backend, WebUI, MQTT TLS bidirectional, OTA E2E verified |
+| Nginx HTTPS | ✅ modesp.com.ua:443, HTTP→HTTPS redirect, security headers, HSTS, rate limiting |
+| VPS розгортання | ✅ Production: https://modesp.com.ua, MQTT TLS bidirectional, OTA E2E verified |
 
 ---
 
@@ -385,3 +386,4 @@ git push origin main
 - 2026-03-08 — VPS deployment complete: backend running (modesp-backend.service), WebUI via Nginx, MQTT bidirectional verified, OTA E2E confirmed, admin + viewer accounts created, ESP32 connected.
 - 2026-03-09 — Phase 4 completion (Dynamic MQTT Auth): mosquitto-go-auth + PostgreSQL (migration 008 mqtt_username column + indexes), mqtt-auth.js service (provision/rotate/revoke), REST API credentials endpoints, bootstrap provisioning in mqtt.js (ensureDevice), mosquitto.conf rewrite (per_listener_settings + auth_plugin + SQL ACL with read/write separation), provision-mqtt-creds.js migration script, WebUI credentials feedback on PendingDevices assign + MQTT auth status/rotate/revoke on DeviceDetail, i18n (uk+en).
 - 2026-03-09 — TLS deployment: Let's Encrypt cert for modesp.com.ua, Mosquitto TLS on port 8883, ESP32 connected via mqtts:// with built-in CA bundle, auto-renewal hook. Firmware: _set_mqtt_creds handler (ModESP_v4 commit 9c4f027). Deploy script fixes: superquery $1 placeholder, aclquery prefix||suffix, certfile=fullchain.pem, build prereqs (make, mosquitto-dev).
+- 2026-03-09 — HTTPS: Nginx конфіг оновлено з реальним доменом modesp.com.ua, WebUI dist symlink, auto-renewal hook тепер перезавантажує і Mosquitto і Nginx.
