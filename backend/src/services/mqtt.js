@@ -602,8 +602,8 @@ async function stateWriter() {
     try {
       await db.query(
         `UPDATE devices AS d
-         SET last_state = v.ls, online = v.on, last_seen = NOW()
-         FROM (VALUES ${placeholders.join(', ')}) AS v(tid, mid, ls, on)
+         SET last_state = v.ls, online = v.ol, last_seen = NOW()
+         FROM (VALUES ${placeholders.join(', ')}) AS v(tid, mid, ls, ol)
          WHERE d.tenant_id = v.tid AND d.mqtt_device_id = v.mid`,
         values
       );
