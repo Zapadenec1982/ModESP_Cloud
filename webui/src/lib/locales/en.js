@@ -402,6 +402,7 @@ export default {
     role_admin: 'Admin',
     role_technician: 'Technician',
     role_viewer: 'Viewer',
+    role_hint_superadmin: 'Platform-wide access — all tenants, all devices',
     role_hint_admin: 'Full access — manage users, devices, firmware',
     role_hint_technician: 'Can view and control devices, manage alarms',
     role_hint_viewer: 'Read-only access to dashboards and reports',
@@ -420,5 +421,12 @@ export default {
     no_devices_found: 'No devices found',
     no_devices_assigned: 'No devices assigned',
     devices_updated: 'Device access updated',
+    // Tenant assignment (superadmin)
+    col_tenant: 'Tenant',
+    change_tenant: 'Change tenant',
+    select_tenant: 'Select tenant',
+    target_tenant: 'Target tenant',
+    tenant_changed: 'User moved to {0}',
+    cannot_edit_superadmin: 'Cannot modify superadmin',
   },
 };

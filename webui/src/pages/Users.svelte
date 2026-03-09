@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants } from '../lib/api.js'
+  import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
@@ -29,14 +30,29 @@
   let saving = false
 
   function roleVariant(role) {
+    if (role === 'superadmin') return 'danger'
     if (role === 'admin') return 'warning'
     if (role === 'technician') return 'info'
     return 'success'
   }
 
+  // ── Tenant state (superadmin features) ──
+  let tenantsList = []
+  let newTenantId = ''
+
+  // Tenant reassign modal
+  let showTenantModal = false
+  let tenantUser = null
+  let tenantTarget = ''
+  let tenantSaving = false
+
   async function loadUsers() {
     try {
-      users = await getUsers()
+      const promises = [getUsers()]
+      if ($isSuperAdmin) promises.push(getTenants())
+      const results = await Promise.all(promises)
+      users = results[0]
+      if (results[1]) tenantsList = results[1]
       error = null
     } catch (e) {
       error = e.message
@@ -52,12 +68,15 @@
     }
     creating = true
     try {
-      await createUser({ email: newEmail.trim(), password: newPassword, role: newRole })
+      const payload = { email: newEmail.trim(), password: newPassword, role: newRole }
+      if ($isSuperAdmin && newTenantId) payload.tenant_id = newTenantId
+      await createUser(payload)
       toast.success($t('users.user_created'))
       showCreate = false
       newEmail = ''
       newPassword = ''
       newRole = 'viewer'
+      newTenantId = ''
       await loadUsers()
     } catch (e) {
       toast.error(e.message)
@@ -114,6 +133,7 @@
     newEmail = ''
     newPassword = ''
     newRole = 'viewer'
+    newTenantId = ''
   }
 
   function handleBackdropClick(e) {
@@ -206,6 +226,43 @@
     if (e.key === 'Escape') closeDevicesModal()
   }
 
+  // ── Tenant reassign modal (superadmin) ──
+  function openTenantModal(user) {
+    tenantUser = user
+    tenantTarget = ''
+    showTenantModal = true
+  }
+
+  function closeTenantModal() {
+    showTenantModal = false
+    tenantUser = null
+    tenantTarget = ''
+  }
+
+  function handleTenantBackdropClick(e) {
+    if (e.target === e.currentTarget) closeTenantModal()
+  }
+
+  function handleTenantKey(e) {
+    if (e.key === 'Escape') closeTenantModal()
+  }
+
+  async function saveTenantChange() {
+    if (!tenantTarget) return
+    tenantSaving = true
+    try {
+      await updateUser(tenantUser.id, { tenant_id: tenantTarget })
+      const target = tenantsList.find(t => t.id === tenantTarget)
+      toast.success($t('users.tenant_changed', target?.name || tenantTarget))
+      closeTenantModal()
+      await loadUsers()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      tenantSaving = false
+    }
+  }
+
   onMount(loadUsers)
 </script>
 
@@ -232,6 +289,9 @@
       <!-- Desktop table header -->
       <div class="user-table-header">
         <span class="th th-email">{$t('users.col_user')}</span>
+        {#if $isSuperAdmin}
+          <span class="th th-tenant">{$t('users.col_tenant')}</span>
+        {/if}
         <span class="th th-role">{$t('users.col_role')}</span>
         <span class="th th-status">{$t('users.col_status')}</span>
         <span class="th th-created">{$t('users.col_created')}</span>
@@ -247,6 +307,13 @@
               <Icon name="user" size={14} />
               <span class="user-email">{user.email}</span>
             </div>
+
+            <!-- Tenant (superadmin only) -->
+            {#if $isSuperAdmin}
+              <div class="cell cell-tenant">
+                <span class="tenant-name">{user.tenant_name || '—'}</span>
+              </div>
+            {/if}
 
             <!-- Role -->
             <div class="cell cell-role">
@@ -284,26 +351,42 @@
 
             <!-- Actions -->
             <div class="cell cell-actions">
-              {#if editId === user.id}
+              {#if user.role === 'superadmin' && !$isSuperAdmin}
+                <!-- Admin cannot manage superadmin users -->
+                <span class="text-muted" style="font-size: var(--text-xs)">—</span>
+              {:else if editId === user.id}
                 <Button variant="primary" size="sm" loading={saving} on:click={() => saveEdit(user.id)}>{$t('common.save')}</Button>
                 <Button variant="secondary" size="sm" on:click={cancelEdit}>{$t('common.cancel')}</Button>
               {:else}
-                <Button variant="secondary" size="sm" on:click={() => startEdit(user)} aria-label="Edit {user.email}">
-                  <Icon name="edit" size={13} />
-                </Button>
-                {#if user.role !== 'admin'}
+                <!-- Edit role (not for superadmin rows unless logged as superadmin) -->
+                {#if user.role !== 'superadmin'}
+                  <Button variant="secondary" size="sm" on:click={() => startEdit(user)} aria-label="Edit {user.email}">
+                    <Icon name="edit" size={13} />
+                  </Button>
+                {/if}
+                <!-- Device assignment: only for technician/viewer (admin/superadmin see all) -->
+                {#if user.role !== 'admin' && user.role !== 'superadmin'}
                   <Button variant="secondary" size="sm" on:click={() => openDevices(user)} aria-label="{$t('users.devices')} {user.email}">
                     <Icon name="cpu" size={13} />
                   </Button>
                 {/if}
-                {#if user.active}
-                  <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}">
-                    <Icon name="x-circle" size={13} />
+                <!-- Change tenant (superadmin only, not for superadmin users) -->
+                {#if $isSuperAdmin && user.role !== 'superadmin'}
+                  <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.change_tenant')} {user.email}">
+                    <Icon name="layers" size={13} />
                   </Button>
-                {:else}
-                  <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)} aria-label="Reactivate {user.email}">
-                    <Icon name="check" size={13} />
-                  </Button>
+                {/if}
+                <!-- Deactivate/Reactivate (not for superadmin rows) -->
+                {#if user.role !== 'superadmin'}
+                  {#if user.active}
+                    <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}">
+                      <Icon name="x-circle" size={13} />
+                    </Button>
+                  {:else}
+                    <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)} aria-label="Reactivate {user.email}">
+                      <Icon name="check" size={13} />
+                    </Button>
+                  {/if}
                 {/if}
               {/if}
             </div>
@@ -349,6 +432,17 @@
             minlength="6"
           />
         </div>
+        {#if $isSuperAdmin}
+          <div class="form-field">
+            <label class="field-label" for="user-tenant">{$t('users.target_tenant')}</label>
+            <select id="user-tenant" bind:value={newTenantId} class="input">
+              <option value="">— {$t('users.select_tenant')} —</option>
+              {#each tenantsList as tenant (tenant.id)}
+                <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
         <div class="form-field">
           <label class="field-label" for="user-role">{$t('users.col_role')}</label>
           <select id="user-role" bind:value={newRole} class="input">
@@ -449,6 +543,39 @@
   </div>
 {/if}
 
+<!-- Tenant Reassign Modal (superadmin only) -->
+{#if showTenantModal}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleTenantBackdropClick} on:keydown={handleTenantKey} role="dialog" aria-modal="true" aria-labelledby="tenant-modal-title" tabindex="-1">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="tenant-modal-title">{$t('users.change_tenant')}</h3>
+          <span class="modal-subtitle">{tenantUser?.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeTenantModal} aria-label="Close dialog">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <label class="field-label" for="tenant-target">{$t('users.target_tenant')}</label>
+          <select id="tenant-target" bind:value={tenantTarget} class="input">
+            <option value="">— {$t('users.select_tenant')} —</option>
+            {#each tenantsList as tenant (tenant.id)}
+              <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+            {/each}
+          </select>
+        </div>
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeTenantModal}>{$t('common.cancel')}</Button>
+          <Button variant="primary" loading={tenantSaving} on:click={saveTenantChange} icon="check" disabled={!tenantTarget}>{$t('common.save')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .users-page {
     display: flex;
@@ -494,6 +621,7 @@
   }
 
   .th-email   { flex: 2; min-width: 0; }
+  .th-tenant  { width: 120px; }
   .th-role    { width: 100px; }
   .th-status  { width: 90px; }
   .th-created { width: 100px; }
@@ -541,11 +669,20 @@
   }
 
   .cell-email   { flex: 2; min-width: 0; }
+  .cell-tenant  { width: 120px; }
   .cell-role    { width: 100px; }
   .cell-status  { width: 90px; }
   .cell-created { width: 100px; }
   .cell-login   { width: 100px; }
   .cell-actions { width: 140px; justify-content: flex-end; gap: var(--space-1); }
+
+  .tenant-name {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .user-email {
     overflow: hidden;
@@ -845,6 +982,7 @@
     }
 
     .cell-email { flex: 1 1 100%; }
+    .cell-tenant { width: auto; }
     .cell-role { width: auto; }
     .cell-status { width: auto; }
     .cell-created { display: none; }

@@ -10,15 +10,17 @@ const router = Router();
 // ── Validation schemas ──────────────────────────────────
 
 const createUserSchema = z.object({
-  email:    z.string().email(),
-  password: z.string().min(6),
-  role:     z.enum(['admin', 'technician', 'viewer']).default('viewer'),
+  email:     z.string().email(),
+  password:  z.string().min(6),
+  role:      z.enum(['admin', 'technician', 'viewer']).default('viewer'),
+  tenant_id: z.string().uuid().optional(),   // superadmin only — create in another tenant
 });
 
 const updateUserSchema = z.object({
-  email:    z.string().email().optional(),
-  role:     z.enum(['admin', 'technician', 'viewer']).optional(),
-  active:   z.boolean().optional(),
+  email:     z.string().email().optional(),
+  role:      z.enum(['admin', 'technician', 'viewer']).optional(),
+  active:    z.boolean().optional(),
+  tenant_id: z.string().uuid().optional(),   // superadmin only — reassign to another tenant
 });
 
 const updateProfileSchema = z.object({
@@ -31,15 +33,28 @@ const deviceAccessSchema = z.object({
   device_id: z.string().uuid(),
 });
 
-// ── GET /users — list (admin, tenant-scoped) ────────────
+// ── GET /users — list (admin: tenant-scoped, superadmin: all) ─
 
 router.get('/', async (req, res) => {
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
   try {
-    const { rows } = await db.query(
-      `SELECT id, email, role, active, created_at, last_login
-       FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`,
-      [req.tenantId]
-    );
+    let rows;
+    if (isSuperAdmin) {
+      // Superadmin sees ALL users cross-tenant with tenant info
+      ({ rows } = await db.query(
+        `SELECT u.id, u.email, u.role, u.active, u.created_at, u.last_login,
+                u.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         ORDER BY t.name, u.created_at DESC`
+      ));
+    } else {
+      ({ rows } = await db.query(
+        `SELECT id, email, role, active, created_at, last_login
+         FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`,
+        [req.tenantId]
+      ));
+    }
     res.json({ data: rows });
   } catch (err) {
     req.log?.error?.({ err }, 'List users failed');
@@ -145,7 +160,7 @@ router.put('/me', async (req, res) => {
   }
 });
 
-// ── POST /users — create (admin) ────────────────────────
+// ── POST /users — create (admin / superadmin) ───────────
 
 router.post('/', async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
@@ -157,7 +172,11 @@ router.post('/', async (req, res) => {
     });
   }
 
-  const { email, password, role } = parsed.data;
+  const { email, password, role, tenant_id } = parsed.data;
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+  // Only superadmin can specify tenant_id
+  const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
 
   try {
     const hash = await authSvc.hashPassword(password);
@@ -165,7 +184,7 @@ router.post('/', async (req, res) => {
       `INSERT INTO users (tenant_id, email, password_hash, role)
        VALUES ($1, $2, $3, $4)
        RETURNING id, email, role, active, created_at`,
-      [req.tenantId, email, hash, role]
+      [targetTenantId, email, hash, role]
     );
     res.status(201).json({ data: rows[0] });
   } catch (err) {
@@ -181,7 +200,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── PUT /users/:id — update (admin) ─────────────────────
+// ── PUT /users/:id — update (admin / superadmin) ────────
 
 router.put('/:id', async (req, res) => {
   const parsed = updateUserSchema.safeParse(req.body);
@@ -194,27 +213,65 @@ router.put('/:id', async (req, res) => {
   }
 
   const data = parsed.data;
-  const sets = [];
-  const params = [];
-  let idx = 1;
-
-  if (data.email !== undefined) { sets.push(`email = $${idx++}`); params.push(data.email); }
-  if (data.role  !== undefined) { sets.push(`role = $${idx++}`);  params.push(data.role);  }
-  if (data.active !== undefined) { sets.push(`active = $${idx++}`); params.push(data.active); }
-
-  if (sets.length === 0) {
-    return res.status(400).json({
-      error: 'validation_failed',
-      message: 'Nothing to update',
-      status: 400,
-    });
-  }
-
-  params.push(req.params.id, req.tenantId);
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
   try {
+    // ── Role hierarchy check: fetch target user ──
+    const targetQ = isSuperAdmin
+      ? 'SELECT id, role FROM users WHERE id = $1'
+      : 'SELECT id, role FROM users WHERE id = $1 AND tenant_id = $2';
+    const targetParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
+    const { rows: targetRows } = await db.query(targetQ, targetParams);
+
+    if (targetRows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    }
+
+    const targetUser = targetRows[0];
+
+    // Admin cannot modify superadmin
+    if (targetUser.role === 'superadmin' && !isSuperAdmin) {
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'Cannot modify superadmin user',
+        status: 403,
+      });
+    }
+
+    // Only superadmin can use tenant_id field
+    if (data.tenant_id && !isSuperAdmin) {
+      delete data.tenant_id;
+    }
+
+    const sets = [];
+    const params = [];
+    let idx = 1;
+
+    if (data.email !== undefined)     { sets.push(`email = $${idx++}`);     params.push(data.email); }
+    if (data.role  !== undefined)     { sets.push(`role = $${idx++}`);      params.push(data.role);  }
+    if (data.active !== undefined)    { sets.push(`active = $${idx++}`);    params.push(data.active); }
+    if (data.tenant_id !== undefined) { sets.push(`tenant_id = $${idx++}`); params.push(data.tenant_id); }
+
+    if (sets.length === 0) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'Nothing to update',
+        status: 400,
+      });
+    }
+
+    // Superadmin: no tenant_id filter; admin: scoped to own tenant
+    let whereClause;
+    if (isSuperAdmin) {
+      params.push(req.params.id);
+      whereClause = `WHERE id = $${idx++}`;
+    } else {
+      params.push(req.params.id, req.tenantId);
+      whereClause = `WHERE id = $${idx++} AND tenant_id = $${idx}`;
+    }
+
     const { rows } = await db.query(
-      `UPDATE users SET ${sets.join(', ')} WHERE id = $${idx++} AND tenant_id = $${idx}
+      `UPDATE users SET ${sets.join(', ')} ${whereClause}
        RETURNING id, email, role, active`,
       params
     );
@@ -237,9 +294,11 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// ── DELETE /users/:id — soft delete (admin) ─────────────
+// ── DELETE /users/:id — soft delete (admin / superadmin) ──
 
 router.delete('/:id', async (req, res) => {
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
   try {
     // Prevent self-deletion
     if (req.params.id === req.user.id) {
@@ -250,11 +309,32 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    const { rows } = await db.query(
-      `UPDATE users SET active = false WHERE id = $1 AND tenant_id = $2
-       RETURNING id, email, role, active`,
-      [req.params.id, req.tenantId]
-    );
+    // ── Role hierarchy check ──
+    const checkQ = isSuperAdmin
+      ? 'SELECT role FROM users WHERE id = $1'
+      : 'SELECT role FROM users WHERE id = $1 AND tenant_id = $2';
+    const checkParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
+    const { rows: checkRows } = await db.query(checkQ, checkParams);
+
+    if (checkRows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    }
+
+    // Admin cannot delete superadmin
+    if (checkRows[0].role === 'superadmin' && !isSuperAdmin) {
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'Cannot modify superadmin user',
+        status: 403,
+      });
+    }
+
+    // Deactivate
+    const delQ = isSuperAdmin
+      ? `UPDATE users SET active = false WHERE id = $1 RETURNING id, email, role, active`
+      : `UPDATE users SET active = false WHERE id = $1 AND tenant_id = $2 RETURNING id, email, role, active`;
+    const delParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
+    const { rows } = await db.query(delQ, delParams);
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });

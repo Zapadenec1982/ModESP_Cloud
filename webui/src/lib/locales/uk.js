@@ -402,6 +402,7 @@ export default {
     role_admin: 'Адмін',
     role_technician: 'Технік',
     role_viewer: 'Глядач',
+    role_hint_superadmin: 'Доступ до всієї платформи — всі тенанти, всі пристрої',
     role_hint_admin: 'Повний доступ — керування користувачами, пристроями, прошивкою',
     role_hint_technician: 'Перегляд та керування пристроями, керування аваріями',
     role_hint_viewer: 'Доступ тільки для читання',
@@ -420,5 +421,12 @@ export default {
     no_devices_found: 'Пристроїв не знайдено',
     no_devices_assigned: 'Пристроїв не призначено',
     devices_updated: 'Доступ до пристроїв оновлено',
+    // Tenant assignment (superadmin)
+    col_tenant: 'Тенант',
+    change_tenant: 'Змінити тенант',
+    select_tenant: 'Виберіть тенант',
+    target_tenant: 'Цільовий тенант',
+    tenant_changed: 'Користувача переміщено до {0}',
+    cannot_edit_superadmin: 'Не можна змінювати суперадміна',
   },
 };
