@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified**
+**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅**
 
 ---
 
@@ -74,7 +74,7 @@
 
 - [x] Node.js: JWT авторизація (login, refresh token rotation, logout)
 - [x] Node.js: CRUD користувачів (admin-only + self-service /me)
-- [x] Ролі: admin / technician / viewer
+- [x] Ролі: superadmin / admin / technician / viewer
 - [x] Прив'язка пристроїв до користувачів (user_devices)
 - [x] WebSocket: JWT auth через `?token=` query param
 - [x] WebUI: Login page, protected routing, Users page (admin)
@@ -185,7 +185,40 @@
 
 ---
 
-### Фаза 8: Advanced Analytics (майбутнє)
+### Фаза 8a: Tenant Management ✅
+**Ціль:** Повноцінне управління тенантами через WebUI, superadmin роль для cross-tenant операцій.
+
+#### Дворівнева модель ролей
+- Platform: `superadmin` → бачить всі тенанти, CRUD, reassign devices
+- Tenant: `admin` → керує своїм тенантом, `technician` → assigned devices, `viewer` → read-only
+
+#### Backend
+- [x] Міграція 009: superadmin role (users_role_check constraint)
+- [x] Auth middleware: superadmin inherits admin, requireSuperadmin(), cross-tenant bypass
+- [x] Device-access middleware: superadmin bypass для filterDeviceAccess + checkDeviceAccess
+- [x] Tenants CRUD API (routes/tenants.js): GET, POST, PATCH, DELETE з Zod валідацією
+- [x] GET /tenants повертає device_count + user_count (superadmin: всі, admin: свій)
+- [x] POST /devices/:id/reassign — transaction: UPDATE device, DELETE user_devices, rotate MQTT creds, send _set_tenant + _set_mqtt_creds via OLD slug
+- [x] GET /devices/:id — superadmin cross-tenant access, JOIN tenants for tenant_slug
+- [x] POST /devices/pending/:mqttId/assign — superadmin can assign to any tenant via tenant_id body param
+- [x] seed-admin.js: --role flag (default: admin), parameterized role INSERT
+- [x] mqtt.js: export refreshRegistries + updateDeviceStateMap
+
+#### WebUI
+- [x] Stores: isSuperAdmin derived store, isAdmin/canWrite include superadmin
+- [x] API: getTenants, createTenant, updateTenant, deleteTenant, reassignDevice
+- [x] Sidebar: tenants nav item (admin + superadmin)
+- [x] App.svelte: /tenants route з admin guard
+- [x] Tenants.svelte: table + create/edit/delete modals, auto-slug, plan, active toggle
+- [x] DeviceDetail: "Change Tenant" button + modal (superadmin only)
+- [x] PendingDevices: tenant dropdown при assign (superadmin)
+- [x] i18n: tenants.*, role_superadmin, device.change_tenant, pending.target_tenant (uk+en)
+
+**Результат:** Superadmin може створювати тенантів, переносити пристрої між ними, керувати всією платформою.
+
+---
+
+### Фаза 8b: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
@@ -232,3 +265,4 @@
 - 2026-03-08 — VPS Production Deployment: backend (modesp-backend.service), WebUI via Nginx, MQTT bidirectional, OTA E2E confirmed, admin + viewer accounts, ESP32 connected and operational.
 - 2026-03-08 — VPS Ops: cron backup (PostgreSQL daily 2:00, retention 30d), telemetry cleanup (daily 3:00, >90d), telemetry partition timer (systemd, 25th monthly). Phase 1 моніторинг — ✅.
 - 2026-03-09 — Phase 4 completion: Dynamic MQTT Auth — mosquitto-go-auth + PostgreSQL (migration 008, mqtt-auth.js service, REST API for credentials lifecycle, bootstrap provisioning in mqtt.js, mosquitto.conf rewrite with per_listener_settings + SQL ACL, provision-mqtt-creds.js migration script, WebUI credentials feedback on assign + MQTT auth status on DeviceDetail, i18n uk+en).
+- 2026-03-09 — Phase 8a: Tenant Management — superadmin role (migration 009), tenants CRUD API, device reassign endpoint, Tenants WebUI page, DeviceDetail "Change Tenant" modal, PendingDevices tenant select for superadmin, isSuperAdmin store, seed-admin --role flag, i18n (uk+en).

@@ -172,6 +172,7 @@ ModESP_Cloud/
 │   │   │   ├── telemetry.js     # GET /devices/:id/telemetry
 │   │   │   ├── alarms.js        # GET /devices/:id/alarms, /alarms
 │   │   │   ├── users.js         # CRUD /users (admin only)
+│   │   │   ├── tenants.js       # CRUD /tenants (superadmin)
 │   │   │   └── firmware.js      # OTA endpoints
 │   │   ├── middleware/
 │   │   │   ├── auth.js          # JWT перевірка, tenant ізоляція
@@ -269,7 +270,8 @@ router.use(authorize(roles))        // 3. перевірити роль (якщ�
 
 **Per-device RBAC bypass:**
 - `AUTH_ENABLED=false` → middleware прозоро пропускає (backward compat)
-- `role === 'admin'` → бачить все, без фільтрації
+- `role === 'admin'` → бачить все в своєму тенанті, без фільтрації
+- `role === 'superadmin'` → бачить все cross-tenant, bypass tenant_id + device фільтрації
 
 ---
 
@@ -327,13 +329,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 + Phase 4 MQTT Auth — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth + Tenant Management — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-008) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-009) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -353,6 +355,7 @@ git push origin main
 | Mosquitto конфіг (prod) | ✅ mosquitto-go-auth + TLS + per_listener_settings + SQL ACL |
 | Nginx HTTPS | ✅ modesp.com.ua:443, HTTP→HTTPS redirect, security headers, HSTS, rate limiting |
 | VPS розгортання | ✅ Production: https://modesp.com.ua, MQTT TLS bidirectional, OTA E2E verified |
+| Tenant Management (Phase 8a) | ✅ superadmin role (migration 009), tenants CRUD API, device reassign, Tenants WebUI, PendingDevices tenant select |
 
 ---
 
@@ -387,3 +390,4 @@ git push origin main
 - 2026-03-09 — Phase 4 completion (Dynamic MQTT Auth): mosquitto-go-auth + PostgreSQL (migration 008 mqtt_username column + indexes), mqtt-auth.js service (provision/rotate/revoke), REST API credentials endpoints, bootstrap provisioning in mqtt.js (ensureDevice), mosquitto.conf rewrite (per_listener_settings + auth_plugin + SQL ACL with read/write separation), provision-mqtt-creds.js migration script, WebUI credentials feedback on PendingDevices assign + MQTT auth status/rotate/revoke on DeviceDetail, i18n (uk+en).
 - 2026-03-09 — TLS deployment: Let's Encrypt cert for modesp.com.ua, Mosquitto TLS on port 8883, ESP32 connected via mqtts:// with built-in CA bundle, auto-renewal hook. Firmware: _set_mqtt_creds handler (ModESP_v4 commit 9c4f027). Deploy script fixes: superquery $1 placeholder, aclquery prefix||suffix, certfile=fullchain.pem, build prereqs (make, mosquitto-dev).
 - 2026-03-09 — HTTPS: Nginx конфіг оновлено з реальним доменом modesp.com.ua, WebUI dist symlink, auto-renewal hook тепер перезавантажує і Mosquitto і Nginx.
+- 2026-03-09 — Tenant Management (Phase 8a): superadmin role (migration 009), tenants CRUD API (routes/tenants.js), device reassign endpoint (POST /devices/:id/reassign), Tenants WebUI page, isSuperAdmin store, DeviceDetail "Change Tenant" modal, PendingDevices tenant dropdown for superadmin, seed-admin --role flag, i18n (uk+en).
