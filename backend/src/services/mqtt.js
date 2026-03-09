@@ -854,13 +854,28 @@ function requestFullState(tenantSlug, deviceId) {
   logger.info({ tenantSlug, deviceId }, 'Requested full state from device');
 }
 
+/**
+ * Update stateMap metadata for a device after tenant reassignment.
+ * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
+ * @param {string} newTenantId  UUID
+ * @param {string} newTenantSlug
+ */
+function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
+  const state = stateMap.get(deviceId);
+  if (state) {
+    state._tenantId = newTenantId;
+    state._tenantSlug = newTenantSlug;
+    state._dirty = true;
+  }
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
-  requestFullState,
+  requestFullState, refreshRegistries, updateDeviceStateMap,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

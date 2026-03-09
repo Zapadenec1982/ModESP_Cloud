@@ -40,12 +40,22 @@ function authenticate(req, res, next) {
 
 /**
  * Role-based authorization middleware factory.
+ * superadmin inherits all admin permissions automatically.
  * @param {...string} roles - Allowed roles (e.g. 'admin', 'technician')
  * @returns {function} Express middleware
  */
 function authorize(...roles) {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'Insufficient permissions',
+        status: 403,
+      });
+    }
+    // superadmin inherits admin permissions
+    const effectiveRole = req.user.role === 'superadmin' ? 'admin' : req.user.role;
+    if (!roles.includes(req.user.role) && !roles.includes(effectiveRole)) {
       return res.status(403).json({
         error: 'forbidden',
         message: 'Insufficient permissions',
@@ -56,4 +66,18 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { authenticate, authorize };
+/**
+ * Require superadmin role. Returns 403 for any other role.
+ */
+function requireSuperadmin(req, res, next) {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({
+      error: 'forbidden',
+      message: 'Superadmin access required',
+      status: 403,
+    });
+  }
+  next();
+}
+
+module.exports = { authenticate, authorize, requireSuperadmin };

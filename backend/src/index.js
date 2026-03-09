@@ -98,7 +98,8 @@ if (AUTH_ENABLED) {
   // All other /api routes require JWT
   app.use('/api', authenticate);
 
-  // Admin-only routes
+  // Admin-only routes (superadmin inherits admin via authorize)
+  app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
   app.use('/api/firmware', authorize('admin'), require('./routes/firmware'));
   app.use('/api/ota',      authorize('admin'), require('./routes/ota'));

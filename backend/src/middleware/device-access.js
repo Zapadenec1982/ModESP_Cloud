@@ -22,8 +22,8 @@ function filterDeviceAccess() {
       return next();
     }
 
-    // Admin sees everything
-    if (req.user.role === 'admin') {
+    // Admin and superadmin see everything
+    if (req.user.role === 'admin' || req.user.role === 'superadmin') {
       req.deviceFilter = null;
       req.deviceMqttIds = null;
       return next();
@@ -64,8 +64,8 @@ function checkDeviceAccess() {
       return next();
     }
 
-    // Admin bypass
-    if (req.user.role === 'admin') {
+    // Admin and superadmin bypass
+    if (req.user.role === 'admin' || req.user.role === 'superadmin') {
       return next();
     }
 

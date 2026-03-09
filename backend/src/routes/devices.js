@@ -640,4 +640,158 @@ router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technic
   }
 });
 
+// ── POST /api/devices/:id/reassign ──────────────────────────
+// Move device to a different tenant (superadmin only).
+// Rotates MQTT credentials and sends _set_tenant command.
+router.post('/:id/reassign', async (req, res, next) => {
+  try {
+    // Only superadmin can reassign across tenants
+    if (!req.user || req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'Superadmin access required',
+        status: 403,
+      });
+    }
+
+    const reassignSchema = z.object({
+      tenant_id: z.string().uuid(),
+    });
+    const parsed = reassignSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: parsed.error.errors.map(e => e.message).join(', '),
+        status: 400,
+      });
+    }
+
+    const { tenant_id: newTenantId } = parsed.data;
+    const { id } = req.params;
+
+    // Reject reassign to __system__ tenant
+    if (newTenantId === db.SYSTEM_TENANT_ID) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'Cannot reassign device to the system tenant',
+        status: 400,
+      });
+    }
+
+    // Look up device (support both UUID and mqtt_device_id)
+    const isUuid = id.length > 8;
+    const whereField = isUuid ? 'id' : 'mqtt_device_id';
+    const deviceRes = await db.query(
+      `SELECT d.id, d.mqtt_device_id, d.tenant_id, d.status, t.slug AS old_slug
+       FROM devices d
+       JOIN tenants t ON t.id = d.tenant_id
+       WHERE d.${whereField} = $1`,
+      [id]
+    );
+
+    if (deviceRes.rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Device not found',
+        status: 404,
+      });
+    }
+
+    const device = deviceRes.rows[0];
+
+    // Reject if same tenant
+    if (device.tenant_id === newTenantId) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'Device is already in this tenant',
+        status: 400,
+      });
+    }
+
+    // Verify target tenant exists and is active
+    const tenantRes = await db.query(
+      `SELECT id, slug, active FROM tenants WHERE id = $1`,
+      [newTenantId]
+    );
+    if (tenantRes.rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Target tenant not found',
+        status: 404,
+      });
+    }
+    if (!tenantRes.rows[0].active) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'Target tenant is inactive',
+        status: 400,
+      });
+    }
+
+    const newSlug = tenantRes.rows[0].slug;
+    const oldSlug = device.old_slug;
+    const mqttId = device.mqtt_device_id;
+
+    // Transaction: move device + clear RBAC
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Move device to new tenant
+      await client.query(
+        `UPDATE devices SET tenant_id = $1, status = 'active' WHERE id = $2`,
+        [newTenantId, device.id]
+      );
+
+      // Clear per-device RBAC (old tenant users lose access)
+      await client.query(
+        `DELETE FROM user_devices WHERE device_id = $1`,
+        [device.id]
+      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    // Rotate MQTT credentials for new tenant (outside transaction — best-effort)
+    let creds = null;
+    let mqttSent = false;
+    try {
+      creds = await mqttAuth.provisionDevice(newTenantId, mqttId);
+
+      // Send credentials + tenant via MQTT using OLD slug (device still connected there)
+      mqttSvc.sendJsonCommand(oldSlug, mqttId, '_set_mqtt_creds', {
+        username: creds.username,
+        password: creds.password,
+      });
+      mqttSvc.sendCommand(oldSlug, mqttId, '_set_tenant', newSlug);
+      mqttSent = true;
+    } catch (mqttErr) {
+      // MQTT send failed (device might be offline) — DB is already updated
+      console.error('MQTT reassign commands failed (device may be offline):', mqttErr.message);
+    }
+
+    // Update in-memory state
+    mqttSvc.updateDeviceStateMap(mqttId, newTenantId, newSlug);
+    await mqttSvc.refreshRegistries();
+
+    res.json({
+      data: {
+        device_id: device.id,
+        mqtt_device_id: mqttId,
+        old_tenant: oldSlug,
+        new_tenant: newSlug,
+        mqtt_commands_sent: mqttSent,
+        credentials_rotated: !!creds,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

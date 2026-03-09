@@ -2,13 +2,15 @@
 'use strict';
 
 /**
- * Seed an admin user for a given tenant.
+ * Seed an admin or superadmin user for a given tenant.
  *
  * Usage:
  *   node src/db/seed-admin.js --email admin@example.com --password secret123
+ *   node src/db/seed-admin.js --email super@example.com --password secret123 --role superadmin
  *
  * Options:
  *   --tenant-id  UUID (default: SYSTEM_TENANT_ID)
+ *   --role       admin | superadmin (default: admin)
  */
 
 require('dotenv').config();
@@ -26,9 +28,15 @@ async function main() {
   const email    = get('--email');
   const password = get('--password');
   const tenantId = get('--tenant-id') || '00000000-0000-0000-0000-000000000000';
+  const role     = get('--role') || 'admin';
 
   if (!email || !password) {
-    console.error('Usage: node src/db/seed-admin.js --email <email> --password <password> [--tenant-id <uuid>]');
+    console.error('Usage: node src/db/seed-admin.js --email <email> --password <password> [--tenant-id <uuid>] [--role admin|superadmin]');
+    process.exit(1);
+  }
+
+  if (!['admin', 'superadmin'].includes(role)) {
+    console.error('Role must be "admin" or "superadmin"');
     process.exit(1);
   }
 
@@ -50,14 +58,16 @@ async function main() {
 
     const { rows } = await pool.query(
       `INSERT INTO users (tenant_id, email, password_hash, role)
-       VALUES ($1, $2, $3, 'admin')
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (tenant_id, email)
-       DO UPDATE SET password_hash = EXCLUDED.password_hash, active = true
+       DO UPDATE SET password_hash = EXCLUDED.password_hash,
+                     role = EXCLUDED.role,
+                     active = true
        RETURNING id, email, role`,
-      [tenantId, email, hash]
+      [tenantId, email, hash, role]
     );
 
-    console.log('Admin user seeded:', rows[0]);
+    console.log(`${role} user seeded:`, rows[0]);
   } catch (err) {
     console.error('Failed to seed admin:', err.message);
     process.exit(1);
