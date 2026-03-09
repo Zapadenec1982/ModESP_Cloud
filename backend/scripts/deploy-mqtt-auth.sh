@@ -59,13 +59,14 @@ info "Migration 008 applied."
 # ── Step 4: Build mosquitto-go-auth (if not built) ───────
 if [ ! -f /usr/lib/mosquitto/go-auth.so ]; then
     info "Step 4: Building mosquitto-go-auth plugin..."
-    apt install -y golang-go libmosquitto-dev pkg-config git
+    apt install -y golang-go libmosquitto-dev mosquitto-dev pkg-config git make build-essential
 
     TMPDIR=$(mktemp -d)
     cd "$TMPDIR"
     git clone --depth 1 https://github.com/iegomez/mosquitto-go-auth.git
     cd mosquitto-go-auth
     make
+    mkdir -p /usr/lib/mosquitto
     cp go-auth.so /usr/lib/mosquitto/go-auth.so
     cd /
     rm -rf "$TMPDIR"
@@ -95,6 +96,39 @@ GRANT SELECT ON devices, tenants TO modesp_mqtt_ro;
 EOF
 info "PostgreSQL user modesp_mqtt_ro ready."
 
+# ── Step 5b: TLS Certificates (Let's Encrypt) ────────────
+if [ ! -d /etc/mosquitto/certs ] || [ ! -f /etc/mosquitto/certs/server.crt ]; then
+    info "Step 5b: Setting up TLS certificates..."
+    read -p "Enter domain name (e.g. modesp.com.ua): " DOMAIN
+
+    apt install -y certbot
+    systemctl stop nginx 2>/dev/null || true
+    certbot certonly --standalone -d "$DOMAIN"
+    systemctl start nginx 2>/dev/null || true
+
+    mkdir -p /etc/mosquitto/certs
+    cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /etc/mosquitto/certs/server.crt
+    cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" /etc/mosquitto/certs/server.key
+    chown mosquitto:mosquitto /etc/mosquitto/certs/*
+    chmod 600 /etc/mosquitto/certs/server.key
+
+    # Auto-renewal hook
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    cat > /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh <<RENEWEOF
+#!/bin/bash
+cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
+cp /etc/letsencrypt/live/$DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
+chown mosquitto:mosquitto /etc/mosquitto/certs/*
+systemctl restart mosquitto
+RENEWEOF
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
+    info "TLS certificates installed + auto-renewal hook created."
+else
+    info "Step 5b: TLS certificates already present, skipping."
+fi
+
+ufw allow 8883/tcp 2>/dev/null || true
+
 # ── Step 6: Update Mosquitto config ──────────────────────
 info "Step 6: Updating Mosquitto configuration..."
 
@@ -121,8 +155,7 @@ allow_anonymous true
 listener 8883 0.0.0.0
 allow_anonymous false
 
-# TLS
-cafile /etc/mosquitto/certs/ca.crt
+# TLS (copy Let's Encrypt fullchain.pem + privkey.pem to /etc/mosquitto/certs/)
 certfile /etc/mosquitto/certs/server.crt
 keyfile /etc/mosquitto/certs/server.key
 tls_version tlsv1.2
@@ -155,11 +188,11 @@ auth_opt_pg_connect_tries 5
 # User: bcrypt hash by mqtt_username
 auth_opt_pg_userquery SELECT mqtt_password_hash FROM devices WHERE mqtt_username = \$1 AND status != 'disabled' AND mqtt_password_hash IS NOT NULL LIMIT 1
 
-# Superuser: nobody (backend on localhost bypasses plugin)
-auth_opt_pg_superquery SELECT 0 FROM devices WHERE 1 = 0
+# Superuser: nobody (must accept \$1 param even if unused)
+auth_opt_pg_superquery SELECT COUNT(*) FROM devices WHERE mqtt_username = \$1 AND 1 = 0
 
 # ACL: devices can publish state/status/heartbeat, subscribe to cmd
-auth_opt_pg_aclquery SELECT topic FROM ( SELECT CASE WHEN d.status = 'pending' THEN 'modesp/v1/pending/' || d.mqtt_device_id WHEN d.status = 'active' THEN 'modesp/v1/' || t.slug || '/' || d.mqtt_device_id END AS prefix FROM devices d LEFT JOIN tenants t ON t.id = d.tenant_id WHERE d.mqtt_username = \$1 AND d.status IN ('pending', 'active') ) sub CROSS JOIN ( SELECT '/state/+' AS suffix, 2 AS rw UNION ALL SELECT '/status', 2 UNION ALL SELECT '/heartbeat', 2 UNION ALL SELECT '/cmd/+', 1 ) acl WHERE acl.rw = \$2 AND sub.prefix IS NOT NULL
+auth_opt_pg_aclquery SELECT sub.prefix || acl.suffix FROM ( SELECT CASE WHEN d.status = 'pending' THEN 'modesp/v1/pending/' || d.mqtt_device_id WHEN d.status = 'active' THEN 'modesp/v1/' || t.slug || '/' || d.mqtt_device_id END AS prefix FROM devices d LEFT JOIN tenants t ON t.id = d.tenant_id WHERE d.mqtt_username = \$1 AND d.status IN ('pending', 'active') ) sub CROSS JOIN ( SELECT '/state/+' AS suffix, 2 AS rw UNION ALL SELECT '/status', 2 UNION ALL SELECT '/heartbeat', 2 UNION ALL SELECT '/cmd/+', 1 ) acl WHERE acl.rw = \$2 AND sub.prefix IS NOT NULL
 
 # ── Persistence + Logging ─────────────────────────────────
 persistence true

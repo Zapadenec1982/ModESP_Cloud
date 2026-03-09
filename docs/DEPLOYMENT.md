@@ -197,7 +197,40 @@ EOF
 
 Замінити в конфігу:
 - `auth_opt_pg_password` — пароль `modesp_mqtt_ro`
-- TLS cert paths — ваші Let's Encrypt шляхи
+
+#### TLS сертифікати (Let's Encrypt)
+
+```bash
+# Отримати сертифікат (зупинити nginx щоб звільнити порт 80)
+apt install -y certbot
+systemctl stop nginx
+certbot certonly --standalone -d YOUR_DOMAIN
+systemctl start nginx
+
+# Копіювати для Mosquitto
+mkdir -p /etc/mosquitto/certs
+cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
+cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
+chown mosquitto:mosquitto /etc/mosquitto/certs/*
+chmod 600 /etc/mosquitto/certs/server.key
+```
+
+**Важливо:** `certfile` має бути `fullchain.pem` (не `cert.pem`), щоб клієнти могли перевірити ланцюжок сертифікатів. `cafile` не потрібен (не mutual TLS).
+
+#### Auto-renewal hook
+
+```bash
+cat > /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh << 'EOF'
+#!/bin/bash
+cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
+cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
+chown mosquitto:mosquitto /etc/mosquitto/certs/*
+systemctl restart mosquitto
+EOF
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/mosquitto.sh
+```
+
+ESP32 firmware автоматично включає TLS при порті 8883 (`esp_crt_bundle_attach` — вбудований CA bundle включає Let's Encrypt).
 
 ```bash
 systemctl enable mosquitto
@@ -207,13 +240,15 @@ systemctl start mosquitto
 #### Верифікація auth
 
 ```bash
-# ✅ Правильний пароль + правильний topic
-mosquitto_pub -h localhost -p 8883 --cafile /path/ca.crt \
+# ✅ Правильний пароль + TLS
+mosquitto_pub -h YOUR_DOMAIN -p 8883 \
+  --cafile /etc/ssl/certs/ca-certificates.crt \
   -u device_A4CF12 -P correct_pass \
   -t "modesp/v1/acme/A4CF12/status" -m "online"
 
 # ❌ Неправильний пароль
-mosquitto_pub -h localhost -p 8883 --cafile /path/ca.crt \
+mosquitto_pub -h YOUR_DOMAIN -p 8883 \
+  --cafile /etc/ssl/certs/ca-certificates.crt \
   -u device_A4CF12 -P wrong_pass \
   -t "modesp/v1/acme/A4CF12/status" -m "online"
 # → Connection Refused
@@ -530,3 +565,4 @@ mkdir -p /backup
 - 2026-03-07 — Створено. Повний гайд розгортання: PostgreSQL, Mosquitto, Node.js, Nginx, systemd, backup.
 - 2026-03-08 — Оновлено. Виправлені шляхи і команди за результатами реального розгортання: systemd юніт `modesp-backend` (не modesp-cloud), міграція `006_device_rbac.sql` (не user_devices), скрипти в `backend/scripts/` (не src/db), PostgreSQL auth через `sudo -u postgres`, додано секцію "Оновлення", cron задачі, структуру файлів на сервері.
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
+- 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
