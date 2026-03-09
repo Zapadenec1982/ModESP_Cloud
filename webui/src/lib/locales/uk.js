@@ -166,6 +166,18 @@ export default {
     work_done_placeholder: 'Опис виконаних робіт',
     delete_service_confirm: 'Видалити цей сервісний запис?',
     access_denied: 'Доступ заборонено',
+    // MQTT auth
+    mqtt_auth: 'MQTT авторизація',
+    mqtt_configured: 'Налаштовано',
+    mqtt_not_configured: 'Не налаштовано',
+    mqtt_rotate: 'Ротація пароля',
+    mqtt_revoke: 'Відкликати',
+    mqtt_generate: 'Згенерувати',
+    mqtt_rotate_confirm: 'Ротувати MQTT пароль? Старий пароль буде недійсним.',
+    mqtt_revoke_confirm: 'Відкликати MQTT доступ? Пристрій більше не зможе підключитись.',
+    mqtt_rotated: 'MQTT пароль ротовано',
+    mqtt_revoked: 'MQTT доступ відкликано',
+    mqtt_generated: 'MQTT credentials згенеровано',
     param_category: {
       thermostat: 'Термостат',
       protection: 'Захист',
@@ -238,6 +250,11 @@ export default {
     serial_placeholder: 'напр. MX-2024-001',
     comment_placeholder: 'Нотатки (необов\'язково)',
     device_assigned: 'Пристрій {0} призначено',
+    creds_sent_mqtt: 'Credentials надіслано через MQTT',
+    creds_sent_mqtt_hint: 'Пристрій перепідключиться автоматично',
+    creds_manual: 'MQTT недоступний. Введіть вручну:',
+    creds_copy: 'Копіювати пароль',
+    creds_copied: 'Пароль скопійовано',
   },
 
   // ── Notifications ──

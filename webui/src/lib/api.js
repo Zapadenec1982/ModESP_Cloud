@@ -291,6 +291,20 @@ export function requestDeviceState(deviceId) {
   });
 }
 
+// ── MQTT Credentials ────────────────────────────────────
+
+export function generateMqttCredentials(deviceId) {
+  return request(`/devices/${deviceId}/mqtt-credentials`, {
+    method: 'POST',
+  });
+}
+
+export function revokeMqttCredentials(deviceId) {
+  return request(`/devices/${deviceId}/mqtt-credentials`, {
+    method: 'DELETE',
+  });
+}
+
 // ── Service Records ─────────────────────────────────────
 
 export function getServiceRecords(deviceId) {

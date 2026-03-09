@@ -186,6 +186,37 @@ Authorization: Bearer <access_token>
 
 ---
 
+### `POST /devices/:id/mqtt-credentials`
+Генерувати або ротувати MQTT credentials для пристрою. Повертає plaintext пароль **один раз**.
+Якщо пристрій онлайн — credentials автоматично відправляються через MQTT (`cmd/_set_mqtt_creds`).
+
+**Ролі:** admin
+
+**Response:**
+```json
+{
+  "data": {
+    "username": "device_A4CF12",
+    "password": "Kx9mR4pQ2wLn8bYz",
+    "mqtt_host": "cloud.example.com",
+    "mqtt_port": 8883,
+    "sent_via_mqtt": true
+  }
+}
+```
+
+- `sent_via_mqtt: true` — credentials відправлено через MQTT, пристрій переключиться автоматично
+- `sent_via_mqtt: false` — MQTT недоступний, потрібно ввести вручну через локальний WebUI
+
+---
+
+### `DELETE /devices/:id/mqtt-credentials`
+Відкликати MQTT credentials. Пристрій не зможе підключитись.
+
+**Ролі:** admin
+
+---
+
 ### `POST /devices/:id/command`
 Відправити команду на пристрій.
 
@@ -634,15 +665,24 @@ Bulk-заміна списку пристроїв користувача (вид
 **Response 200:**
 ```json
 {
-  "id": "uuid",
-  "mqtt_device_id": "A4CF12",
-  "status": "active",
-  "message": "Device assigned, _set_tenant command sent"
+  "data": {
+    "id": "uuid",
+    "mqtt_device_id": "A4CF12",
+    "status": "active",
+    "message": "Device assigned",
+    "mqtt_credentials": {
+      "username": "device_A4CF12",
+      "password": "Kx9mR4pQ2wLn8bYz",
+      "mqtt_host": "cloud.example.com",
+      "mqtt_port": 8883,
+      "sent_via_mqtt": true
+    }
+  }
 }
 ```
 
-Cloud автоматично: оновлює Mosquitto ACL, відправляє `_set_tenant` команду,
-пристрій переключається на нові topics.
+Cloud автоматично: генерує MQTT credentials, відправляє `cmd/_set_mqtt_creds` + `cmd/_set_tenant` через MQTT.
+Якщо MQTT недоступний — `sent_via_mqtt: false`, credentials потрібно ввести вручну.
 
 ---
 
@@ -702,3 +742,4 @@ Cloud автоматично: оновлює Mosquitto ACL, відправляє
 - 2026-03-08 — Device metadata: PATCH /devices/:id, service records CRUD, new fields (model, comment, manufactured_at), users with access in device detail.
 - 2026-03-08 — Phase 7a: Per-Device RBAC — GET/PUT /users/:id/devices, filterDeviceAccess/checkDeviceAccess middleware on all device endpoints, WebSocket per-device check, 403 for unauthorized device access.
 - 2026-03-08 — Phase 7d: OTA Board Compatibility — firmware upload з board_type, deploy board mismatch 400, rollout auto-filter incompatible + skipped_incompatible count.
+- 2026-03-09 — Phase 4 MQTT Auth: POST/DELETE /devices/:id/mqtt-credentials (generate/rotate/revoke), assign endpoint returns mqtt_credentials, GET /devices/:id returns has_mqtt_credentials.

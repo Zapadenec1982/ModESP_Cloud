@@ -166,6 +166,18 @@ export default {
     work_done_placeholder: 'Description of work performed',
     delete_service_confirm: 'Delete this service record?',
     access_denied: 'Access denied',
+    // MQTT auth
+    mqtt_auth: 'MQTT Auth',
+    mqtt_configured: 'Configured',
+    mqtt_not_configured: 'Not configured',
+    mqtt_rotate: 'Rotate Password',
+    mqtt_revoke: 'Revoke',
+    mqtt_generate: 'Generate',
+    mqtt_rotate_confirm: 'Rotate MQTT password? The old password will become invalid.',
+    mqtt_revoke_confirm: 'Revoke MQTT access? The device will no longer be able to connect.',
+    mqtt_rotated: 'MQTT password rotated',
+    mqtt_revoked: 'MQTT access revoked',
+    mqtt_generated: 'MQTT credentials generated',
     param_category: {
       thermostat: 'Thermostat',
       protection: 'Protection',
@@ -238,6 +250,11 @@ export default {
     serial_placeholder: 'e.g. MX-2024-001',
     comment_placeholder: 'Notes (optional)',
     device_assigned: 'Device {0} assigned',
+    creds_sent_mqtt: 'Credentials sent via MQTT',
+    creds_sent_mqtt_hint: 'Device will reconnect automatically',
+    creds_manual: 'MQTT unavailable. Enter manually:',
+    creds_copy: 'Copy password',
+    creds_copied: 'Password copied',
   },
 
   // ── Notifications ──

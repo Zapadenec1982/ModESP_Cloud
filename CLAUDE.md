@@ -327,13 +327,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 (RBAC + Scalability) — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-007) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-008) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -348,7 +348,8 @@ git push origin main
 | Backend Scalability (Phase 7b) | ✅ DB pool 30, batch state writer, heartbeat dedup, event batching, telemetry retention, query limit, WS backpressure, StateMap monitoring |
 | Frontend RBAC (Phase 7c) | ✅ isAdmin/canWrite stores, conditional UI, route guards, device assignment modal, i18n |
 | OTA Board Compatibility (Phase 7d) | ✅ migration 007, board_type on upload/deploy, board validation, Firmware WebUI board awareness |
-| Mosquitto конфіг (prod) | ✅ Конфіги готові |
+| Dynamic MQTT Auth (Phase 4) | ✅ mosquitto-go-auth + PostgreSQL, bootstrap provisioning, credentials lifecycle API, WebUI |
+| Mosquitto конфіг (prod) | ✅ mosquitto-go-auth з per_listener_settings + SQL ACL |
 | VPS розгортання | ✅ Production: backend, WebUI, MQTT bidirectional, OTA E2E verified |
 
 ---
@@ -381,3 +382,4 @@ git push origin main
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), admin-only route guards (wrap from svelte-spa-router), device assignment modal on Users page (search, select all/none, checklist, bulk PUT), i18n keys (uk+en).
 - 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal, incompatible devices disabled).
 - 2026-03-08 — VPS deployment complete: backend running (modesp-backend.service), WebUI via Nginx, MQTT bidirectional verified, OTA E2E confirmed, admin + viewer accounts created, ESP32 connected.
+- 2026-03-09 — Phase 4 completion (Dynamic MQTT Auth): mosquitto-go-auth + PostgreSQL (migration 008 mqtt_username column + indexes), mqtt-auth.js service (provision/rotate/revoke), REST API credentials endpoints, bootstrap provisioning in mqtt.js (ensureDevice), mosquitto.conf rewrite (per_listener_settings + auth_plugin + SQL ACL with read/write separation), provision-mqtt-creds.js migration script, WebUI credentials feedback on PendingDevices assign + MQTT auth status/rotate/revoke on DeviceDetail, i18n (uk+en).

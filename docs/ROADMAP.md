@@ -32,7 +32,7 @@
 - [x] State metadata registry (state_meta.json з ModESP_v4)
 - [x] Nginx: HTTPS термінація — конфіг готовий
 - [x] systemd юніти для всіх сервісів
-- [ ] Базовий моніторинг (journald + cron backup)
+- [x] Базовий моніторинг (journald + cron backup + telemetry partition timer)
 
 **Результат:** ESP32 публікує individual keys, cloud агрегує, зберігає в БД.
 
@@ -80,9 +80,13 @@
 - [x] WebUI: Login page, protected routing, Users page (admin)
 - [x] AUTH_ENABLED toggle (backward-compatible, default: false)
 - [x] seed-admin.js script
-- [ ] Mosquitto: mosquitto-go-auth з PostgreSQL backend (замість static ACL)
+- [x] Mosquitto: mosquitto-go-auth з PostgreSQL backend (замість static ACL)
+- [x] MQTT Bootstrap Provisioning: shared bootstrap → unique credentials on assign
+- [x] REST API: generate/rotate/revoke MQTT credentials per device
+- [x] WebUI: credentials feedback on assign, MQTT auth status on DeviceDetail
+- [x] provision-mqtt-creds.js: migration script for existing devices
 
-**Результат:** Мультитенантна система з ізольованим доступом.
+**Результат:** Мультитенантна система з ізольованим доступом і zero-touch provisioning.
 
 ---
 
@@ -226,3 +230,5 @@
 - 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), route guards (admin-only pages via svelte-spa-router wrap), device assignment modal on Users page (search, select all/none, bulk PUT), i18n keys (uk+en).
 - 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal).
 - 2026-03-08 — VPS Production Deployment: backend (modesp-backend.service), WebUI via Nginx, MQTT bidirectional, OTA E2E confirmed, admin + viewer accounts, ESP32 connected and operational.
+- 2026-03-08 — VPS Ops: cron backup (PostgreSQL daily 2:00, retention 30d), telemetry cleanup (daily 3:00, >90d), telemetry partition timer (systemd, 25th monthly). Phase 1 моніторинг — ✅.
+- 2026-03-09 — Phase 4 completion: Dynamic MQTT Auth — mosquitto-go-auth + PostgreSQL (migration 008, mqtt-auth.js service, REST API for credentials lifecycle, bootstrap provisioning in mqtt.js, mosquitto.conf rewrite with per_listener_settings + SQL ACL, provision-mqtt-creds.js migration script, WebUI credentials feedback on assign + MQTT auth status on DeviceDetail, i18n uk+en).

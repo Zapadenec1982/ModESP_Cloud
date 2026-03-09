@@ -40,6 +40,7 @@ CREATE TABLE devices (
   last_state       JSONB,
   online           BOOLEAN      NOT NULL DEFAULT false,
   status           VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  mqtt_username      VARCHAR(64),
   mqtt_password_hash VARCHAR(256),
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
@@ -50,6 +51,8 @@ CREATE UNIQUE INDEX idx_devices_mqtt_id ON devices(mqtt_device_id);
 CREATE INDEX idx_devices_tenant        ON devices(tenant_id);
 CREATE INDEX idx_devices_online        ON devices(tenant_id, online);
 CREATE INDEX idx_devices_status        ON devices(status) WHERE status = 'pending';
+CREATE UNIQUE INDEX idx_devices_mqtt_username ON devices(mqtt_username) WHERE mqtt_username IS NOT NULL;
+CREATE INDEX idx_devices_mqtt_auth     ON devices(mqtt_username, status) WHERE mqtt_password_hash IS NOT NULL;
 
 -- ============================================================
 -- Users (Phase 4, but create table now for FK integrity)

@@ -4,6 +4,7 @@ const { Router } = require('express');
 const { z }      = require('zod');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
+const mqttAuth   = require('../services/mqtt-auth');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const stateMeta  = require('../config/state_meta.json');
@@ -14,6 +15,10 @@ const router = Router();
 
 // Build Set of writable keys for command validation
 const writableKeys = new Set(stateMeta.subscribeKeys);
+
+// Auth helper: skip authorize middleware when AUTH_ENABLED=false
+const maybeAuthorize = (...roles) =>
+  AUTH_ENABLED ? authorize(...roles) : (_req, _res, next) => next();
 
 /**
  * Resolve the actual MQTT topic slug to reach a device.
@@ -148,12 +153,27 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
        serial_number || null, comment || null, rows[0].id]
     );
 
-    // Send _set_tenant command to the device via MQTT
+    // Generate unique MQTT credentials (replaces bootstrap password)
+    const creds = await mqttAuth.provisionDevice(req.tenantId, mqttId);
+
+    // Send credentials + tenant via MQTT (zero-touch provisioning)
+    let sentCreds = false;
     try {
+      // 1. Send credentials first (firmware saves but does NOT reconnect)
+      mqttSvc.sendJsonCommand('pending', mqttId, '_set_mqtt_creds', {
+        username: creds.username,
+        password: creds.password,
+      });
+      sentCreds = true;
+    } catch (err) {
+      // MQTT unavailable — admin will see credentials in response for manual entry
+    }
+
+    try {
+      // 2. Send tenant (firmware saves + reconnects with new credentials)
       mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug);
     } catch (err) {
       // MQTT might be disconnected — device will get the command on reconnect
-      // Still, the DB assignment is done, so we proceed
     }
 
     res.json({
@@ -162,6 +182,13 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
         mqtt_device_id: mqttId,
         tenant_id: req.tenantId,
         status: 'active',
+        mqtt_credentials: {
+          username: creds.username,
+          password: creds.password,
+          mqtt_host: process.env.MQTT_PUBLIC_HOST || req.hostname,
+          mqtt_port: 8883,
+          sent_via_mqtt: sentCreds,
+        },
       },
     });
   } catch (err) {
@@ -184,7 +211,8 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT id, mqtt_device_id, name, location, serial_number,
               model, comment, manufactured_at, firmware_version, proto_version,
-              online, status, last_seen, last_state, created_at
+              online, status, last_seen, last_state, created_at,
+              mqtt_username, (mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials
        FROM devices WHERE ${whereClause}`,
       [id, req.tenantId]
     );
@@ -236,6 +264,94 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
   }
 });
 
+// ── POST /api/devices/:id/mqtt-credentials ────────────────
+// Generate or rotate MQTT credentials. Returns plaintext password once.
+// Attempts to send via MQTT for zero-touch; falls back to manual display.
+router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isUuid = id.length > 8;
+    const whereClause = isUuid
+      ? 'id = $1 AND tenant_id = $2'
+      : 'mqtt_device_id = $1 AND tenant_id = $2';
+
+    const { rows } = await db.query(
+      `SELECT id, mqtt_device_id, status, mqtt_password_hash FROM devices WHERE ${whereClause}`,
+      [id, req.tenantId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Device ${id} not found`,
+        status: 404,
+      });
+    }
+
+    const device = rows[0];
+    const isRotation = device.mqtt_password_hash != null;
+    const creds = isRotation
+      ? await mqttAuth.rotatePassword(req.tenantId, device.mqtt_device_id)
+      : await mqttAuth.provisionDevice(req.tenantId, device.mqtt_device_id);
+
+    // Try to send via MQTT (zero-touch)
+    let sent = false;
+    try {
+      const routingSlug = await resolveRoutingSlug(device.mqtt_device_id, req.tenantId);
+      mqttSvc.sendJsonCommand(routingSlug, device.mqtt_device_id, '_set_mqtt_creds', {
+        username: creds.username,
+        password: creds.password,
+      });
+      sent = true;
+    } catch (err) {
+      // MQTT unavailable — fallback to manual
+    }
+
+    res.json({
+      data: {
+        ...creds,
+        mqtt_host: process.env.MQTT_PUBLIC_HOST || req.hostname,
+        mqtt_port: 8883,
+        sent_via_mqtt: sent,
+        rotated: isRotation,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /api/devices/:id/mqtt-credentials ──────────────
+// Revoke MQTT credentials — device can no longer connect.
+router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isUuid = id.length > 8;
+    const whereClause = isUuid
+      ? 'id = $1 AND tenant_id = $2'
+      : 'mqtt_device_id = $1 AND tenant_id = $2';
+
+    const { rows } = await db.query(
+      `SELECT mqtt_device_id FROM devices WHERE ${whereClause}`,
+      [id, req.tenantId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Device ${id} not found`,
+        status: 404,
+      });
+    }
+
+    await mqttAuth.revokeCredentials(req.tenantId, rows[0].mqtt_device_id);
+
+    res.json({ data: { revoked: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── PATCH /api/devices/:id ────────────────────────────────
 // Update device properties (name, location, serial_number, model, comment, manufactured_at).
 const updateDeviceSchema = z.object({
@@ -248,9 +364,6 @@ const updateDeviceSchema = z.object({
 }).refine(data => Object.keys(data).length > 0, {
   message: 'At least one field is required',
 });
-
-const maybeAuthorize = (...roles) =>
-  AUTH_ENABLED ? authorize(...roles) : (_req, _res, next) => next();
 
 router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {

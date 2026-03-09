@@ -1,8 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord } from '../lib/api.js'
+  import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { navigate, liveState, canWrite } from '../lib/stores.js'
+  import { navigate, liveState, canWrite, isAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import StatusDot from '../components/ui/StatusDot.svelte'
@@ -149,6 +149,48 @@
     loadServiceRecords()
   }
 
+  // ── MQTT Credentials ──
+  let mqttCredsResult = null
+  let mqttCredsBusy = false
+
+  function closeMqttCreds() { mqttCredsResult = null }
+
+  async function handleMqttGenerate() {
+    if (!confirm($t(device.has_mqtt_credentials ? 'device.mqtt_rotate_confirm' : 'device.mqtt_rotate_confirm'))) return
+    mqttCredsBusy = true
+    try {
+      const creds = await generateMqttCredentials(resolvedId)
+      mqttCredsResult = creds
+      device = { ...device, has_mqtt_credentials: true }
+      toast.success($t(creds.rotated ? 'device.mqtt_rotated' : 'device.mqtt_generated'))
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      mqttCredsBusy = false
+    }
+  }
+
+  async function handleMqttRevoke() {
+    if (!confirm($t('device.mqtt_revoke_confirm'))) return
+    mqttCredsBusy = true
+    try {
+      await revokeMqttCredentials(resolvedId)
+      device = { ...device, has_mqtt_credentials: false }
+      toast.success($t('device.mqtt_revoked'))
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      mqttCredsBusy = false
+    }
+  }
+
+  async function copyMqttPassword() {
+    if (mqttCredsResult?.password) {
+      await navigator.clipboard.writeText(mqttCredsResult.password)
+      toast.success('Copied')
+    }
+  }
+
   // ── Data loading ──
   async function loadDevice() {
     try {
@@ -277,6 +319,31 @@
           {/each}
         </div>
       {/if}
+
+      <!-- MQTT Auth status (admin only) -->
+      {#if $isAdmin}
+        <div class="mqtt-auth-row">
+          <Icon name="lock" size={14} />
+          <span class="mqtt-label">{$t('device.mqtt_auth')}:</span>
+          {#if device.has_mqtt_credentials}
+            <Badge variant="success" size="sm">{$t('device.mqtt_configured')}</Badge>
+          {:else}
+            <Badge variant="neutral" size="sm">{$t('device.mqtt_not_configured')}</Badge>
+          {/if}
+          <div class="mqtt-actions">
+            <button class="btn btn-sm btn-ghost" on:click={handleMqttGenerate} disabled={mqttCredsBusy}>
+              <Icon name="refresh-cw" size={12} />
+              {device.has_mqtt_credentials ? $t('device.mqtt_rotate') : $t('device.mqtt_generate')}
+            </button>
+            {#if device.has_mqtt_credentials}
+              <button class="btn btn-sm btn-ghost btn-danger-text" on:click={handleMqttRevoke} disabled={mqttCredsBusy}>
+                <Icon name="x-circle" size={12} />
+                {$t('device.mqtt_revoke')}
+              </button>
+            {/if}
+          </div>
+        </div>
+      {/if}
     </div>
 
     <!-- Vitals -->
@@ -350,6 +417,49 @@
     </div>
   {/if}
 </div>
+
+<!-- MQTT Credentials Result Modal -->
+{#if mqttCredsResult}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={closeMqttCreds}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h2>{$t('device.mqtt_auth')}</h2>
+        <button class="modal-close" on:click={closeMqttCreds}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        {#if mqttCredsResult.sent_via_mqtt}
+          <div class="creds-box creds-success">
+            <Icon name="check-circle" size={16} />
+            <span>Credentials sent via MQTT — device will reconnect automatically.</span>
+          </div>
+        {:else}
+          <div class="creds-box creds-warning">
+            <Icon name="alert-triangle" size={16} />
+            <span>MQTT unavailable. Enter credentials manually on the device.</span>
+          </div>
+        {/if}
+        <div class="creds-details">
+          <div class="creds-row"><span class="creds-label">Username:</span> <code>{mqttCredsResult.username}</code></div>
+          <div class="creds-row"><span class="creds-label">Password:</span> <code>{mqttCredsResult.password}</code></div>
+          <div class="creds-row"><span class="creds-label">Host:</span> <code>{mqttCredsResult.mqtt_host}:{mqttCredsResult.mqtt_port}</code></div>
+        </div>
+        <button class="btn btn-sm btn-ghost" on:click={copyMqttPassword}>
+          <Icon name="copy" size={14} />
+          Copy password
+        </button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" on:click={closeMqttCreds}>{$t('common.close')}</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Edit Modal -->
 {#if showEdit}
@@ -829,6 +939,85 @@
     color: var(--text-muted);
     white-space: nowrap;
     min-width: fit-content;
+  }
+
+  /* MQTT Auth */
+  .mqtt-auth-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+  }
+
+  .mqtt-label {
+    font-weight: 500;
+  }
+
+  .mqtt-actions {
+    display: flex;
+    gap: var(--space-1);
+    margin-left: auto;
+  }
+
+  .btn-danger-text {
+    color: var(--accent-red, #ef4444) !important;
+  }
+
+  .btn-danger-text:hover {
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  /* Credentials modal */
+  .creds-box {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+  }
+
+  .creds-success {
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    color: var(--accent-green, #4ade80);
+  }
+
+  .creds-warning {
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    color: var(--accent-amber, #fbbf24);
+  }
+
+  .creds-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  .creds-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .creds-label {
+    color: var(--text-muted);
+    min-width: 80px;
+  }
+
+  .creds-details code {
+    color: var(--text-primary);
+    word-break: break-all;
   }
 
   @media (max-width: 640px) {

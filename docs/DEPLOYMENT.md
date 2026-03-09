@@ -53,11 +53,13 @@ Ubuntu 24.04
 │   │   │       ├── 004_ota_pre_version.sql
 │   │   │       ├── 005_device_model_comment.sql
 │   │   │       ├── 006_device_rbac.sql
-│   │   │       └── 007_firmware_board_type.sql
+│   │   │       ├── 007_firmware_board_type.sql
+│   │   │       └── 008_mqtt_auth.sql
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration
-│   │   └── cleanup-telemetry.js     # retention: видаляє партиції >90 днів
+│   │   ├── cleanup-telemetry.js     # retention: видаляє партиції >90 днів
+│   │   └── provision-mqtt-creds.js  # генерує MQTT credentials для існуючих пристроїв
 │   ├── .env                         # конфігурація (не в git!)
 │   └── package.json
 ├── webui/
@@ -133,6 +135,9 @@ sudo -u postgres psql -d modesp_cloud \
 
 sudo -u postgres psql -d modesp_cloud \
   -f backend/src/db/migrations/007_firmware_board_type.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/008_mqtt_auth.sql
 ```
 
 **Після міграції 006** (RBAC) — призначити всі пристрої існуючим юзерам:
@@ -143,48 +148,78 @@ node scripts/grant-all-devices.js          # dry-run (перегляд)
 node scripts/grant-all-devices.js --apply  # виконати
 ```
 
-### 3. Mosquitto
+**Після міграції 008** (MQTT Auth) — згенерувати MQTT credentials для існуючих пристроїв:
+
+```bash
+cd /opt/modesp-cloud/backend
+node scripts/provision-mqtt-creds.js          # dry-run (перегляд)
+node scripts/provision-mqtt-creds.js --apply  # генерує паролі
+```
+
+### 3. Mosquitto + mosquitto-go-auth
+
+#### Встановити Mosquitto
 
 ```bash
 apt install -y mosquitto mosquitto-clients
-
-# Конфіг: /etc/mosquitto/conf.d/modesp.conf
 ```
 
-```ini
-# /etc/mosquitto/conf.d/modesp.conf
-
-# Заборонити анонімний доступ
-allow_anonymous false
-password_file /etc/mosquitto/passwd
-
-# ACL файл
-acl_file /etc/mosquitto/acl
-
-# Plain MQTT тільки localhost (для бекенду)
-listener 1883 127.0.0.1
-
-# MQTT over TLS для ESP32
-listener 8883
-cafile   /etc/letsencrypt/live/cloud.example.com/chain.pem
-certfile /etc/letsencrypt/live/cloud.example.com/fullchain.pem
-keyfile  /etc/letsencrypt/live/cloud.example.com/privkey.pem
-
-# Persistence для QoS 1
-persistence true
-persistence_location /var/lib/mosquitto/
-
-# Logging
-log_dest file /var/log/mosquitto/mosquitto.log
-log_type error warning notice
-```
+#### Build mosquitto-go-auth plugin
 
 ```bash
-# Додати бекенд користувача
-mosquitto_passwd -c /etc/mosquitto/passwd modesp_backend
+apt install -y golang-go libmosquitto-dev pkg-config git
+cd /tmp && git clone https://github.com/iegomez/mosquitto-go-auth.git
+cd mosquitto-go-auth && make
+sudo cp go-auth.so /usr/lib/mosquitto/go-auth.so
+```
 
+#### Створити PostgreSQL read-only user для plugin
+
+```bash
+sudo -u postgres psql -d modesp_cloud <<EOF
+CREATE USER modesp_mqtt_ro WITH PASSWORD 'STRONG_RO_PASSWORD';
+GRANT CONNECT ON DATABASE modesp_cloud TO modesp_mqtt_ro;
+GRANT USAGE ON SCHEMA public TO modesp_mqtt_ro;
+GRANT SELECT ON devices, tenants TO modesp_mqtt_ro;
+EOF
+```
+
+#### Конфіг Mosquitto
+
+Скопіювати з repo `infra/mosquitto/mosquitto.conf` → `/etc/mosquitto/conf.d/modesp.conf`.
+
+Ключові моменти:
+- `per_listener_settings true` — auth plugin тільки на порті 8883
+- Listener 1883 (localhost) — anonymous, для backend
+- Listener 8883 (TLS) — auth через mosquitto-go-auth → PostgreSQL
+- ACL: read/write розділені (subscribe `cmd/+`, publish `state/+`, `status`, `heartbeat`)
+- Cache: 300s auth, 60s ACL
+
+Замінити в конфігу:
+- `auth_opt_pg_password` — пароль `modesp_mqtt_ro`
+- TLS cert paths — ваші Let's Encrypt шляхи
+
+```bash
 systemctl enable mosquitto
 systemctl start mosquitto
+```
+
+#### Верифікація auth
+
+```bash
+# ✅ Правильний пароль + правильний topic
+mosquitto_pub -h localhost -p 8883 --cafile /path/ca.crt \
+  -u device_A4CF12 -P correct_pass \
+  -t "modesp/v1/acme/A4CF12/status" -m "online"
+
+# ❌ Неправильний пароль
+mosquitto_pub -h localhost -p 8883 --cafile /path/ca.crt \
+  -u device_A4CF12 -P wrong_pass \
+  -t "modesp/v1/acme/A4CF12/status" -m "online"
+# → Connection Refused
+
+# ✅ Backend на localhost (без auth)
+mosquitto_pub -h localhost -p 1883 -t "test" -m "ok"
 ```
 
 ### 4. Node.js
@@ -243,6 +278,10 @@ JWT_REFRESH_EXPIRES_IN=2592000
 
 # Auth (true для production, false для розробки без логіну)
 AUTH_ENABLED=true
+
+# MQTT Bootstrap (shared password for new ESP32 devices)
+MQTT_BOOTSTRAP_PASSWORD=shared_bootstrap_password_here
+MQTT_PUBLIC_HOST=cloud.example.com
 
 # Firebase FCM (опціонально)
 FCM_SERVER_KEY=your_fcm_server_key
@@ -490,3 +529,4 @@ mkdir -p /backup
 
 - 2026-03-07 — Створено. Повний гайд розгортання: PostgreSQL, Mosquitto, Node.js, Nginx, systemd, backup.
 - 2026-03-08 — Оновлено. Виправлені шляхи і команди за результатами реального розгортання: systemd юніт `modesp-backend` (не modesp-cloud), міграція `006_device_rbac.sql` (не user_devices), скрипти в `backend/scripts/` (не src/db), PostgreSQL auth через `sudo -u postgres`, додано секцію "Оновлення", cron задачі, структуру файлів на сервері.
+- 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.

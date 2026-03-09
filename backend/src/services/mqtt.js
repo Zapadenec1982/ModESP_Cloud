@@ -2,7 +2,8 @@
 
 const mqtt = require('mqtt');
 const { EventEmitter } = require('events');
-const db   = require('./db');
+const db       = require('./db');
+const mqttAuth = require('./mqtt-auth');
 
 const emitter = new EventEmitter();
 
@@ -13,6 +14,10 @@ const STATE_DEBOUNCE     = parseInt(process.env.STATE_DEBOUNCE_MS, 10)     || 30
 const REGISTRY_REFRESH   = parseInt(process.env.REGISTRY_REFRESH_MS, 10)   || 60000;
 const STATE_CHECK_MS     = 5000;    // check dirty devices every 5 s
 const OFFLINE_CHECK_MS   = 30000;   // scan for offline devices every 30 s
+
+// Pre-computed bcrypt hash of shared bootstrap password (from env)
+// All ESP32 devices are flashed with this password; replaced with unique on assign
+let BOOTSTRAP_HASH = null;
 
 // Telemetry channels to sample from stateMap
 const TELEMETRY_CHANNELS = [
@@ -70,6 +75,16 @@ let connected = false;
  */
 async function start(log) {
   logger = log;
+
+  // Pre-hash bootstrap password at startup (one-time cost)
+  const bootstrapPass = process.env.MQTT_BOOTSTRAP_PASSWORD;
+  if (bootstrapPass) {
+    const bcrypt = require('bcrypt');
+    BOOTSTRAP_HASH = await bcrypt.hash(bootstrapPass, 12);
+    logger.info('MQTT bootstrap password hash computed');
+  } else {
+    logger.warn('MQTT_BOOTSTRAP_PASSWORD not set — new devices will not get bootstrap credentials');
+  }
 
   await loadRegistries();
   await bootstrapStateMap();
@@ -477,7 +492,11 @@ function ensureDevice(tenantSlug, deviceId) {
      ON CONFLICT (mqtt_device_id) DO NOTHING`,
     [tenantInfo.id, deviceId, status]
   ).then(() => {
-    // DB confirmed — id will be resolved on next registry refresh
+    // Set bootstrap credentials (mqtt_username + shared password hash)
+    if (BOOTSTRAP_HASH) {
+      mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
+        .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
+    }
   }).catch(err => {
     logger.error({ err, deviceId }, 'Failed to auto-discover device');
   });

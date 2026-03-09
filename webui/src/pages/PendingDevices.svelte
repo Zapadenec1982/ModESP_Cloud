@@ -24,6 +24,24 @@
   let assignSerial = ''
   let assigning = false
 
+  // Credentials result after assign
+  let credsResult = null
+
+  function closeCredsModal() {
+    credsResult = null
+  }
+
+  function handleCredsKey(e) {
+    if (e.key === 'Escape') closeCredsModal()
+  }
+
+  async function copyPassword() {
+    if (credsResult?.mqtt_credentials?.password) {
+      await navigator.clipboard.writeText(credsResult.mqtt_credentials.password)
+      toast.success($t('pending.creds_copied'))
+    }
+  }
+
   async function load() {
     try {
       devices = await getPendingDevices()
@@ -55,7 +73,7 @@
     if (!assigningDevice) return
     assigning = true
     try {
-      await assignDevice(assigningDevice.mqtt_device_id, {
+      const result = await assignDevice(assigningDevice.mqtt_device_id, {
         name: assignName || undefined,
         location: assignLocation || undefined,
         model: assignModel || undefined,
@@ -63,6 +81,10 @@
       })
       toast.success($t('pending.device_assigned', assigningDevice.mqtt_device_id))
       assigningDevice = null
+      // Show credentials result if present
+      if (result.mqtt_credentials) {
+        credsResult = result
+      }
       await load()
     } catch (e) {
       toast.error(e.message)
@@ -170,6 +192,58 @@
       <div class="modal-actions">
         <Button variant="secondary" on:click={closeAssign} disabled={assigning}>{$t('common.cancel')}</Button>
         <Button variant="primary" on:click={confirmAssign} loading={assigning}>{$t('common.assign')}</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Credentials Result Modal -->
+{#if credsResult}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={closeCredsModal} on:keydown={handleCredsKey} role="dialog" aria-modal="true" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
+      <div class="modal-header">
+        <h3>{$t('pending.device_assigned', credsResult.mqtt_device_id)}</h3>
+        <button class="close-btn" on:click={closeCredsModal} aria-label="Close">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        {#if credsResult.mqtt_credentials.sent_via_mqtt}
+          <div class="creds-success">
+            <Icon name="refresh-cw" size={16} />
+            <div>
+              <strong>{$t('pending.creds_sent_mqtt')}</strong>
+              <p>{$t('pending.creds_sent_mqtt_hint')}</p>
+            </div>
+          </div>
+        {:else}
+          <div class="creds-warning">
+            <Icon name="alert-triangle" size={16} />
+            <strong>{$t('pending.creds_manual')}</strong>
+          </div>
+          <div class="creds-details">
+            <div class="creds-row">
+              <span class="creds-label">Username:</span>
+              <code>{credsResult.mqtt_credentials.username}</code>
+            </div>
+            <div class="creds-row">
+              <span class="creds-label">Password:</span>
+              <code>{credsResult.mqtt_credentials.password}</code>
+            </div>
+            <div class="creds-row">
+              <span class="creds-label">Host:</span>
+              <code>{credsResult.mqtt_credentials.mqtt_host}:{credsResult.mqtt_credentials.mqtt_port}</code>
+            </div>
+          </div>
+          <Button variant="secondary" size="sm" icon="copy" on:click={copyPassword}>
+            {$t('pending.creds_copy')}
+          </Button>
+        {/if}
+      </div>
+      <div class="modal-actions">
+        <Button variant="primary" on:click={closeCredsModal}>{$t('common.close')}</Button>
       </div>
     </div>
   </div>
@@ -349,6 +423,63 @@
     gap: var(--space-2);
     padding: var(--space-4) var(--space-5);
     border-top: 1px solid var(--border-muted);
+  }
+
+  /* Credentials modal */
+  .creds-success {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    border-radius: var(--radius-md);
+    color: var(--accent-green, #4ade80);
+  }
+
+  .creds-success p {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .creds-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: var(--radius-md);
+    color: var(--accent-amber, #fbbf24);
+    font-size: var(--text-sm);
+  }
+
+  .creds-details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  .creds-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .creds-label {
+    color: var(--text-muted);
+    min-width: 80px;
+  }
+
+  .creds-details code {
+    color: var(--text-primary);
+    word-break: break-all;
   }
 
   @media (max-width: 640px) {
