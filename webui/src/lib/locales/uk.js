@@ -70,6 +70,7 @@ export default {
     error: 'Помилка',
     pending: 'Очікує',
     failed_to_load: 'Помилка завантаження',
+    back: 'Назад',
   },
 
   // ── Connection status ──
@@ -94,6 +95,13 @@ export default {
     password: 'Пароль',
     sign_in: 'Увійти',
     signing_in: 'Вхід...',
+  },
+
+  // ── Auth (multi-tenant) ──
+  auth: {
+    select_workspace: 'Виберіть робочий простір',
+    switch_workspace: 'Змінити робочий простір',
+    current_workspace: 'Поточний',
   },
 
   // ── Dashboard ──
@@ -421,12 +429,18 @@ export default {
     no_devices_found: 'Пристроїв не знайдено',
     no_devices_assigned: 'Пристроїв не призначено',
     devices_updated: 'Доступ до пристроїв оновлено',
-    // Tenant assignment (superadmin)
+    // Tenant management (superadmin)
     col_tenant: 'Тенант',
     change_tenant: 'Змінити тенант',
     select_tenant: 'Виберіть тенант',
     target_tenant: 'Цільовий тенант',
     tenant_changed: 'Користувача переміщено до {0}',
     cannot_edit_superadmin: 'Не можна змінювати суперадміна',
+    manage_tenants: 'Керувати тенантами',
+    current_tenants: 'Поточне членство',
+    add_to_tenant: 'Додати до тенанту',
+    remove_from_tenant: 'Видалити з тенанту',
+    last_tenant_warning: 'Не можна видалити останній тенант',
+    user_tenants_updated: 'Членство в тенантах оновлено',
   },
 };

@@ -3,7 +3,7 @@
  * In dev mode, Vite proxies /api → localhost:3000.
  */
 
-import { authUser, authEnabled, navigate } from './stores.js';
+import { authUser, authEnabled, currentTenant, availableTenants, navigate } from './stores.js';
 import { toast } from './toast.js';
 
 const BASE = '/api';
@@ -18,15 +18,19 @@ let refreshTimer = null;
 /**
  * Decode JWT payload without external dependencies.
  */
-function parseJwtExp(token) {
+function parseJwtPayload(token) {
   try {
     const base64 = token.split('.')[1];
     const json = atob(base64.replace(/-/g, '+').replace(/_/g, '/'));
-    const payload = JSON.parse(json);
-    return { exp: payload.exp, iat: payload.iat };
+    return JSON.parse(json);
   } catch {
     return null;
   }
+}
+
+function parseJwtExp(token) {
+  const payload = parseJwtPayload(token);
+  return payload ? { exp: payload.exp, iat: payload.iat } : null;
 }
 
 /**
@@ -136,6 +140,25 @@ async function request(path, options = {}) {
   return json.data;
 }
 
+/**
+ * Raw POST without auth header (for unauthenticated endpoints like select-tenant).
+ */
+async function requestRaw(path, options = {}) {
+  const url = `${BASE}${path}`;
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+  const res = await fetch(url, { ...options, headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  const json = await res.json();
+  return json.data;
+}
+
 // ── Auth API ────────────────────────────────────────────
 
 export async function login(email, password) {
@@ -151,9 +174,63 @@ export async function login(email, password) {
   }
 
   const { data } = await res.json();
+
+  // Multiple tenants → return selection data (don't set tokens yet)
+  if (data.require_tenant_select) {
+    return {
+      requireTenantSelect: true,
+      pendingToken: data.pending_token,
+      user: data.user,
+      tenants: data.tenants,
+    };
+  }
+
+  // Single tenant → direct login
   setTokens(data.access_token, data.refresh_token);
   authUser.set(data.user);
-  return data.user;
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return { user: data.user };
+}
+
+/**
+ * Complete login after tenant selection (multi-tenant flow).
+ */
+export async function selectTenant(pendingToken, tenantId) {
+  const data = await requestRaw('/auth/select-tenant', {
+    method: 'POST',
+    body: JSON.stringify({ pending_token: pendingToken, tenant_id: tenantId }),
+  });
+
+  setTokens(data.access_token, data.refresh_token);
+  authUser.set(data.user);
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return data;
+}
+
+/**
+ * Switch active tenant (requires valid session).
+ */
+export async function switchTenant(tenantId) {
+  const data = await request('/auth/switch-tenant', {
+    method: 'POST',
+    body: JSON.stringify({ tenant_id: tenantId }),
+  });
+
+  setTokens(data.access_token, data.refresh_token);
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return data;
 }
 
 async function tryRefresh() {
@@ -171,6 +248,7 @@ async function tryRefresh() {
 
       const { data } = await res.json();
       setTokens(data.access_token, data.refresh_token);
+      if (data.tenants) availableTenants.set(data.tenants);
       return true;
     } catch {
       return false;
@@ -199,6 +277,8 @@ function clearAuth() {
   clearTimeout(refreshTimer);
   setTokens(null, null);
   authUser.set(null);
+  currentTenant.set(null);
+  availableTenants.set([]);
 }
 
 /**
@@ -218,6 +298,17 @@ export async function restoreSession() {
   try {
     const user = await request('/users/me');
     authUser.set({ id: user.id, email: user.email, role: user.role });
+
+    // Decode tenantId from JWT to set currentTenant
+    if (accessToken) {
+      const jwt = parseJwtPayload(accessToken);
+      if (jwt?.tenantId) {
+        let tenants;
+        availableTenants.subscribe(v => { tenants = v; })();
+        const active = tenants?.find(t => t.id === jwt.tenantId);
+        if (active) currentTenant.set(active);
+      }
+    }
     return true;
   } catch {
     clearAuth();
@@ -422,10 +513,10 @@ export function getUsers() {
   return request('/users');
 }
 
-export function createUser({ email, password, role }) {
+export function createUser({ email, password, role, tenant_id }) {
   return request('/users', {
     method: 'POST',
-    body: JSON.stringify({ email, password, role }),
+    body: JSON.stringify({ email, password, role, tenant_id }),
   });
 }
 
@@ -450,6 +541,25 @@ export function setUserDevices(userId, deviceIds) {
   return request(`/users/${userId}/devices`, {
     method: 'PUT',
     body: JSON.stringify({ device_ids: deviceIds }),
+  });
+}
+
+// ── User Tenant Memberships (superadmin) ─────────────────
+
+export function getUserTenants(userId) {
+  return request(`/users/${userId}/tenants`);
+}
+
+export function addUserTenant(userId, tenantId) {
+  return request(`/users/${userId}/tenants`, {
+    method: 'POST',
+    body: JSON.stringify({ tenant_id: tenantId }),
+  });
+}
+
+export function removeUserTenant(userId, tenantId) {
+  return request(`/users/${userId}/tenants/${tenantId}`, {
+    method: 'DELETE',
   });
 }
 

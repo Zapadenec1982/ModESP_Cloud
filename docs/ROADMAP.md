@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅**
+**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅**
 
 ---
 
@@ -218,7 +218,35 @@
 
 ---
 
-### Фаза 8b: Advanced Analytics (майбутнє)
+### Фаза 8b: Multi-Tenant User Memberships ✅
+**Ціль:** Один користувач належить кільком тенантам (M:N). Технік обслуговує обладнання кількох клієнтів.
+
+**Патерн:** Active Tenant (WorkOS/Clerk/AWS) — junction table `user_tenants`, JWT тримає один `tenantId`, перемикання мінтить новий JWT. Всі ~44 SQL запити з `WHERE tenant_id` залишаються без змін.
+
+#### Backend
+- [x] Міграція 010: `user_tenants` junction table (M:N) + seed від `users.tenant_id`
+- [x] Auth service: `generatePendingToken()` / `verifyPendingToken()` (JWT без tenantId, 5хв)
+- [x] POST /auth/login: multi-tenant detection → `require_tenant_select` + pending_token
+- [x] POST /auth/select-tenant: завершення логіну після вибору тенанту
+- [x] POST /auth/switch-tenant: перемикання тенанту (новий JWT pair, superadmin bypass)
+- [x] POST /auth/refresh: повертає `tenants` array для frontend
+- [x] GET /users: повертає `user.tenants[]` array з усіма членствами
+- [x] POST /users: також INSERT в user_tenants
+- [x] GET/POST/DELETE /users/:id/tenants — CRUD membership (superadmin only)
+
+#### WebUI
+- [x] Stores: `currentTenant`, `availableTenants`, `hasMultipleTenants`
+- [x] API: `selectTenant()`, `switchTenant()`, `addUserTenant()`, `removeUserTenant()`
+- [x] Login: tenant selection step (cards з аватаром, slug, last-used default)
+- [x] Sidebar: tenant switcher widget (dropdown, поточний тенант, перемикання → reload)
+- [x] Users: multi-tenant badges, "Manage Tenants" modal (add/remove chips)
+- [x] i18n: auth.select_workspace, auth.switch_workspace, users.manage_tenants (uk+en)
+
+**Результат:** Технік логіниться → бачить picker тенантів → працює в одному → перемикається через sidebar.
+
+---
+
+### Фаза 9: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
@@ -266,3 +294,4 @@
 - 2026-03-08 — VPS Ops: cron backup (PostgreSQL daily 2:00, retention 30d), telemetry cleanup (daily 3:00, >90d), telemetry partition timer (systemd, 25th monthly). Phase 1 моніторинг — ✅.
 - 2026-03-09 — Phase 4 completion: Dynamic MQTT Auth — mosquitto-go-auth + PostgreSQL (migration 008, mqtt-auth.js service, REST API for credentials lifecycle, bootstrap provisioning in mqtt.js, mosquitto.conf rewrite with per_listener_settings + SQL ACL, provision-mqtt-creds.js migration script, WebUI credentials feedback on assign + MQTT auth status on DeviceDetail, i18n uk+en).
 - 2026-03-09 — Phase 8a: Tenant Management — superadmin role (migration 009), tenants CRUD API, device reassign endpoint, Tenants WebUI page, DeviceDetail "Change Tenant" modal, PendingDevices tenant select for superadmin, isSuperAdmin store, seed-admin --role flag, i18n (uk+en).
+- 2026-03-09 — Phase 8b: Multi-Tenant User Memberships — migration 010 (user_tenants M:N), pendingToken flow, login/select-tenant/switch-tenant endpoints, tenant membership CRUD, frontend tenant picker on login, sidebar tenant switcher, Users manage tenants modal, i18n (uk+en).

@@ -65,6 +65,25 @@ export const canWrite = derived(
   ([$enabled, $user]) => !$enabled || $user?.role === 'admin' || $user?.role === 'superadmin' || $user?.role === 'technician'
 );
 
+// ── Tenant stores ───────────────────────────────────────
+
+/**
+ * Currently active tenant ({id, name, slug} or null).
+ */
+export const currentTenant = writable(null);
+
+/**
+ * All tenants the user has access to.
+ */
+export const availableTenants = writable([]);
+
+/**
+ * Derived: does the user belong to more than one tenant?
+ */
+export const hasMultipleTenants = derived(
+  availableTenants, $t => $t.length > 1
+);
+
 // ── UI stores ────────────────────────────────────────────
 
 /**

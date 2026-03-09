@@ -4,6 +4,7 @@ const { Router } = require('express');
 const { z }      = require('zod');
 const db         = require('../services/db');
 const authSvc    = require('../services/auth');
+const { authenticate } = require('../middleware/auth');
 
 const router = Router();
 
@@ -17,6 +18,47 @@ const loginSchema = z.object({
 const refreshSchema = z.object({
   refresh_token: z.string().min(1),
 });
+
+const selectTenantSchema = z.object({
+  pending_token: z.string().min(1),
+  tenant_id:     z.string().uuid(),
+});
+
+const switchTenantSchema = z.object({
+  tenant_id: z.string().uuid(),
+});
+
+// ── Helpers ─────────────────────────────────────────────
+
+async function issueTokens(user, tenantId) {
+  const accessToken  = authSvc.generateAccessToken({
+    id: user.id, email: user.email, role: user.role, tenantId,
+  });
+  const refreshToken = authSvc.generateRefreshToken();
+  const tokenHash    = authSvc.hashRefreshToken(refreshToken);
+
+  const refreshExpiresIn = parseInt(process.env.JWT_REFRESH_EXPIRES_IN, 10) || 2592000;
+  const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
+
+  await db.query(
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+     VALUES ($1, $2, $3)`,
+    [user.id, tokenHash, expiresAt]
+  );
+
+  return { accessToken, refreshToken };
+}
+
+async function getUserTenants(userId) {
+  const { rows } = await db.query(
+    `SELECT t.id, t.name, t.slug
+       FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+       WHERE ut.user_id = $1 AND t.active = true
+       ORDER BY t.name`,
+    [userId]
+  );
+  return rows;
+}
 
 // ── POST /auth/login ────────────────────────────────────
 
@@ -33,7 +75,7 @@ router.post('/login', async (req, res) => {
   const { email, password } = parsed.data;
 
   try {
-    // Find user by email (across all tenants — email+tenant is unique)
+    // Find user by email
     const { rows } = await db.query(
       `SELECT id, tenant_id, email, password_hash, role, active
        FROM users WHERE email = $1 LIMIT 1`,
@@ -67,43 +109,190 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Generate tokens
-    const accessToken  = authSvc.generateAccessToken({
-      id: user.id, email: user.email, role: user.role, tenantId: user.tenant_id,
+    // Fetch available tenants from user_tenants
+    const tenants = await getUserTenants(user.id);
+
+    // Fallback: if user_tenants is empty (legacy), use users.tenant_id
+    if (tenants.length === 0 && user.tenant_id) {
+      const { rows: tRows } = await db.query(
+        'SELECT id, name, slug FROM tenants WHERE id = $1',
+        [user.tenant_id]
+      );
+      if (tRows.length > 0) tenants.push(tRows[0]);
+    }
+
+    if (tenants.length === 0) {
+      return res.status(401).json({
+        error: 'no_tenant',
+        message: 'User is not assigned to any tenant',
+        status: 401,
+      });
+    }
+
+    // Single tenant → direct login (zero UX change)
+    if (tenants.length === 1) {
+      const { accessToken, refreshToken } = await issueTokens(user, tenants[0].id);
+      await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+
+      return res.json({
+        data: {
+          access_token:  accessToken,
+          refresh_token: refreshToken,
+          user: { id: user.id, email: user.email, role: user.role },
+          tenant: tenants[0],
+          tenants,
+        },
+      });
+    }
+
+    // Multiple tenants → require tenant selection
+    const pendingToken = authSvc.generatePendingToken({
+      id: user.id, email: user.email, role: user.role,
     });
-    const refreshToken = authSvc.generateRefreshToken();
-    const tokenHash    = authSvc.hashRefreshToken(refreshToken);
-
-    const refreshExpiresIn = parseInt(process.env.JWT_REFRESH_EXPIRES_IN, 10) || 2592000;
-    const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
-
-    // Store refresh token hash
-    await db.query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3)`,
-      [user.id, tokenHash, expiresAt]
-    );
-
-    // Update last_login
-    await db.query(
-      'UPDATE users SET last_login = NOW() WHERE id = $1',
-      [user.id]
-    );
 
     res.json({
       data: {
-        access_token:  accessToken,
-        refresh_token: refreshToken,
-        user: {
-          id:    user.id,
-          email: user.email,
-          role:  user.role,
-        },
+        require_tenant_select: true,
+        pending_token: pendingToken,
+        user: { id: user.id, email: user.email, role: user.role },
+        tenants,
       },
     });
   } catch (err) {
     req.log?.error?.({ err }, 'Login failed') || console.error('Login failed:', err);
     res.status(500).json({ error: 'internal_error', message: 'Login failed', status: 500 });
+  }
+});
+
+// ── POST /auth/select-tenant ────────────────────────────
+// Complete login after tenant selection (uses pending_token)
+
+router.post('/select-tenant', async (req, res) => {
+  const parsed = selectTenantSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: parsed.error.issues[0].message,
+      status: 400,
+    });
+  }
+
+  const { pending_token, tenant_id } = parsed.data;
+
+  try {
+    const payload = authSvc.verifyPendingToken(pending_token);
+
+    // Verify user still active
+    const { rows: uRows } = await db.query(
+      'SELECT id, email, role, active FROM users WHERE id = $1',
+      [payload.sub]
+    );
+    if (uRows.length === 0 || !uRows[0].active) {
+      return res.status(401).json({
+        error: 'account_disabled', message: 'Account not found or disabled', status: 401,
+      });
+    }
+    const user = uRows[0];
+
+    // Verify membership
+    const { rows: mRows } = await db.query(
+      'SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2',
+      [user.id, tenant_id]
+    );
+    if (mRows.length === 0) {
+      return res.status(403).json({
+        error: 'forbidden', message: 'Not a member of this tenant', status: 403,
+      });
+    }
+
+    const { accessToken, refreshToken } = await issueTokens(user, tenant_id);
+    await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+
+    // Fetch tenant info
+    const { rows: tRows } = await db.query(
+      'SELECT id, name, slug FROM tenants WHERE id = $1', [tenant_id]
+    );
+    const tenants = await getUserTenants(user.id);
+
+    res.json({
+      data: {
+        access_token:  accessToken,
+        refresh_token: refreshToken,
+        user: { id: user.id, email: user.email, role: user.role },
+        tenant: tRows[0] || null,
+        tenants,
+      },
+    });
+  } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        error: 'invalid_token', message: 'Pending token invalid or expired', status: 401,
+      });
+    }
+    req.log?.error?.({ err }, 'Select tenant failed') || console.error('Select tenant failed:', err);
+    res.status(500).json({ error: 'internal_error', message: 'Select tenant failed', status: 500 });
+  }
+});
+
+// ── POST /auth/switch-tenant ────────────────────────────
+// Switch active tenant (requires valid access token)
+
+router.post('/switch-tenant', authenticate, async (req, res) => {
+  const parsed = switchTenantSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: parsed.error.issues[0].message,
+      status: 400,
+    });
+  }
+
+  const { tenant_id } = parsed.data;
+  const userId = req.user.id;
+  const isSuperAdmin = req.user.role === 'superadmin';
+
+  try {
+    // Superadmin can switch to any tenant; others need membership
+    if (!isSuperAdmin) {
+      const { rows } = await db.query(
+        'SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenant_id]
+      );
+      if (rows.length === 0) {
+        return res.status(403).json({
+          error: 'forbidden', message: 'Not a member of this tenant', status: 403,
+        });
+      }
+    }
+
+    // Verify tenant exists and is active
+    const { rows: tRows } = await db.query(
+      'SELECT id, name, slug FROM tenants WHERE id = $1 AND active = true',
+      [tenant_id]
+    );
+    if (tRows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found', message: 'Tenant not found', status: 404,
+      });
+    }
+
+    // Issue new tokens with new tenant context
+    const user = { id: userId, email: req.user.email, role: req.user.role };
+    const { accessToken, refreshToken } = await issueTokens(user, tenant_id);
+
+    const tenants = await getUserTenants(userId);
+
+    res.json({
+      data: {
+        access_token:  accessToken,
+        refresh_token: refreshToken,
+        tenant: tRows[0],
+        tenants,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Switch tenant failed') || console.error('Switch tenant failed:', err);
+    res.status(500).json({ error: 'internal_error', message: 'Switch tenant failed', status: 500 });
   }
 });
 
@@ -180,10 +369,14 @@ router.post('/refresh', async (req, res) => {
       [row.user_id, newTokenHash, expiresAt]
     );
 
+    // Fetch user's tenants for frontend
+    const tenants = await getUserTenants(row.user_id);
+
     res.json({
       data: {
         access_token:  accessToken,
         refresh_token: newRefreshToken,
+        tenants,
       },
     });
   } catch (err) {

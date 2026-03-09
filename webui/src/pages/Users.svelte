@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -226,10 +226,14 @@
     if (e.key === 'Escape') closeDevicesModal()
   }
 
-  // ── Tenant reassign modal (superadmin) ──
+  // ── Manage tenants modal (superadmin) ──
+  let userTenants = []  // current memberships for modal user
+
   function openTenantModal(user) {
     tenantUser = user
     tenantTarget = ''
+    // Copy user's current tenants (from GET /users response)
+    userTenants = user.tenants ? [...user.tenants] : []
     showTenantModal = true
   }
 
@@ -237,6 +241,7 @@
     showTenantModal = false
     tenantUser = null
     tenantTarget = ''
+    userTenants = []
   }
 
   function handleTenantBackdropClick(e) {
@@ -247,14 +252,35 @@
     if (e.key === 'Escape') closeTenantModal()
   }
 
-  async function saveTenantChange() {
+  // Available tenants to add (not yet a member)
+  $: tenantsToAdd = tenantsList.filter(t => !userTenants.some(ut => ut.id === t.id))
+
+  async function handleAddTenant() {
     if (!tenantTarget) return
     tenantSaving = true
     try {
-      await updateUser(tenantUser.id, { tenant_id: tenantTarget })
-      const target = tenantsList.find(t => t.id === tenantTarget)
-      toast.success($t('users.tenant_changed', target?.name || tenantTarget))
-      closeTenantModal()
+      const result = await addUserTenant(tenantUser.id, tenantTarget)
+      userTenants = result
+      tenantTarget = ''
+      toast.success($t('users.user_tenants_updated'))
+      await loadUsers()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      tenantSaving = false
+    }
+  }
+
+  async function handleRemoveTenant(tenantId) {
+    if (userTenants.length <= 1) {
+      toast.warning($t('users.last_tenant_warning'))
+      return
+    }
+    tenantSaving = true
+    try {
+      const result = await removeUserTenant(tenantUser.id, tenantId)
+      userTenants = result
+      toast.success($t('users.user_tenants_updated'))
       await loadUsers()
     } catch (e) {
       toast.error(e.message)
@@ -311,7 +337,15 @@
             <!-- Tenant (superadmin only) -->
             {#if $isSuperAdmin}
               <div class="cell cell-tenant">
-                <span class="tenant-name">{user.tenant_name || '—'}</span>
+                {#if user.tenants && user.tenants.length > 0}
+                  <div class="tenant-badges">
+                    {#each user.tenants as ut}
+                      <Badge variant="neutral" size="sm">{ut.slug}</Badge>
+                    {/each}
+                  </div>
+                {:else}
+                  <span class="tenant-name">{user.tenant_name || '—'}</span>
+                {/if}
               </div>
             {/if}
 
@@ -370,9 +404,9 @@
                     <Icon name="cpu" size={13} />
                   </Button>
                 {/if}
-                <!-- Change tenant (superadmin only, not for superadmin users) -->
+                <!-- Manage tenants (superadmin only, not for superadmin users) -->
                 {#if $isSuperAdmin && user.role !== 'superadmin'}
-                  <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.change_tenant')} {user.email}">
+                  <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.manage_tenants')} {user.email}">
                     <Icon name="grid" size={13} />
                   </Button>
                 {/if}
@@ -543,14 +577,14 @@
   </div>
 {/if}
 
-<!-- Tenant Reassign Modal (superadmin only) -->
+<!-- Manage Tenants Modal (superadmin only) -->
 {#if showTenantModal}
   <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div class="modal-backdrop" on:click={handleTenantBackdropClick} on:keydown={handleTenantKey} role="dialog" aria-modal="true" aria-labelledby="tenant-modal-title" tabindex="-1">
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title-group">
-          <h3 id="tenant-modal-title">{$t('users.change_tenant')}</h3>
+          <h3 id="tenant-modal-title">{$t('users.manage_tenants')}</h3>
           <span class="modal-subtitle">{tenantUser?.email}</span>
         </div>
         <button class="modal-close" on:click={closeTenantModal} aria-label="Close dialog">
@@ -558,18 +592,46 @@
         </button>
       </div>
       <div class="modal-body">
+        <!-- Current memberships -->
         <div class="form-field">
-          <label class="field-label" for="tenant-target">{$t('users.target_tenant')}</label>
-          <select id="tenant-target" bind:value={tenantTarget} class="input">
-            <option value="">— {$t('users.select_tenant')} —</option>
-            {#each tenantsList as tenant (tenant.id)}
-              <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+          <span class="field-label">{$t('users.current_tenants')}</span>
+          <div class="tenant-chips">
+            {#each userTenants as ut (ut.id)}
+              <span class="tenant-chip">
+                {ut.name}
+                <button
+                  class="chip-remove"
+                  on:click={() => handleRemoveTenant(ut.id)}
+                  disabled={userTenants.length <= 1 || tenantSaving}
+                  title={userTenants.length <= 1 ? $t('users.last_tenant_warning') : $t('users.remove_from_tenant')}
+                  aria-label="Remove {ut.name}"
+                >×</button>
+              </span>
             {/each}
-          </select>
+            {#if userTenants.length === 0}
+              <span class="text-muted">—</span>
+            {/if}
+          </div>
         </div>
+
+        <!-- Add to tenant -->
+        {#if tenantsToAdd.length > 0}
+          <div class="form-field">
+            <span class="field-label">{$t('users.add_to_tenant')}</span>
+            <div class="add-tenant-row">
+              <select bind:value={tenantTarget} class="input" style="flex:1">
+                <option value="">— {$t('users.select_tenant')} —</option>
+                {#each tenantsToAdd as tenant (tenant.id)}
+                  <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+                {/each}
+              </select>
+              <Button variant="primary" size="sm" loading={tenantSaving} on:click={handleAddTenant} disabled={!tenantTarget} icon="plus">{$t('common.add')}</Button>
+            </div>
+          </div>
+        {/if}
+
         <div class="modal-actions">
-          <Button variant="secondary" on:click={closeTenantModal}>{$t('common.cancel')}</Button>
-          <Button variant="primary" loading={tenantSaving} on:click={saveTenantChange} icon="check" disabled={!tenantTarget}>{$t('common.save')}</Button>
+          <Button variant="secondary" on:click={closeTenantModal}>{$t('common.close')}</Button>
         </div>
       </div>
     </div>
@@ -621,7 +683,7 @@
   }
 
   .th-email   { flex: 2; min-width: 0; }
-  .th-tenant  { width: 120px; }
+  .th-tenant  { width: 160px; }
   .th-role    { width: 100px; }
   .th-status  { width: 90px; }
   .th-created { width: 100px; }
@@ -669,7 +731,7 @@
   }
 
   .cell-email   { flex: 2; min-width: 0; }
-  .cell-tenant  { width: 120px; }
+  .cell-tenant  { width: 160px; }
   .cell-role    { width: 100px; }
   .cell-status  { width: 90px; }
   .cell-created { width: 100px; }
@@ -968,6 +1030,58 @@
     color: var(--text-muted);
     margin-left: auto;
     flex-shrink: 0;
+  }
+
+  /* Tenant badges */
+  .tenant-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .tenant-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .tenant-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-2);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+  }
+
+  .chip-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: var(--text-lg);
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  .chip-remove:hover:not(:disabled) {
+    color: var(--accent-red);
+    background: rgba(248, 81, 73, 0.1);
+  }
+
+  .chip-remove:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .add-tenant-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
   }
 
   /* Mobile */

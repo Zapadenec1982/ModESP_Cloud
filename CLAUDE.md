@@ -329,13 +329,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 + Phase 4 MQTT Auth + Tenant Management — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-009) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-010) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -356,6 +356,7 @@ git push origin main
 | Nginx HTTPS | ✅ modesp.com.ua:443, HTTP→HTTPS redirect, security headers, HSTS, rate limiting |
 | VPS розгортання | ✅ Production: https://modesp.com.ua, MQTT TLS bidirectional, OTA E2E verified |
 | Tenant Management (Phase 8a) | ✅ superadmin role (migration 009), tenants CRUD API, device reassign, Tenants WebUI, PendingDevices tenant select |
+| Multi-Tenant Users (Phase 8b) | ✅ user_tenants M:N (migration 010), login tenant picker, switch-tenant, sidebar switcher, Users manage tenants |
 
 ---
 
@@ -391,3 +392,4 @@ git push origin main
 - 2026-03-09 — TLS deployment: Let's Encrypt cert for modesp.com.ua, Mosquitto TLS on port 8883, ESP32 connected via mqtts:// with built-in CA bundle, auto-renewal hook. Firmware: _set_mqtt_creds handler (ModESP_v4 commit 9c4f027). Deploy script fixes: superquery $1 placeholder, aclquery prefix||suffix, certfile=fullchain.pem, build prereqs (make, mosquitto-dev).
 - 2026-03-09 — HTTPS: Nginx конфіг оновлено з реальним доменом modesp.com.ua, WebUI dist symlink, auto-renewal hook тепер перезавантажує і Mosquitto і Nginx.
 - 2026-03-09 — Tenant Management (Phase 8a): superadmin role (migration 009), tenants CRUD API (routes/tenants.js), device reassign endpoint (POST /devices/:id/reassign), Tenants WebUI page, isSuperAdmin store, DeviceDetail "Change Tenant" modal, PendingDevices tenant dropdown for superadmin, seed-admin --role flag, i18n (uk+en).
+- 2026-03-09 — Multi-Tenant Users (Phase 8b): migration 010 (user_tenants M:N junction table), pendingToken helpers (auth service), multi-tenant login flow (login → select-tenant → issue JWT), switch-tenant endpoint, tenant membership CRUD (users routes), frontend tenant picker (Login.svelte), sidebar tenant switcher (Sidebar.svelte), Users manage tenants modal (add/remove chips), stores (currentTenant, availableTenants, hasMultipleTenants), i18n (uk+en).

@@ -70,6 +70,7 @@ export default {
     error: 'Error',
     pending: 'Pending',
     failed_to_load: 'Failed to load',
+    back: 'Back',
   },
 
   // ── Connection status ──
@@ -94,6 +95,13 @@ export default {
     password: 'Password',
     sign_in: 'Sign In',
     signing_in: 'Signing in...',
+  },
+
+  // ── Auth (multi-tenant) ──
+  auth: {
+    select_workspace: 'Select workspace',
+    switch_workspace: 'Switch workspace',
+    current_workspace: 'Current',
   },
 
   // ── Dashboard ──
@@ -421,12 +429,18 @@ export default {
     no_devices_found: 'No devices found',
     no_devices_assigned: 'No devices assigned',
     devices_updated: 'Device access updated',
-    // Tenant assignment (superadmin)
+    // Tenant management (superadmin)
     col_tenant: 'Tenant',
     change_tenant: 'Change tenant',
     select_tenant: 'Select tenant',
     target_tenant: 'Target tenant',
     tenant_changed: 'User moved to {0}',
     cannot_edit_superadmin: 'Cannot modify superadmin',
+    manage_tenants: 'Manage tenants',
+    current_tenants: 'Current memberships',
+    add_to_tenant: 'Add to tenant',
+    remove_from_tenant: 'Remove from tenant',
+    last_tenant_warning: 'Cannot remove last tenant',
+    user_tenants_updated: 'Tenant memberships updated',
   },
 };

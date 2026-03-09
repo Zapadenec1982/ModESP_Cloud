@@ -68,6 +68,32 @@ function verifyAccessToken(token) {
   return jwt.verify(token, process.env.JWT_SECRET);
 }
 
+/**
+ * Sign a short-lived pending token (no tenantId, for tenant selection flow).
+ * @param {{ id: string, email: string, role: string }} user
+ * @returns {string}
+ */
+function generatePendingToken(user) {
+  const secret = process.env.JWT_SECRET;
+  return jwt.sign(
+    { sub: user.id, email: user.email, role: user.role, pending: true },
+    secret,
+    { expiresIn: 300 } // 5 minutes
+  );
+}
+
+/**
+ * Verify and decode a pending token.
+ * @param {string} token
+ * @returns {{ sub: string, email: string, role: string, pending: true }}
+ * @throws {jwt.JsonWebTokenError|jwt.TokenExpiredError}
+ */
+function verifyPendingToken(token) {
+  const payload = jwt.verify(token, process.env.JWT_SECRET);
+  if (!payload.pending) throw new jwt.JsonWebTokenError('Not a pending token');
+  return payload;
+}
+
 module.exports = {
   hashPassword,
   comparePassword,
@@ -75,4 +101,6 @@ module.exports = {
   generateRefreshToken,
   hashRefreshToken,
   verifyAccessToken,
+  generatePendingToken,
+  verifyPendingToken,
 };

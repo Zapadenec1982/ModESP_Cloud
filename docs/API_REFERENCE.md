@@ -49,8 +49,31 @@ Authorization: Bearer <access_token>
 }
 ```
 
+### `POST /auth/select-tenant`
+Завершити логін після вибору тенанта (multi-tenant flow).
+
+**Body:**
+```json
+{
+  "pending_token": "eyJ...",
+  "tenant_id": "uuid"
+}
+```
+
+**Response 200:** Same as login (access_token, refresh_token, user, tenant, tenants).
+
+### `POST /auth/switch-tenant`
+Перемикання активного тенанта (потребує Bearer token).
+
+**Body:**
+```json
+{ "tenant_id": "uuid" }
+```
+
+**Response 200:** New access_token, refresh_token, tenant, tenants array.
+
 ### `POST /auth/refresh`
-Оновити access токен.
+Оновити access токен. Також повертає `tenants` array.
 
 **Body:**
 ```json
@@ -440,6 +463,30 @@ Bulk-заміна списку пристроїв користувача (вид
 Відкликати доступ до пристрою.
 
 **Ролі:** admin
+
+### `GET /users/:id/tenants`
+Список тенантів, до яких належить користувач.
+
+**Ролі:** superadmin
+
+### `POST /users/:id/tenants`
+Додати користувача до тенанту.
+
+**Ролі:** superadmin
+
+**Body:**
+```json
+{ "tenant_id": "uuid" }
+```
+
+**Response 200:** Array of user's tenants `[{id, name, slug}]`.
+
+### `DELETE /users/:id/tenants/:tenantId`
+Видалити користувача з тенанту (не можна видалити останній).
+
+**Ролі:** superadmin
+
+**Response 200:** Array of remaining tenants.
 
 ---
 

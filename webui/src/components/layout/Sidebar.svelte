@@ -1,9 +1,10 @@
 <script>
   import { location } from 'svelte-spa-router'
-  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen } from '../../lib/stores.js'
-  import { logout } from '../../lib/api.js'
+  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen, currentTenant, availableTenants, hasMultipleTenants } from '../../lib/stores.js'
+  import { logout, switchTenant } from '../../lib/api.js'
   import { disconnect } from '../../lib/ws.js'
   import { t } from '../../lib/i18n.js'
+  import { toast } from '../../lib/toast.js'
   import Icon from '../ui/Icon.svelte'
   import ConnectionStatus from './ConnectionStatus.svelte'
   import SettingsMenu from './SettingsMenu.svelte'
@@ -49,6 +50,26 @@
   }
 
   $: isAdmin = !$authEnabled || $authUser?.role === 'admin' || $authUser?.role === 'superadmin'
+
+  // Tenant switcher
+  let tenantDropdownOpen = false
+
+  function toggleTenantDropdown() {
+    tenantDropdownOpen = !tenantDropdownOpen
+  }
+
+  async function handleSwitchTenant(tenantId) {
+    tenantDropdownOpen = false
+    if (tenantId === $currentTenant?.id) return
+    try {
+      await switchTenant(tenantId)
+      toast.success($t('auth.switch_workspace') + ': ' + ($currentTenant?.name || ''))
+      // Reload to clean all state (devices, alarms, etc.)
+      window.location.reload()
+    } catch (e) {
+      toast.error(e.message || 'Failed to switch tenant')
+    }
+  }
 </script>
 
 <!-- Mobile backdrop -->
@@ -104,6 +125,40 @@
   <div class="sidebar-footer">
     <ConnectionStatus compact={$sidebarCollapsed} />
     <SettingsMenu compact={$sidebarCollapsed} />
+
+    {#if $currentTenant}
+      <div class="tenant-section" class:compact={$sidebarCollapsed}>
+        <span class="tenant-avatar-sm">{$currentTenant.name.charAt(0).toUpperCase()}</span>
+        {#if !$sidebarCollapsed}
+          <span class="tenant-name-text truncate">{$currentTenant.name}</span>
+          {#if $hasMultipleTenants}
+            <button class="tenant-switch-btn" on:click={toggleTenantDropdown} title={$t('auth.switch_workspace')}>
+              <Icon name={tenantDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} />
+            </button>
+          {/if}
+        {/if}
+      </div>
+      {#if tenantDropdownOpen && $hasMultipleTenants}
+        <div class="tenant-dropdown">
+          {#each $availableTenants as tenant}
+            <button
+              class="tenant-option"
+              class:active={tenant.id === $currentTenant?.id}
+              on:click={() => handleSwitchTenant(tenant.id)}
+            >
+              <span class="tenant-avatar-xs">{tenant.name.charAt(0).toUpperCase()}</span>
+              <div class="tenant-option-info">
+                <span class="tenant-option-name">{tenant.name}</span>
+                <span class="tenant-option-slug">{tenant.slug}</span>
+              </div>
+              {#if tenant.id === $currentTenant?.id}
+                <span class="tenant-current-badge">{$t('auth.current_workspace')}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
 
     {#if $authEnabled && $authUser}
       <div class="user-section" class:compact={$sidebarCollapsed}>
@@ -303,5 +358,127 @@
   }
   .logout-btn:hover {
     color: var(--accent-red);
+  }
+
+  /* Tenant switcher */
+  .tenant-section {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-1);
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-muted);
+    margin-bottom: var(--space-1);
+  }
+  .tenant-section.compact {
+    justify-content: center;
+  }
+
+  .tenant-avatar-sm {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-blue);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: var(--text-xs);
+    flex-shrink: 0;
+  }
+
+  .tenant-name-text {
+    flex: 1;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .tenant-switch-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: var(--radius-sm);
+    display: flex;
+  }
+  .tenant-switch-btn:hover {
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+  }
+
+  .tenant-dropdown {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--space-1);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-1);
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .tenant-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--font-sans);
+    color: var(--text-secondary);
+    transition: background var(--transition-fast);
+    width: 100%;
+  }
+  .tenant-option:hover {
+    background: var(--bg-secondary);
+  }
+  .tenant-option.active {
+    background: rgba(88, 166, 255, 0.08);
+  }
+
+  .tenant-avatar-xs {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    background: var(--accent-blue);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .tenant-option-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .tenant-option-name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .tenant-option-slug {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .tenant-current-badge {
+    font-size: 10px;
+    color: var(--accent-blue);
+    font-weight: 600;
+    white-space: nowrap;
   }
 </style>

@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
   try {
     let rows;
     if (isSuperAdmin) {
-      // Superadmin sees ALL users cross-tenant with tenant info
+      // Superadmin sees ALL users cross-tenant with tenant memberships
       ({ rows } = await db.query(
         `SELECT u.id, u.email, u.role, u.active, u.created_at, u.last_login,
                 u.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug
@@ -48,6 +48,20 @@ router.get('/', async (req, res) => {
          JOIN tenants t ON t.id = u.tenant_id
          ORDER BY t.name, u.created_at DESC`
       ));
+      // Attach tenant memberships array to each user
+      const { rows: memberships } = await db.query(
+        `SELECT ut.user_id, t.id AS tenant_id, t.name, t.slug
+           FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+           ORDER BY t.name`
+      );
+      const memMap = {};
+      for (const m of memberships) {
+        if (!memMap[m.user_id]) memMap[m.user_id] = [];
+        memMap[m.user_id].push({ id: m.tenant_id, name: m.name, slug: m.slug });
+      }
+      for (const u of rows) {
+        u.tenants = memMap[u.id] || [{ id: u.tenant_id, name: u.tenant_name, slug: u.tenant_slug }];
+      }
     } else {
       ({ rows } = await db.query(
         `SELECT id, email, role, active, created_at, last_login
@@ -185,6 +199,12 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3, $4)
        RETURNING id, email, role, active, created_at`,
       [targetTenantId, email, hash, role]
+    );
+    // Also add to user_tenants junction table
+    await db.query(
+      `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [rows[0].id, targetTenantId]
     );
     res.status(201).json({ data: rows[0] });
   } catch (err) {
@@ -350,6 +370,131 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Delete user failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to delete user', status: 500 });
+  }
+});
+
+// ── GET /users/:id/tenants — list tenant memberships (superadmin) ──
+
+router.get('/:id/tenants', async (req, res) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'forbidden', message: 'Superadmin only', status: 403 });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT t.id, t.name, t.slug, ut.created_at
+         FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+         WHERE ut.user_id = $1
+         ORDER BY t.name`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'List user tenants failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to list tenants', status: 500 });
+  }
+});
+
+// ── POST /users/:id/tenants — add to tenant (superadmin) ──
+
+const addTenantSchema = z.object({ tenant_id: z.string().uuid() });
+
+router.post('/:id/tenants', async (req, res) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'forbidden', message: 'Superadmin only', status: 403 });
+  }
+  const parsed = addTenantSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed', message: 'tenant_id (UUID) is required', status: 400,
+    });
+  }
+
+  const { tenant_id } = parsed.data;
+  try {
+    // Verify user and tenant exist
+    const { rows: uCheck } = await db.query('SELECT id FROM users WHERE id = $1', [req.params.id]);
+    if (uCheck.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    }
+    const { rows: tCheck } = await db.query('SELECT id FROM tenants WHERE id = $1', [tenant_id]);
+    if (tCheck.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    }
+
+    await db.query(
+      `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [req.params.id, tenant_id]
+    );
+
+    // Return updated membership list
+    const { rows } = await db.query(
+      `SELECT t.id, t.name, t.slug
+         FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+         WHERE ut.user_id = $1 ORDER BY t.name`,
+      [req.params.id]
+    );
+    res.status(201).json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Add user tenant failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to add tenant', status: 500 });
+  }
+});
+
+// ── DELETE /users/:id/tenants/:tenantId — remove from tenant (superadmin) ──
+
+router.delete('/:id/tenants/:tenantId', async (req, res) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'forbidden', message: 'Superadmin only', status: 403 });
+  }
+
+  const userId = req.params.id;
+  const tenantId = req.params.tenantId;
+
+  try {
+    // Check membership count — cannot remove last tenant
+    const { rows: countRows } = await db.query(
+      'SELECT COUNT(*)::int AS cnt FROM user_tenants WHERE user_id = $1',
+      [userId]
+    );
+    if (countRows[0].cnt <= 1) {
+      return res.status(400).json({
+        error: 'bad_request', message: 'Cannot remove last tenant membership', status: 400,
+      });
+    }
+
+    await db.query(
+      'DELETE FROM user_tenants WHERE user_id = $1 AND tenant_id = $2',
+      [userId, tenantId]
+    );
+
+    // If removed tenant was the user's default, switch to another
+    const { rows: uRows } = await db.query(
+      'SELECT tenant_id FROM users WHERE id = $1', [userId]
+    );
+    if (uRows.length > 0 && uRows[0].tenant_id === tenantId) {
+      const { rows: remaining } = await db.query(
+        `SELECT tenant_id FROM user_tenants WHERE user_id = $1 LIMIT 1`, [userId]
+      );
+      if (remaining.length > 0) {
+        await db.query(
+          'UPDATE users SET tenant_id = $1 WHERE id = $2',
+          [remaining[0].tenant_id, userId]
+        );
+      }
+    }
+
+    // Return updated list
+    const { rows } = await db.query(
+      `SELECT t.id, t.name, t.slug
+         FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+         WHERE ut.user_id = $1 ORDER BY t.name`,
+      [userId]
+    );
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Remove user tenant failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to remove tenant', status: 500 });
   }
 });
 
