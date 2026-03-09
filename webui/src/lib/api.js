@@ -453,6 +453,37 @@ export function setUserDevices(userId, deviceIds) {
   });
 }
 
+// ── Tenants (superadmin) ─────────────────────────────────
+
+export function getTenants() {
+  return request('/tenants');
+}
+
+export function createTenant({ name, slug, plan }) {
+  return request('/tenants', {
+    method: 'POST',
+    body: JSON.stringify({ name, slug, plan }),
+  });
+}
+
+export function updateTenant(id, data) {
+  return request(`/tenants/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteTenant(id) {
+  return request(`/tenants/${id}`, { method: 'DELETE' });
+}
+
+export function reassignDevice(deviceId, tenantId) {
+  return request(`/devices/${deviceId}/reassign`, {
+    method: 'POST',
+    body: JSON.stringify({ tenant_id: tenantId }),
+  });
+}
+
 // ── Firmware (Phase 6) ─────────────────────────────────
 
 export function getFirmwares() {

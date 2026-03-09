@@ -19,6 +19,7 @@
   import Users from './pages/Users.svelte'
   import Firmware from './pages/Firmware.svelte'
   import Alarms from './pages/Alarms.svelte'
+  import Tenants from './pages/Tenants.svelte'
 
   // Admin-only route guard: redirect non-admin to /
   function isAdminCheck() {
@@ -34,6 +35,7 @@
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/notifications':   Notifications,
     '/firmware':        wrap({ component: Firmware, conditions: [isAdminCheck] }),
+    '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
   }
 
@@ -102,6 +104,7 @@
     '/pending': 'pages.pending',
     '/notifications': 'pages.notifications',
     '/firmware': 'pages.firmware',
+    '/tenants': 'pages.tenants',
     '/users': 'pages.users',
   }
 

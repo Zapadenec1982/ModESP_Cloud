@@ -20,6 +20,7 @@
     { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
     { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware'), admin: true },
     { section: $t('nav.sections.admin'), admin: true },
+    { path: '/tenants',       icon: 'layers',   label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
   ]
 
@@ -47,7 +48,7 @@
     sidebarOpen.set(false)
   }
 
-  $: isAdmin = !$authEnabled || $authUser?.role === 'admin'
+  $: isAdmin = !$authEnabled || $authUser?.role === 'admin' || $authUser?.role === 'superadmin'
 </script>
 
 <!-- Mobile backdrop -->
