@@ -8,9 +8,13 @@ let logger;
 /** @type {Map<string, { send: Function }>}  channel name → handler */
 const channels = new Map();
 
-/** @type {Map<string, number>}  "deviceId:alarmCode" → last notification timestamp */
+/** @type {Map<string, number>}  "deviceId:alarmCode:active" → last notification timestamp */
 const debounceMap = new Map();
-const DEBOUNCE_MS = 5000;  // 5 s cooldown per device+alarm
+const DEBOUNCE_MS = 5000;  // 5 s cooldown per device+alarm+direction
+
+/** @type {Map<string, NodeJS.Timeout>}  deviceId → pending offline notification timer */
+const offlineTimers = new Map();
+const OFFLINE_NOTIFY_DELAY_MS = 120000; // 2 min delay before notifying offline
 
 // ── Public API ─────────────────────────────────────────────
 
@@ -24,7 +28,7 @@ function registerChannel(name, handler) {
 }
 
 /**
- * Start push service — listen for alarm events from MQTT.
+ * Start push service — listen for alarm and device_status events from MQTT.
  * @param {import('pino').Logger} log
  */
 function start(log) {
@@ -41,27 +45,28 @@ function start(log) {
   );
 
   mqttSvc.on('alarm', handleAlarm);
+  mqttSvc.on('device_status', handleDeviceStatus);
 }
 
 /** Cleanup */
 function shutdown() {
   mqttSvc.off('alarm', handleAlarm);
+  mqttSvc.off('device_status', handleDeviceStatus);
   debounceMap.clear();
+  for (const timer of offlineTimers.values()) clearTimeout(timer);
+  offlineTimers.clear();
 }
 
-// ── Internal ───────────────────────────────────────────────
+// ── Alarm handling ────────────────────────────────────────
 
 /**
- * Handle alarm event from MQTT.
+ * Handle alarm event from MQTT (both raise and clear).
  * @param {{ tenantSlug: string, deviceId: string, alarmCode: string, active: boolean, severity: string }} evt
  */
 async function handleAlarm(evt) {
   try {
-    // Only notify on alarm raise, not clear
-    if (!evt.active) return;
-
-    // Debounce: skip if same device+alarm notified recently
-    const debounceKey = `${evt.deviceId}:${evt.alarmCode}`;
+    // Debounce: include active flag in key so raise and clear don't cancel each other
+    const debounceKey = `${evt.deviceId}:${evt.alarmCode}:${evt.active}`;
     const now = Date.now();
     const lastNotified = debounceMap.get(debounceKey) || 0;
     if (now - lastNotified < DEBOUNCE_MS) {
@@ -77,40 +82,176 @@ async function handleAlarm(evt) {
       return;
     }
 
-    // Get active subscribers for this tenant
-    const subscribers = await getSubscribers(tenantId, evt.deviceId);
-    if (subscribers.length === 0) {
-      logger.debug({ tenantId, deviceId: evt.deviceId }, 'No subscribers — skipping push');
-      return;
-    }
-
     // Build notification payload
     const payload = buildPayload(evt);
 
-    // Dispatch to each subscriber
-    for (const sub of subscribers) {
-      const handler = channels.get(sub.channel);
-      if (!handler) continue;
-
+    // For alarm clears: compute duration from alarm record
+    if (!evt.active) {
       try {
-        await handler.send(sub.address, payload);
-        await logDelivery(tenantId, sub.id, sub.channel, evt.deviceId, evt.alarmCode, 'sent');
-        logger.info({ channel: sub.channel, deviceId: evt.deviceId, alarmCode: evt.alarmCode }, 'Push sent');
+        const { rows } = await db.query(
+          `SELECT triggered_at, cleared_at FROM alarms
+           WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3
+             AND active = false AND cleared_at IS NOT NULL
+           ORDER BY cleared_at DESC LIMIT 1`,
+          [tenantId, evt.deviceId, evt.alarmCode]
+        );
+        if (rows.length && rows[0].triggered_at) {
+          const cleared = rows[0].cleared_at ? new Date(rows[0].cleared_at) : new Date();
+          payload.duration = cleared.getTime() - new Date(rows[0].triggered_at).getTime();
+        }
       } catch (err) {
-        await logDelivery(tenantId, sub.id, sub.channel, evt.deviceId, evt.alarmCode, 'failed', err.message);
-        logger.error({ err, channel: sub.channel, subscriberId: sub.id }, 'Push send failed');
+        logger.warn({ err, deviceId: evt.deviceId }, 'Failed to compute alarm duration');
       }
     }
+
+    // Resolve device name for enrichment
+    const { rows: devRows } = await db.query(
+      'SELECT id, name FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+      [tenantId, evt.deviceId]
+    );
+    const deviceUuid = devRows.length ? devRows[0].id : null;
+    payload.deviceName = devRows.length ? devRows[0].name : null;
+
+    // Path 1: Legacy notification_subscribers (alarm RAISE only — backward compat)
+    if (evt.active) {
+      const linkedTgIds = await getLinkedTelegramIds(tenantId);
+      const subscribers = await getSubscribers(tenantId, evt.deviceId, deviceUuid);
+
+      for (const sub of subscribers) {
+        // Skip telegram subscribers that have a linked user account (avoid duplicates)
+        if (sub.channel === 'telegram' && linkedTgIds.has(sub.address)) continue;
+
+        const handler = channels.get(sub.channel);
+        if (!handler) continue;
+
+        try {
+          await handler.send(sub.address, payload);
+          await logDelivery(tenantId, sub.id, sub.channel, evt.deviceId, evt.alarmCode, 'sent');
+          logger.info({ channel: sub.channel, deviceId: evt.deviceId, alarmCode: evt.alarmCode }, 'Push sent');
+        } catch (err) {
+          await logDelivery(tenantId, sub.id, sub.channel, evt.deviceId, evt.alarmCode, 'failed', err.message);
+          logger.error({ err, channel: sub.channel, subscriberId: sub.id }, 'Push send failed');
+        }
+      }
+    }
+
+    // Path 2: User-based Telegram notifications (both raise and clear)
+    await dispatchToLinkedUsers(tenantId, evt.deviceId, deviceUuid, payload);
+
   } catch (err) {
     logger.error({ err, evt }, 'Push handleAlarm error');
   }
 }
 
+// ── Device offline handling ───────────────────────────────
+
 /**
- * Resolve tenant slug to UUID.
- * @param {string} slug
- * @returns {Promise<string|null>}
+ * Handle device_status event — schedule offline notification with delay.
+ * @param {{ tenantSlug: string, deviceId: string, online: boolean, lastSeen: string }} evt
  */
+function handleDeviceStatus(evt) {
+  if (evt.online) {
+    // Device came back online: cancel pending offline notification
+    const timer = offlineTimers.get(evt.deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      offlineTimers.delete(evt.deviceId);
+      logger.debug({ deviceId: evt.deviceId }, 'Cancelled pending offline notification');
+    }
+    return;
+  }
+
+  // Device went offline: schedule delayed notification
+  if (offlineTimers.has(evt.deviceId)) return; // already scheduled
+
+  const timer = setTimeout(async () => {
+    offlineTimers.delete(evt.deviceId);
+    try {
+      const tenantId = await resolveTenantId(evt.tenantSlug);
+      if (!tenantId) return;
+
+      // Resolve device info
+      const { rows } = await db.query(
+        'SELECT id, name FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+        [tenantId, evt.deviceId]
+      );
+      const deviceUuid = rows.length ? rows[0].id : null;
+
+      const payload = {
+        type:       'device_offline',
+        deviceId:   evt.deviceId,
+        deviceName: rows.length ? rows[0].name : null,
+        lastSeen:   evt.lastSeen,
+        timestamp:  new Date().toISOString(),
+      };
+
+      await dispatchToLinkedUsers(tenantId, evt.deviceId, deviceUuid, payload);
+      logger.info({ deviceId: evt.deviceId }, 'Offline notification sent');
+    } catch (err) {
+      logger.error({ err, deviceId: evt.deviceId }, 'Offline notification failed');
+    }
+  }, OFFLINE_NOTIFY_DELAY_MS);
+
+  offlineTimers.set(evt.deviceId, timer);
+  logger.debug({ deviceId: evt.deviceId }, 'Scheduled offline notification (2 min delay)');
+}
+
+// ── User-based dispatch ───────────────────────────────────
+
+/**
+ * Send notification to all users who have telegram_id linked
+ * and have access to this device (admin=all, others=user_devices).
+ */
+async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
+  const handler = channels.get('telegram');
+  if (!handler) return;
+
+  // Get all linked users in this tenant
+  const { rows: users } = await db.query(
+    `SELECT u.id, u.role, u.telegram_id
+     FROM users u
+     WHERE u.tenant_id = $1 AND u.telegram_id IS NOT NULL AND u.active = true`,
+    [tenantId]
+  );
+
+  for (const user of users) {
+    // RBAC: admin/superadmin see all; others need user_devices entry
+    if (user.role !== 'admin' && user.role !== 'superadmin') {
+      if (!deviceUuid) continue;
+      const { rows: access } = await db.query(
+        'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2 LIMIT 1',
+        [user.id, deviceUuid]
+      );
+      if (!access.length) continue;
+    }
+
+    try {
+      await handler.send(String(user.telegram_id), payload);
+      logger.info({
+        channel: 'telegram', userId: user.id,
+        deviceId, active: payload.active,
+        type: payload.type || 'alarm',
+      }, 'User push sent');
+    } catch (err) {
+      logger.error({ err, userId: user.id, telegram_id: user.telegram_id }, 'User push send failed');
+    }
+  }
+}
+
+/**
+ * Get Set of telegram_ids for linked users in tenant (for duplicate prevention).
+ */
+async function getLinkedTelegramIds(tenantId) {
+  const { rows } = await db.query(
+    `SELECT telegram_id FROM users
+     WHERE tenant_id = $1 AND telegram_id IS NOT NULL AND active = true`,
+    [tenantId]
+  );
+  return new Set(rows.map(r => String(r.telegram_id)));
+}
+
+// ── Shared helpers ────────────────────────────────────────
+
 async function resolveTenantId(slug) {
   const { rows } = await db.query(
     'SELECT id FROM tenants WHERE slug = $1 AND active = true',
@@ -120,20 +261,9 @@ async function resolveTenantId(slug) {
 }
 
 /**
- * Get active subscribers for a tenant, optionally filtered by device.
- * @param {string} tenantId
- * @param {string} deviceId  mqtt_device_id
- * @returns {Promise<Array>}
+ * Get active notification_subscribers for a tenant, filtered by device.
  */
-async function getSubscribers(tenantId, deviceId) {
-  // Get device UUID for device_filter matching
-  const devResult = await db.query(
-    'SELECT id FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
-    [tenantId, deviceId]
-  );
-  const deviceUuid = devResult.rows.length ? devResult.rows[0].id : null;
-
-  // Fetch all active subscribers for this tenant
+async function getSubscribers(tenantId, deviceId, deviceUuid) {
   const { rows } = await db.query(
     `SELECT id, channel, address, label, device_filter
      FROM notification_subscribers
@@ -141,22 +271,14 @@ async function getSubscribers(tenantId, deviceId) {
     [tenantId]
   );
 
-  // Filter: if subscriber has device_filter set, check if device is in the list
   return rows.filter(sub => {
     if (!sub.device_filter || sub.device_filter.length === 0) return true;
     return deviceUuid && sub.device_filter.includes(deviceUuid);
   });
 }
 
-/**
- * Build notification payload from alarm event.
- * @param {{ tenantSlug: string, deviceId: string, alarmCode: string, active: boolean, severity: string }} evt
- * @returns {object}
- */
 function buildPayload(evt) {
-  // Try to get live state for context (temperature etc.)
   const state = mqttSvc.getDeviceState(evt.deviceId) || {};
-  const meta  = mqttSvc.getDeviceMeta(evt.deviceId) || {};
 
   return {
     deviceId:    evt.deviceId,
@@ -165,14 +287,11 @@ function buildPayload(evt) {
     active:      evt.active,
     airTemp:     state['equipment.air_temp'],
     evapTemp:    state['equipment.evap_temp'],
-    deviceName:  null,  // will be enriched per-channel from DB if needed
+    deviceName:  null,  // enriched later from DB
     timestamp:   new Date().toISOString(),
   };
 }
 
-/**
- * Log notification delivery attempt.
- */
 async function logDelivery(tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage) {
   try {
     await db.query(
@@ -181,16 +300,12 @@ async function logDelivery(tenantId, subscriberId, channel, deviceId, alarmCode,
       [tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage || null]
     );
   } catch (err) {
-    // Don't let logging failures cascade
     if (logger) logger.error({ err }, 'Failed to log notification delivery');
   }
 }
 
 /**
  * Send a test notification to a specific subscriber.
- * @param {string} tenantId
- * @param {string} subscriberId
- * @returns {Promise<{status: string, error?: string}>}
  */
 async function testSend(tenantId, subscriberId) {
   const { rows } = await db.query(

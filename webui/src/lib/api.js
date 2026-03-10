@@ -575,6 +575,20 @@ export function removeUserTenant(userId, tenantId) {
   });
 }
 
+// ── Telegram linking ─────────────────────────────────────
+
+export function generateTelegramLink(userId) {
+  return request(`/users/${userId}/telegram-link`, { method: 'POST' });
+}
+
+export function generateMyTelegramLink() {
+  return request('/users/me/telegram-link', { method: 'POST' });
+}
+
+export function unlinkMyTelegram() {
+  return request('/users/me/telegram-link', { method: 'DELETE' });
+}
+
 // ── Tenants (superadmin) ─────────────────────────────────
 
 export function getTenants() {

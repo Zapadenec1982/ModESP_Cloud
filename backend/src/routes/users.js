@@ -1,9 +1,10 @@
 'use strict';
 
-const { Router } = require('express');
-const { z }      = require('zod');
-const db         = require('../services/db');
-const authSvc    = require('../services/auth');
+const { Router }  = require('express');
+const { z }       = require('zod');
+const crypto      = require('crypto');
+const db          = require('../services/db');
+const authSvc     = require('../services/auth');
 
 const router = Router();
 
@@ -43,7 +44,7 @@ router.get('/', async (req, res) => {
       // Superadmin sees ALL users cross-tenant with tenant memberships
       ({ rows } = await db.query(
         `SELECT u.id, u.email, u.role, u.active, u.created_at, u.last_login,
-                u.tenant_id, t.name AS tenant_name, t.slug AS tenant_slug
+                u.tenant_id, u.telegram_id, t.name AS tenant_name, t.slug AS tenant_slug
          FROM users u
          JOIN tenants t ON t.id = u.tenant_id
          ORDER BY t.name, u.created_at DESC`
@@ -64,7 +65,7 @@ router.get('/', async (req, res) => {
       }
     } else {
       ({ rows } = await db.query(
-        `SELECT id, email, role, active, created_at, last_login
+        `SELECT id, email, role, active, created_at, last_login, telegram_id
          FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`,
         [req.tenantId]
       ));
@@ -171,6 +172,42 @@ router.put('/me', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Update profile failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to update profile', status: 500 });
+  }
+});
+
+// ── POST /users/me/telegram-link — generate link code ────
+
+router.post('/me/telegram-link', async (req, res) => {
+  try {
+    const code = crypto.randomBytes(8).toString('hex');  // 16 hex chars
+    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 min TTL
+
+    await db.query(
+      `UPDATE users SET telegram_link_code = $1, telegram_link_expires = $2
+       WHERE id = $3 AND tenant_id = $4`,
+      [code, expires, req.user.id, req.tenantId]
+    );
+
+    res.json({ data: { link_code: code, expires_at: expires.toISOString() } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Generate telegram link failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to generate link', status: 500 });
+  }
+});
+
+// ── DELETE /users/me/telegram-link — unlink Telegram ─────
+
+router.delete('/me/telegram-link', async (req, res) => {
+  try {
+    await db.query(
+      `UPDATE users SET telegram_id = NULL, telegram_link_code = NULL, telegram_link_expires = NULL
+       WHERE id = $1 AND tenant_id = $2`,
+      [req.user.id, req.tenantId]
+    );
+    res.json({ data: { message: 'Telegram unlinked' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Unlink telegram failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to unlink', status: 500 });
   }
 });
 
@@ -370,6 +407,41 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Delete user failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to delete user', status: 500 });
+  }
+});
+
+// ── POST /users/:id/telegram-link — admin generates code for user ─
+
+router.post('/:id/telegram-link', async (req, res) => {
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+  try {
+    // Verify target user belongs to this tenant (or superadmin)
+    const checkQ = isSuperAdmin
+      ? 'SELECT id, email FROM users WHERE id = $1 AND active = true'
+      : 'SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2 AND active = true';
+    const checkParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
+    const { rows } = await db.query(checkQ, checkParams);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    }
+
+    const code = crypto.randomBytes(8).toString('hex');
+    const expires = new Date(Date.now() + 15 * 60 * 1000);
+
+    const updateQ = isSuperAdmin
+      ? `UPDATE users SET telegram_link_code = $1, telegram_link_expires = $2 WHERE id = $3`
+      : `UPDATE users SET telegram_link_code = $1, telegram_link_expires = $2 WHERE id = $3 AND tenant_id = $4`;
+    const updateParams = isSuperAdmin
+      ? [code, expires, req.params.id]
+      : [code, expires, req.params.id, req.tenantId];
+    await db.query(updateQ, updateParams);
+
+    res.json({ data: { link_code: code, expires_at: expires.toISOString(), email: rows[0].email } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Generate telegram link for user failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to generate link', status: 500 });
   }
 });
 

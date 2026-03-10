@@ -65,6 +65,8 @@ CREATE TABLE users (
   role         VARCHAR(16) NOT NULL DEFAULT 'viewer',
   push_token   VARCHAR(256),
   telegram_id  BIGINT,
+  telegram_link_code    VARCHAR(16),
+  telegram_link_expires TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login   TIMESTAMPTZ,
   active       BOOLEAN     NOT NULL DEFAULT true,
@@ -73,6 +75,8 @@ CREATE TABLE users (
 );
 
 CREATE INDEX idx_users_tenant ON users(tenant_id);
+CREATE INDEX idx_users_telegram_id ON users(telegram_id) WHERE telegram_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_users_telegram_link_code ON users(telegram_link_code) WHERE telegram_link_code IS NOT NULL;
 
 -- ============================================================
 -- User-Device access (many-to-many, per-device RBAC)

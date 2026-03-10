@@ -329,13 +329,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users + MQTT Auth Hardening — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users + MQTT Auth Hardening + Telegram Bot Redesign — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-011) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-012) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -357,6 +357,7 @@ git push origin main
 | VPS розгортання | ✅ Production: https://modesp.com.ua, MQTT TLS bidirectional, OTA E2E verified |
 | Tenant Management (Phase 8a) | ✅ superadmin role (migration 009), tenants CRUD API, device reassign, Tenants WebUI, PendingDevices tenant select |
 | Multi-Tenant Users (Phase 8b) | ✅ user_tenants M:N (migration 010), login tenant picker, switch-tenant, sidebar switcher, Users manage tenants |
+| Telegram Bot Redesign (Phase 8c) | ✅ user auth (link code), 7 commands, RBAC, alarm cleared/offline push, user-based dispatch, duplicate prevention, WebUI link modal |
 | MQTT Auth Hardening | ✅ go-auth bootstrap fallback (migration 011), ACL $2=4 fix, stuck device auto-reset, device lifecycle (soft-reset/hard-delete), QoS 1 commands |
 
 ---
@@ -396,3 +397,4 @@ git push origin main
 - 2026-03-09 — Multi-Tenant Users (Phase 8b): migration 010 (user_tenants M:N junction table), pendingToken helpers (auth service), multi-tenant login flow (login → select-tenant → issue JWT), switch-tenant endpoint, tenant membership CRUD (users routes), frontend tenant picker (Login.svelte), sidebar tenant switcher (Sidebar.svelte), Users manage tenants modal (add/remove chips), stores (currentTenant, availableTenants, hasMultipleTenants), i18n (uk+en).
 - 2026-03-10 — MQTT Auth Hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap singleton), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), stuck device auto-detection (120s grace → auto-reset to pending), device lifecycle (DELETE soft-reset active→pending, hard-delete pending, POST /devices/register), QoS 1 for _set_tenant/_set_mqtt_creds. Full E2E assign verified with emulator (SubAck: Success).
 - 2026-03-10 — Bugfixes: reset-to-pending ordering (MQTT commands before DB credential change), heartbeat empty payload guard, credential key standardization (user/pass), session restore await. go-auth auth_cache_seconds 300→5 (root cause of assign loop — cached old hash rejected new credentials for up to 5 minutes).
+- 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires + indexes), telegram.js full rewrite (user auth via link code, 7 commands, RBAC per-device access, multi-tenant context switch, 3 message types: alarm raised/cleared/offline), push.js rewrite (removed alarm-clear block, user-based dispatch via dispatchToLinkedUsers, device offline with 2min delay, duplicate prevention), users.js 3 new endpoints (POST/DELETE /me/telegram-link, POST /:id/telegram-link), api.js 3 functions, Users.svelte Telegram column + link modal, i18n uk+en.

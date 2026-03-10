@@ -250,10 +250,35 @@
 
 ---
 
+### Фаза 8c: Telegram Bot Redesign ✅
+**Ціль:** Повноцінний Telegram бот з авторизацією, RBAC, моніторинг + розширені сповіщення.
+
+#### Backend
+- [x] Міграція 012: `telegram_link_code`, `telegram_link_expires` колонки + indexes
+- [x] telegram.js: повне переписування — user auth через link code, 7 команд (/start, /devices, /status, /alarms, /tenant, /unlink, /help)
+- [x] telegram.js: RBAC — admin бачить все, viewer/technician тільки assigned devices (user_devices)
+- [x] telegram.js: multi-tenant support (/tenant switch + in-memory context)
+- [x] telegram.js: extended send() — 3 типи повідомлень (alarm raised, alarm cleared, device offline)
+- [x] push.js: alarm cleared notifications (видалено `if (!evt.active) return`)
+- [x] push.js: device offline push (2 хв delay, cancel on reconnect)
+- [x] push.js: user-based dispatch (dispatchToLinkedUsers + RBAC per user)
+- [x] push.js: duplicate prevention (linked users excluded from legacy subscribers)
+- [x] users.js: 3 нові endpoints (POST/DELETE /me/telegram-link, POST /:id/telegram-link)
+
+#### WebUI
+- [x] api.js: generateTelegramLink, generateMyTelegramLink, unlinkMyTelegram
+- [x] Users.svelte: Telegram column (linked badge / link button)
+- [x] Users.svelte: Telegram link modal (code + /start instructions)
+- [x] i18n: telegram keys (uk+en)
+
+**Результат:** Telegram бот з авторизацією, per-device доступом, сповіщеннями про аварії та їх зняття + офлайн пристрої.
+
+---
+
 ### Фаза 9a: Bulk Device Import
 **Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
 
-- [ ] Міграція 012: `import_batches` таблиця (трекінг імпортів)
+- [ ] Міграція 013: `import_batches` таблиця (трекінг імпортів)
 - [ ] `POST /api/devices/import` — CSV upload, per-row: знайти pending → assign + MQTT creds
 - [ ] `GET /api/devices/pending/export` — експорт pending списку в CSV (заповнити в Excel → re-upload)
 - [ ] `GET /api/devices/import/template` — порожній CSV шаблон з заголовками
@@ -271,7 +296,7 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 ### Фаза 9b: REST API + OpenAPI (ERP Integration)
 **Ціль:** Зовнішні системи (1C, SAP, CRM) можуть автоматично реєструвати пристрої, отримувати статус, підписуватись на події.
 
-- [ ] Міграція 013: `api_keys` таблиця, `api_rate_limits`
+- [ ] Міграція 014: `api_keys` таблиця, `api_rate_limits`
 - [ ] API key middleware (`X-API-Key` header, bcrypt hash, rate limiting)
 - [ ] `POST /api/ext/devices` — реєстрація пристроїв (single/batch)
 - [ ] `GET /api/ext/devices` — список пристроїв тенанту
@@ -336,3 +361,4 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 - 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap table), device lifecycle (soft-reset active→pending, hard-delete pending, POST /devices/register), stuck device auto-detection (120s grace → auto-reset), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), QoS 1 for _set_tenant/_set_mqtt_creds. Full assign flow E2E verified with emulator.
 - 2026-03-10 — Roadmap: додано Phase 9a (Bulk CSV Import) і Phase 9b (REST API + OpenAPI для ERP). Advanced Analytics перенесено в Phase 10.
 - 2026-03-10 — Bugfix session: reset-to-pending ordering (MQTT commands before DB change), heartbeat empty payload guard, credential key standardization (user/pass), go-auth cache fix (300s→5s — root cause of assign loop after credential rotation).
+- 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires), telegram.js full rewrite (user auth, 7 commands, RBAC, multi-tenant), push.js rewrite (alarm cleared, device offline with 2min delay, user-based dispatch, duplicate prevention), users.js 3 new endpoints, WebUI Telegram column + link modal, i18n (uk+en).

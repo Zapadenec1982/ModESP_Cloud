@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -226,6 +226,36 @@
     if (e.key === 'Escape') closeDevicesModal()
   }
 
+  // ── Telegram link modal ──
+  let showTelegramLink = false
+  let telegramLinkCode = ''
+  let telegramLinkUser = null
+
+  async function generateTgLink(user) {
+    try {
+      const result = await generateTelegramLink(user.id)
+      telegramLinkCode = result.link_code
+      telegramLinkUser = user
+      showTelegramLink = true
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  function closeTelegramModal() {
+    showTelegramLink = false
+    telegramLinkCode = ''
+    telegramLinkUser = null
+  }
+
+  function handleTelegramBackdropClick(e) {
+    if (e.target === e.currentTarget) closeTelegramModal()
+  }
+
+  function handleTelegramKey(e) {
+    if (e.key === 'Escape') closeTelegramModal()
+  }
+
   // ── Manage tenants modal (superadmin) ──
   let userTenants = []  // current memberships for modal user
 
@@ -320,6 +350,7 @@
         {/if}
         <span class="th th-role">{$t('users.col_role')}</span>
         <span class="th th-status">{$t('users.col_status')}</span>
+        <span class="th th-telegram">{$t('users.telegram')}</span>
         <span class="th th-created">{$t('users.col_created')}</span>
         <span class="th th-login">{$t('users.col_last_login')}</span>
         <span class="th th-actions">{$t('common.actions')}</span>
@@ -370,6 +401,15 @@
               {:else}
                 <StatusDot status="offline" size="sm" />
                 <span class="status-text">{$t('common.inactive')}</span>
+              {/if}
+            </div>
+
+            <!-- Telegram -->
+            <div class="cell cell-telegram">
+              {#if user.telegram_id}
+                <Badge variant="success" size="sm">{$t('users.telegram_linked')}</Badge>
+              {:else}
+                <button class="link-btn" on:click={() => generateTgLink(user)}>{$t('users.telegram_link')}</button>
               {/if}
             </div>
 
@@ -638,6 +678,38 @@
   </div>
 {/if}
 
+<!-- Telegram Link Modal -->
+{#if showTelegramLink}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleTelegramBackdropClick} on:keydown={handleTelegramKey} role="dialog" aria-modal="true" aria-labelledby="telegram-modal-title" tabindex="-1">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="telegram-modal-title">{$t('users.telegram_link_title')}</h3>
+          <span class="modal-subtitle">{telegramLinkUser?.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeTelegramModal} aria-label="Close dialog">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <span class="field-label">{$t('users.telegram_link_code')}</span>
+          <div class="telegram-code">{telegramLinkCode}</div>
+        </div>
+        <div class="telegram-instructions">
+          {$t('users.telegram_link_instructions')}
+          <code class="telegram-cmd">/start {telegramLinkCode}</code>
+        </div>
+        <p class="field-hint">{$t('users.telegram_link_expires')}</p>
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeTelegramModal}>{$t('common.close')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .users-page {
     display: flex;
@@ -686,6 +758,7 @@
   .th-tenant  { width: 160px; }
   .th-role    { width: 100px; }
   .th-status  { width: 90px; }
+  .th-telegram { width: 90px; }
   .th-created { width: 100px; }
   .th-login   { width: 100px; }
   .th-actions { width: 140px; text-align: right; }
@@ -734,6 +807,7 @@
   .cell-tenant  { width: 160px; }
   .cell-role    { width: 100px; }
   .cell-status  { width: 90px; }
+  .cell-telegram { width: 90px; }
   .cell-created { width: 100px; }
   .cell-login   { width: 100px; }
   .cell-actions { width: 140px; justify-content: flex-end; gap: var(--space-1); }
@@ -1084,6 +1158,39 @@
     align-items: center;
   }
 
+  /* Telegram link modal */
+  .telegram-code {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-xl);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    text-align: center;
+    color: var(--accent-blue);
+    user-select: all;
+  }
+
+  .telegram-instructions {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .telegram-cmd {
+    display: block;
+    margin-top: var(--space-2);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-sm);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    user-select: all;
+  }
+
   /* Mobile */
   @media (max-width: 768px) {
     .user-table-header {
@@ -1099,6 +1206,7 @@
     .cell-tenant { width: auto; }
     .cell-role { width: auto; }
     .cell-status { width: auto; }
+    .cell-telegram { width: auto; }
     .cell-created { display: none; }
     .cell-login { display: none; }
     .cell-actions { width: auto; margin-left: auto; }
