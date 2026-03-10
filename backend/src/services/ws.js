@@ -119,7 +119,8 @@ async function subscribe(ws, deviceId) {
   try {
     const params = [deviceId];
     let sql = 'SELECT d.id, d.last_state, d.tenant_id FROM devices d WHERE d.mqtt_device_id = $1';
-    if (AUTH_ENABLED && ws._user) {
+    // Superadmin sees all tenants — no tenant filter
+    if (AUTH_ENABLED && ws._user && ws._user.role !== 'superadmin') {
       sql += ' AND d.tenant_id = $2';
       params.push(ws._user.tenantId);
     }
@@ -132,8 +133,8 @@ async function subscribe(ws, deviceId) {
       dbState = rows[0].last_state;
     }
 
-    // Per-device access check for non-admin users
-    if (AUTH_ENABLED && ws._user && ws._user.role !== 'admin') {
+    // Per-device access check for non-admin/non-superadmin users
+    if (AUTH_ENABLED && ws._user && ws._user.role !== 'admin' && ws._user.role !== 'superadmin') {
       const access = await db.query(
         'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2',
         [ws._user.id, rows[0].id]
