@@ -362,6 +362,14 @@ export function deletePendingDevice(mqttId) {
   return request(`/devices/pending/${mqttId}`, { method: 'DELETE' });
 }
 
+export function deleteDevice(id) {
+  return request(`/devices/${id}`, { method: 'DELETE' });
+}
+
+export function resetDeviceToPending(id) {
+  return request(`/devices/${id}/reset-pending`, { method: 'POST' });
+}
+
 export function updateDevice(id, data) {
   return request(`/devices/${id}`, {
     method: 'PATCH',

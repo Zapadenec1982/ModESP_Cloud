@@ -148,6 +148,97 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
   }
 });
 
+// ── POST /api/devices/:id/reset-pending ──────────────────
+// Reset a stuck device back to pending status with bootstrap credentials.
+// Use when device was assigned but failed to save new MQTT credentials.
+router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isUuid = id.length > 8;
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+    // Look up device
+    let whereClause, params;
+    if (isSuperAdmin) {
+      whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+      params = [id];
+    } else {
+      whereClause = isUuid
+        ? 'id = $1 AND tenant_id = $2'
+        : 'mqtt_device_id = $1 AND tenant_id = $2';
+      params = [id, req.tenantId];
+    }
+
+    const { rows } = await db.query(
+      `SELECT id, mqtt_device_id, status FROM devices WHERE ${whereClause}`,
+      params
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Device ${id} not found`,
+        status: 404,
+      });
+    }
+
+    const deviceUuid = rows[0].id;
+    const deviceMqttId = rows[0].mqtt_device_id;
+
+    // Get bootstrap password hash
+    const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
+    if (!bootstrapKey) {
+      return res.status(503).json({
+        error: 'not_configured',
+        message: 'Bootstrap password not configured',
+        status: 503,
+      });
+    }
+
+    const bcrypt = require('bcrypt');
+    const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
+
+    // Reset device: move to SYSTEM tenant, set status to pending, restore bootstrap creds
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await client.query(
+        `UPDATE devices
+         SET tenant_id = $1, status = 'pending',
+             mqtt_username = $2, mqtt_password_hash = $3
+         WHERE id = $4`,
+        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, bootstrapHash, deviceUuid]
+      );
+
+      // Clear per-device RBAC
+      await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+
+    // Clean up in-memory state
+    mqttSvc.removeDeviceState(deviceMqttId);
+    await mqttSvc.refreshRegistries();
+
+    res.json({
+      data: {
+        device_id: deviceUuid,
+        mqtt_device_id: deviceMqttId,
+        status: 'pending',
+        reset: true,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── DELETE /api/devices/:id ───────────────────────────────
 // Delete a device (admin: own tenant, superadmin: any).
 router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {

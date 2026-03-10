@@ -197,6 +197,14 @@ export default {
     mqtt_rotated: 'MQTT пароль ротовано',
     mqtt_revoked: 'MQTT доступ відкликано',
     mqtt_generated: 'MQTT credentials згенеровано',
+    // Device delete / reset
+    delete_device: 'Видалити пристрій',
+    delete_confirm: 'Видалити пристрій {0}? Вся телеметрія, аварії та сервісні записи будуть втрачені. Пристрій зможе перереєструватись.',
+    device_deleted: 'Пристрій {0} видалено',
+    reset_pending: 'Скинути в очікування',
+    reset_pending_hint: 'Скинути пристрій у статус очікування з bootstrap credentials — використовуйте коли пристрій не зберіг нові MQTT налаштування',
+    reset_pending_confirm: 'Скинути пристрій {0} в очікування? Він повернеться у список очікуючих і його можна буде перепризначити.',
+    reset_pending_done: 'Пристрій {0} скинуто в очікування',
     param_category: {
       thermostat: 'Термостат',
       protection: 'Захист',

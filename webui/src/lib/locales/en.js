@@ -197,6 +197,14 @@ export default {
     mqtt_rotated: 'MQTT password rotated',
     mqtt_revoked: 'MQTT access revoked',
     mqtt_generated: 'MQTT credentials generated',
+    // Device delete / reset
+    delete_device: 'Delete Device',
+    delete_confirm: 'Permanently delete device {0}? All telemetry, alarms, and service records will be lost. The device can re-register afterwards.',
+    device_deleted: 'Device {0} deleted',
+    reset_pending: 'Reset to Pending',
+    reset_pending_hint: 'Reset device to pending status with bootstrap credentials — use when device failed to save new MQTT settings',
+    reset_pending_confirm: 'Reset device {0} to pending? It will move back to the pending list and can be re-assigned.',
+    reset_pending_done: 'Device {0} reset to pending',
     param_category: {
       thermostat: 'Thermostat',
       protection: 'Protection',

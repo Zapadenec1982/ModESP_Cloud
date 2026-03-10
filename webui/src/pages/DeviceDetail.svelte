@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice } from '../lib/api.js'
+  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
@@ -237,6 +237,44 @@
     }
   }
 
+  // ── Delete device ──
+  let showDeleteConfirm = false
+  let deleting = false
+
+  function openDeleteConfirm() { showDeleteConfirm = true }
+  function closeDeleteConfirm() { showDeleteConfirm = false }
+
+  async function confirmDeleteDevice() {
+    deleting = true
+    try {
+      await deleteDevice(resolvedId)
+      toast.success($t('device.device_deleted').replace('{0}', device.mqtt_device_id))
+      navigate('/')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      deleting = false
+      showDeleteConfirm = false
+    }
+  }
+
+  // ── Reset to pending ──
+  let resettingToPending = false
+
+  async function handleResetToPending() {
+    if (!confirm($t('device.reset_pending_confirm').replace('{0}', device.mqtt_device_id))) return
+    resettingToPending = true
+    try {
+      await resetDeviceToPending(resolvedId)
+      toast.success($t('device.reset_pending_done').replace('{0}', device.mqtt_device_id))
+      navigate('/#/pending')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      resettingToPending = false
+    }
+  }
+
   // ── Data loading ──
   async function loadDevice() {
     try {
@@ -403,6 +441,22 @@
               {$t('device.change_tenant')}
             </button>
           </div>
+        </div>
+      {/if}
+
+      <!-- Device management actions (admin only) -->
+      {#if $isAdmin}
+        <div class="device-danger-zone">
+          <button class="btn btn-sm btn-ghost btn-warning-text" on:click={handleResetToPending}
+            disabled={resettingToPending || device.status === 'pending'}
+            title={$t('device.reset_pending_hint')}>
+            <Icon name="rotate-ccw" size={12} />
+            {$t('device.reset_pending')}
+          </button>
+          <button class="btn btn-sm btn-ghost btn-danger-text" on:click={openDeleteConfirm}>
+            <Icon name="trash-2" size={12} />
+            {$t('device.delete_device')}
+          </button>
         </div>
       {/if}
     </div>
@@ -621,6 +675,38 @@
         <button class="btn btn-primary" on:click={saveServiceRecord}
           disabled={serviceSaving || !serviceForm.technician || !serviceForm.reason || !serviceForm.work_done}>
           {serviceSaving ? $t('common.loading') : $t('common.save')}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete Device Confirmation Modal -->
+{#if showDeleteConfirm}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={closeDeleteConfirm}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div class="modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h2>{$t('device.delete_device')}</h2>
+        <button class="modal-close" on:click={closeDeleteConfirm}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-warning">
+          <Icon name="alert-triangle" size={16} />
+          <span>{$t('device.delete_confirm').replace('{0}', device.mqtt_device_id)}</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" on:click={closeDeleteConfirm} disabled={deleting}>
+          {$t('common.cancel')}
+        </button>
+        <button class="btn btn-danger" on:click={confirmDeleteDevice} disabled={deleting}>
+          {deleting ? $t('common.loading') : $t('common.delete')}
         </button>
       </div>
     </div>
@@ -1120,8 +1206,49 @@
     color: var(--accent-red, #ef4444) !important;
   }
 
-  .btn-danger-text:hover {
+  .btn-danger-text:hover:not(:disabled) {
     background: rgba(239, 68, 68, 0.1);
+  }
+
+  .btn-warning-text {
+    color: var(--accent-amber, #f59e0b) !important;
+  }
+
+  .btn-warning-text:hover:not(:disabled) {
+    background: rgba(245, 158, 11, 0.1);
+  }
+
+  .btn-danger {
+    background: var(--accent-red, #ef4444);
+    color: #fff;
+    border-color: var(--accent-red, #ef4444);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .device-danger-zone {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-top: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  .delete-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--accent-red, #ef4444);
   }
 
   /* Credentials modal */
