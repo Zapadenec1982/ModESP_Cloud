@@ -8,7 +8,7 @@
   export let device
 
   $: online = device.online
-  $: temp = device.air_temp != null ? device.air_temp.toFixed(1) : '--'
+  $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: statusKey = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
   $: hasAlarm = !!device.alarm_active
   $: stripe = hasAlarm ? 'alarm' : statusKey

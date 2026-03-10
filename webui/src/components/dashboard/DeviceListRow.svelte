@@ -6,7 +6,7 @@
 
   export let device
 
-  $: temp = device.air_temp != null ? device.air_temp.toFixed(1) : '--'
+  $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: status = device.status === 'pending' ? 'pending'
     : device.online ? 'online' : 'offline'
   $: alarmStatus = device.alarm_active ? 'alarm'
