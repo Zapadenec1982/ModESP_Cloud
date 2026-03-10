@@ -13,27 +13,17 @@ const VALID_BUCKETS  = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 8
 
 /**
  * Resolve device mqtt_device_id + tenant_id from UUID or short ID.
- * Superadmin: no tenant filter; others: scoped to req.tenantId.
+ * Access control is already handled by checkDeviceAccess() middleware,
+ * so we look up by device identifier only — no tenant filter needed.
  * Returns { mqttId, tenantId } or null if not found.
  */
-async function resolveDevice(id, req) {
+async function resolveDevice(id) {
   const isUuid = id.length > 8;
-  const isSuperadmin = req.user && req.user.role === 'superadmin';
-
-  let where, params;
-  if (isSuperadmin) {
-    where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
-    params = [id];
-  } else {
-    where = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
-    params = [id, req.tenantId];
-  }
+  const where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
 
   const { rows } = await db.query(
     `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`,
-    params
+    [id]
   );
   return rows.length > 0
     ? { mqttId: rows[0].mqtt_device_id, tenantId: rows[0].tenant_id }
@@ -76,7 +66,7 @@ function parseChannels(query) {
 
 router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const device = await resolveDevice(req.params.id, req);
+    const device = await resolveDevice(req.params.id);
     if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
@@ -126,7 +116,7 @@ router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
 
 router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const device = await resolveDevice(req.params.id, req);
+    const device = await resolveDevice(req.params.id);
     if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
