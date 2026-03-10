@@ -129,9 +129,14 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Single tenant → direct login (zero UX change)
-    if (tenants.length === 1) {
-      const { accessToken, refreshToken } = await issueTokens(user, tenants[0].id);
+    // Single tenant or superadmin → direct login (no tenant picker)
+    // Superadmin always logs into their primary tenant (users.tenant_id)
+    // and sees all devices cross-tenant via API bypass.
+    if (tenants.length === 1 || user.role === 'superadmin') {
+      const loginTenant = user.role === 'superadmin'
+        ? tenants.find(t => t.id === user.tenant_id) || tenants[0]
+        : tenants[0];
+      const { accessToken, refreshToken } = await issueTokens(user, loginTenant.id);
       await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
       return res.json({
@@ -139,7 +144,7 @@ router.post('/login', async (req, res) => {
           access_token:  accessToken,
           refresh_token: refreshToken,
           user: { id: user.id, email: user.email, role: user.role },
-          tenant: tenants[0],
+          tenant: loginTenant,
           tenants,
         },
       });
