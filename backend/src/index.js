@@ -140,8 +140,8 @@ app.post('/api/devices/register', async (req, res) => {
 
     if (existing.rows.length > 0) {
       const dev = existing.rows[0];
-      if (dev.has_creds) {
-        // Already registered — return success (idempotent)
+      if (dev.has_creds && dev.status === 'pending') {
+        // Pending device already has bootstrap creds — idempotent
         return res.json({
           data: {
             device_id: mqttDeviceId,
@@ -151,6 +151,41 @@ app.post('/api/devices/register', async (req, res) => {
             prefix: `modesp/v1/pending/${mqttDeviceId}`,
             status: dev.status,
             created: false,
+          },
+        });
+      }
+      if (dev.has_creds && dev.status === 'active') {
+        // Active device re-registering → it lost its provisioned credentials.
+        // Reset to pending with bootstrap creds so it can reconnect.
+        await db.query(
+          `UPDATE devices
+              SET tenant_id = $1, status = 'pending',
+                  mqtt_username = $2, mqtt_password_hash = $3
+            WHERE mqtt_device_id = $4`,
+          [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId]
+        );
+        // Clean up RBAC assignments (device will be re-assigned by admin)
+        await db.query(
+          `DELETE FROM user_devices WHERE device_id = (
+             SELECT id FROM devices WHERE mqtt_device_id = $1
+           )`, [mqttDeviceId]
+        );
+        mqttSvc.removeDeviceState(mqttDeviceId);
+        await mqttSvc.refreshRegistries();
+
+        logger.info({ device_id: mqttDeviceId },
+          'Active device re-registered — reset to pending with bootstrap creds');
+
+        return res.json({
+          data: {
+            device_id: mqttDeviceId,
+            username,
+            broker: process.env.MQTT_PUBLIC_HOST || 'modesp.com.ua',
+            port: 8883,
+            prefix: `modesp/v1/pending/${mqttDeviceId}`,
+            status: 'pending',
+            created: false,
+            reset: true,
           },
         });
       }
