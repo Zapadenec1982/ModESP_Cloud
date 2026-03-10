@@ -329,13 +329,13 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users + MQTT Auth Hardening — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
 | Документація | ✅ Готово |
 | Firmware changes (ModESP_v4) | ✅ Реалізовано і протестовано |
-| PostgreSQL схема | ✅ schema.sql + migrations (001-010) |
+| PostgreSQL схема | ✅ schema.sql + migrations (001-011) |
 | Node.js backend (Phase 1) | ✅ db.js, mqtt.js, index.js |
 | Unit tests | ✅ 20/20 pass |
 | REST API (Phase 2) | ✅ devices, telemetry, alarms, commands |
@@ -357,6 +357,7 @@ git push origin main
 | VPS розгортання | ✅ Production: https://modesp.com.ua, MQTT TLS bidirectional, OTA E2E verified |
 | Tenant Management (Phase 8a) | ✅ superadmin role (migration 009), tenants CRUD API, device reassign, Tenants WebUI, PendingDevices tenant select |
 | Multi-Tenant Users (Phase 8b) | ✅ user_tenants M:N (migration 010), login tenant picker, switch-tenant, sidebar switcher, Users manage tenants |
+| MQTT Auth Hardening | ✅ go-auth bootstrap fallback (migration 011), ACL $2=4 fix, stuck device auto-reset, device lifecycle (soft-reset/hard-delete), QoS 1 commands |
 
 ---
 
@@ -393,3 +394,4 @@ git push origin main
 - 2026-03-09 — HTTPS: Nginx конфіг оновлено з реальним доменом modesp.com.ua, WebUI dist symlink, auto-renewal hook тепер перезавантажує і Mosquitto і Nginx.
 - 2026-03-09 — Tenant Management (Phase 8a): superadmin role (migration 009), tenants CRUD API (routes/tenants.js), device reassign endpoint (POST /devices/:id/reassign), Tenants WebUI page, isSuperAdmin store, DeviceDetail "Change Tenant" modal, PendingDevices tenant dropdown for superadmin, seed-admin --role flag, i18n (uk+en).
 - 2026-03-09 — Multi-Tenant Users (Phase 8b): migration 010 (user_tenants M:N junction table), pendingToken helpers (auth service), multi-tenant login flow (login → select-tenant → issue JWT), switch-tenant endpoint, tenant membership CRUD (users routes), frontend tenant picker (Login.svelte), sidebar tenant switcher (Sidebar.svelte), Users manage tenants modal (add/remove chips), stores (currentTenant, availableTenants, hasMultipleTenants), i18n (uk+en).
+- 2026-03-10 — MQTT Auth Hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap singleton), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), stuck device auto-detection (120s grace → auto-reset to pending), device lifecycle (DELETE soft-reset active→pending, hard-delete pending, POST /devices/register), QoS 1 for _set_tenant/_set_mqtt_creds. Full E2E assign verified with emulator (SubAck: Success).

@@ -85,6 +85,10 @@
 - [x] REST API: generate/rotate/revoke MQTT credentials per device
 - [x] WebUI: credentials feedback on assign, MQTT auth status on DeviceDetail
 - [x] provision-mqtt-creds.js: migration script for existing devices
+- [x] go-auth bootstrap fallback: deleted/stuck devices reconnect via shared bootstrap password (migration 011)
+- [x] ACL fix: handle MOSQ_ACL_SUBSCRIBE ($2=4) in aclquery — devices can subscribe to cmd/+ topics
+- [x] Stuck device auto-detection: backend resets devices publishing to wrong tenant after 120s grace
+- [x] Device lifecycle: DELETE soft-reset (active→pending) + hard-delete (pending), POST /devices/register
 
 **Результат:** Мультитенантна система з ізольованим доступом і zero-touch provisioning.
 
@@ -295,3 +299,4 @@
 - 2026-03-09 — Phase 4 completion: Dynamic MQTT Auth — mosquitto-go-auth + PostgreSQL (migration 008, mqtt-auth.js service, REST API for credentials lifecycle, bootstrap provisioning in mqtt.js, mosquitto.conf rewrite with per_listener_settings + SQL ACL, provision-mqtt-creds.js migration script, WebUI credentials feedback on assign + MQTT auth status on DeviceDetail, i18n uk+en).
 - 2026-03-09 — Phase 8a: Tenant Management — superadmin role (migration 009), tenants CRUD API, device reassign endpoint, Tenants WebUI page, DeviceDetail "Change Tenant" modal, PendingDevices tenant select for superadmin, isSuperAdmin store, seed-admin --role flag, i18n (uk+en).
 - 2026-03-09 — Phase 8b: Multi-Tenant User Memberships — migration 010 (user_tenants M:N), pendingToken flow, login/select-tenant/switch-tenant endpoints, tenant membership CRUD, frontend tenant picker on login, sidebar tenant switcher, Users manage tenants modal, i18n (uk+en).
+- 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap table), device lifecycle (soft-reset active→pending, hard-delete pending, POST /devices/register), stuck device auto-detection (120s grace → auto-reset), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), QoS 1 for _set_tenant/_set_mqtt_creds. Full assign flow E2E verified with emulator.
