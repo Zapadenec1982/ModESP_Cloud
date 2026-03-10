@@ -431,6 +431,9 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
     // Record assign timestamp for stuck-device detection grace period
     mqttSvc.recordAssign(mqttId);
 
+    // Clear retained MQTT messages from pending topics (prevents false auto-reset on restart)
+    mqttSvc.clearPendingRetained(mqttId);
+
     await mqttSvc.refreshRegistries();
 
     res.json({

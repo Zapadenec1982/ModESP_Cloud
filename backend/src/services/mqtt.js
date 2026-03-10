@@ -70,6 +70,8 @@ let client = null;
 let logger = null;
 let timers = [];
 let connected = false;
+let startupTime = 0;
+const STARTUP_GRACE_MS = 120_000; // 2 min — ignore stuck detection while receiving retained messages
 
 // ── Public API ────────────────────────────────────────────
 
@@ -79,6 +81,7 @@ let connected = false;
  */
 async function start(log) {
   logger = log;
+  startupTime = Date.now();
 
   // Pre-hash bootstrap password at startup (one-time cost)
   const bootstrapPass = process.env.MQTT_BOOTSTRAP_PASSWORD;
@@ -543,6 +546,9 @@ function checkStuckDevice(tenantSlug, deviceId) {
   if (tenantSlug !== 'pending') return;
   if (resettingDevices.has(deviceId)) return; // already resetting
 
+  // Skip during startup — retained messages from old topics trigger false positives
+  if (Date.now() - startupTime < STARTUP_GRACE_MS) return;
+
   const regEntry = deviceRegistry.get(deviceId);
   if (!regEntry) return; // unknown → ensureDevice will handle
 
@@ -985,6 +991,30 @@ function removeDeviceState(deviceId) {
   deviceRegistry.delete(deviceId);
 }
 
+/**
+ * Clear retained MQTT messages from old pending topics for a device.
+ * Prevents stuck device detection false positives on backend restart.
+ * MQTT spec: publish empty payload with retain=true to clear retained message.
+ */
+function clearPendingRetained(deviceId) {
+  if (!client || !connected) return;
+  const prefix = `modesp/v1/pending/${deviceId}`;
+
+  // Clear status and heartbeat retained messages
+  client.publish(`${prefix}/status`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/heartbeat`, '', { retain: true, qos: 0 });
+
+  // Clear common retained state keys (protection keys are published with retain=true)
+  for (const key of ALARM_KEYS) {
+    client.publish(`${prefix}/state/${key}`, '', { retain: true, qos: 0 });
+  }
+  client.publish(`${prefix}/state/protection.alarm_active`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.alarm_code`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.compressor_blocked`, '', { retain: true, qos: 0 });
+
+  logger.info({ deviceId }, 'Cleared retained pending MQTT messages');
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 /** Return pre-computed bootstrap password hash (or null if not configured) */
@@ -995,7 +1025,7 @@ module.exports = {
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
-  getBootstrapHash, recordAssign,
+  getBootstrapHash, recordAssign, clearPendingRetained,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),
