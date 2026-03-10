@@ -428,8 +428,8 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
     try {
       // 1. Send credentials first (firmware saves but does NOT reconnect)
       mqttSvc.sendJsonCommand('pending', mqttId, '_set_mqtt_creds', {
-        username: newUsername,
-        password: newPassword,
+        user: newUsername,
+        pass: newPassword,
       });
       sentCreds = true;
     } catch (err) {
@@ -606,8 +606,8 @@ router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(
     try {
       const routingSlug = await resolveRoutingSlug(device.mqtt_device_id, req.tenantId);
       mqttSvc.sendJsonCommand(routingSlug, device.mqtt_device_id, '_set_mqtt_creds', {
-        username: creds.username,
-        password: creds.password,
+        user: creds.username,
+        pass: creds.password,
       });
       sent = true;
     } catch (err) {
@@ -1066,8 +1066,8 @@ router.post('/:id/reassign', async (req, res, next) => {
       // Send credentials + tenant via MQTT using OLD slug (device still connected there)
       const routingSlug = mqttSvc.getDeviceRoutingSlug(mqttId, oldSlug);
       mqttSvc.sendJsonCommand(routingSlug, mqttId, '_set_mqtt_creds', {
-        username: creds.username,
-        password: creds.password,
+        user: creds.username,
+        pass: creds.password,
       });
       // QoS 1 for reliability — critical configuration command
       mqttSvc.sendCommand(routingSlug, mqttId, '_set_tenant', newSlug, { qos: 1 });

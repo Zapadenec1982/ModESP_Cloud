@@ -392,6 +392,9 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
     state._tenantSlug = tenantSlug;
   }
 
+  // Guard: skip empty/non-JSON payloads (e.g. truncated messages during disconnect)
+  if (!rawPayload || rawPayload.length < 2 || rawPayload[0] !== '{') return;
+
   try {
     const hb = JSON.parse(rawPayload);
     // Only update firmware_version in DB when it changes (dedup ~167 writes/sec at 5000 devices)

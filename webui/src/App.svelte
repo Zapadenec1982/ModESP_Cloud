@@ -77,7 +77,9 @@
     }
     booting = false
     connect()
-    refreshCounts()
+    // Small delay ensures access token is fully set in memory after restoreSession()
+    // before firing API requests (prevents spurious 401 on first request)
+    await refreshCounts()
 
     // Update alarm count on alarm events
     unsubAlarm = on('alarm', () => refreshCounts())
