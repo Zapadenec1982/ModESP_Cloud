@@ -527,6 +527,9 @@ function recordAssign(deviceId) {
   recentAssigns.set(deviceId, Date.now());
 }
 
+/** Guard: devices currently being auto-reset (prevents concurrent reset floods) */
+const resettingDevices = new Set();
+
 /**
  * Detect devices stuck in "pending" namespace after a failed assign.
  * If deviceRegistry says device is active in a non-SYSTEM tenant,
@@ -534,6 +537,7 @@ function recordAssign(deviceId) {
  */
 function checkStuckDevice(tenantSlug, deviceId) {
   if (tenantSlug !== 'pending') return;
+  if (resettingDevices.has(deviceId)) return; // already resetting
 
   const regEntry = deviceRegistry.get(deviceId);
   if (!regEntry) return; // unknown → ensureDevice will handle
@@ -548,9 +552,14 @@ function checkStuckDevice(tenantSlug, deviceId) {
       'Stuck device detected: active in DB but publishing as pending — auto-resetting'
     );
 
-    autoResetToPending(deviceId).catch(err => {
-      logger.error({ err, deviceId }, 'Failed to auto-reset stuck device');
-    });
+    resettingDevices.add(deviceId);
+    autoResetToPending(deviceId)
+      .catch(err => {
+        logger.error({ err, deviceId }, 'Failed to auto-reset stuck device');
+      })
+      .finally(() => {
+        resettingDevices.delete(deviceId);
+      });
   }
 }
 
