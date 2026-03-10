@@ -85,6 +85,130 @@ app.get('/api/debug/state/:deviceId', (req, res) => {
   });
 });
 
+// ── Device self-registration (no JWT, requires bootstrap key) ───────
+// Devices call this before connecting to MQTT (port 8883 with go-auth).
+// Creates a pending device in DB with bootstrap credentials so go-auth
+// can authenticate the device. Admin then assigns tenant via WebUI.
+const bcrypt = require('bcrypt');
+let _bootstrapHash = null; // lazy-computed, cached
+
+app.post('/api/devices/register', async (req, res) => {
+  const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
+  if (!bootstrapKey) {
+    return res.status(503).json({
+      error: 'not_configured',
+      message: 'Bootstrap registration not configured',
+      status: 503,
+    });
+  }
+
+  // Validate bootstrap key (header or body)
+  const providedKey = req.headers['x-bootstrap-key'] || req.body?.bootstrap_key;
+  if (!providedKey || providedKey !== bootstrapKey) {
+    return res.status(401).json({
+      error: 'unauthorized',
+      message: 'Invalid bootstrap key',
+      status: 401,
+    });
+  }
+
+  const { device_id } = req.body || {};
+  if (!device_id || !/^[A-Fa-f0-9]{6,12}$/.test(device_id)) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: 'device_id is required (6-12 hex chars, e.g. "A4CF12")',
+      status: 400,
+    });
+  }
+
+  const mqttDeviceId = device_id.toUpperCase();
+  const username = `device_${mqttDeviceId}`;
+
+  try {
+    // Lazy-compute bootstrap hash (once, cached for process lifetime)
+    if (!_bootstrapHash) {
+      _bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
+    }
+
+    // Check if device already exists
+    const existing = await db.query(
+      `SELECT mqtt_device_id, mqtt_username,
+              (mqtt_password_hash IS NOT NULL) AS has_creds, status
+       FROM devices WHERE mqtt_device_id = $1`,
+      [mqttDeviceId]
+    );
+
+    if (existing.rows.length > 0) {
+      const dev = existing.rows[0];
+      if (dev.has_creds) {
+        // Already registered — return success (idempotent)
+        return res.json({
+          data: {
+            device_id: mqttDeviceId,
+            username: dev.mqtt_username,
+            broker: process.env.MQTT_PUBLIC_HOST || 'modesp.com.ua',
+            port: 8883,
+            prefix: `modesp/v1/pending/${mqttDeviceId}`,
+            status: dev.status,
+            created: false,
+          },
+        });
+      }
+      // Exists but no credentials — set bootstrap creds below
+    } else {
+      // Create new pending device in SYSTEM tenant
+      await db.query(
+        `INSERT INTO devices (tenant_id, mqtt_device_id, status, online)
+         VALUES ($1, $2, 'pending', false)`,
+        [db.SYSTEM_TENANT_ID, mqttDeviceId]
+      );
+    }
+
+    // Set bootstrap credentials
+    await db.query(
+      `UPDATE devices SET mqtt_username = $1, mqtt_password_hash = $2
+       WHERE mqtt_device_id = $3`,
+      [username, _bootstrapHash, mqttDeviceId]
+    );
+
+    // Refresh in-memory registries so MQTT service recognizes the device
+    await mqttSvc.refreshRegistries();
+
+    const tenantSlug = existing.rows.length > 0 && existing.rows[0].status === 'active'
+      ? undefined  // active device keeps its tenant prefix
+      : 'pending';
+
+    res.status(201).json({
+      data: {
+        device_id: mqttDeviceId,
+        username,
+        broker: process.env.MQTT_PUBLIC_HOST || 'modesp.com.ua',
+        port: 8883,
+        prefix: `modesp/v1/${tenantSlug || 'pending'}/${mqttDeviceId}`,
+        status: 'pending',
+        created: true,
+      },
+    });
+
+    logger.info({ device_id: mqttDeviceId }, 'Device self-registered');
+  } catch (err) {
+    // Handle duplicate key race condition
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'conflict',
+        message: `Device ${mqttDeviceId} registration in progress`,
+        status: 409,
+      });
+    }
+    logger.error({ err, device_id: mqttDeviceId }, 'Device registration failed');
+    res.status(500).json({
+      error: 'internal_error',
+      message: 'Registration failed',
+      status: 500,
+    });
+  }
+});
+
 // ── Firmware binary download (no auth — ESP32 downloads directly) ───
 const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
   || path.join(__dirname, '../firmware');
