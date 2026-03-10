@@ -139,8 +139,9 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
     // Delete the device itself
     await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
 
-    // Clean up in-memory state
+    // Clean up in-memory state + refresh registries immediately
     mqttSvc.removeDeviceState(deviceMqttId);
+    await mqttSvc.refreshRegistries();
 
     res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
   } catch (err) {
@@ -241,6 +242,8 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 
 // ── DELETE /api/devices/:id ───────────────────────────────
 // Delete a device (admin: own tenant, superadmin: any).
+// Active/disabled devices → soft reset to pending (keeps go-auth credentials).
+// Pending devices → hard delete (device can reconnect via go-auth bootstrap fallback).
 router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -259,7 +262,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     }
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id FROM devices WHERE ${whereClause}`,
+      `SELECT id, mqtt_device_id, status FROM devices WHERE ${whereClause}`,
       params
     );
 
@@ -273,18 +276,51 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
 
     const deviceUuid = rows[0].id;
     const deviceMqttId = rows[0].mqtt_device_id;
+    const deviceStatus = rows[0].status;
 
-    // Delete related records
+    // Clear all history data regardless of status
     await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
     await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
 
-    mqttSvc.removeDeviceState(deviceMqttId);
+    if (deviceStatus === 'pending') {
+      // Pending → hard delete (go-auth bootstrap fallback will let device reconnect)
+      await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+      mqttSvc.removeDeviceState(deviceMqttId);
+      await mqttSvc.refreshRegistries();
 
-    res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
+      res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
+    } else {
+      // Active/disabled → soft reset to pending with bootstrap credentials
+      const bootstrapHash = mqttSvc.getBootstrapHash();
+      if (!bootstrapHash) {
+        // Fallback: hard delete if bootstrap not configured
+        await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+        mqttSvc.removeDeviceState(deviceMqttId);
+        await mqttSvc.refreshRegistries();
+        return res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
+      }
+
+      await db.query(
+        `UPDATE devices
+         SET tenant_id = $1, status = 'pending',
+             mqtt_username = $2, mqtt_password_hash = $3,
+             name = NULL, location = NULL, serial_number = NULL,
+             model = NULL, comment = NULL, manufactured_at = NULL,
+             firmware_version = NULL, last_state = NULL, online = false
+         WHERE id = $4`,
+        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, bootstrapHash, deviceUuid]
+      );
+
+      mqttSvc.removeDeviceState(deviceMqttId);
+      await mqttSvc.refreshRegistries();
+
+      res.json({
+        data: { reset: true, deleted_history: true, mqtt_device_id: deviceMqttId, new_status: 'pending' },
+      });
+    }
   } catch (err) {
     next(err);
   }
@@ -346,6 +382,9 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
     // Generate unique MQTT credentials (replaces bootstrap password)
     const creds = await mqttAuth.provisionDevice(targetTenantId, mqttId);
 
+    // Record assign timestamp for stuck-device detection grace period
+    mqttSvc.recordAssign(mqttId);
+
     // Send credentials + tenant via MQTT (zero-touch provisioning)
     let sentCreds = false;
     try {
@@ -359,12 +398,17 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
       // MQTT unavailable — admin will see credentials in response for manual entry
     }
 
+    let sentTenant = false;
     try {
       // 2. Send tenant (firmware saves + reconnects with new credentials)
-      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug);
+      // QoS 1 for reliability — this is a critical configuration command
+      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+      sentTenant = true;
     } catch (err) {
       // MQTT might be disconnected — device will get the command on reconnect
     }
+
+    await mqttSvc.refreshRegistries();
 
     res.json({
       data: {
@@ -372,6 +416,7 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
         mqtt_device_id: mqttId,
         tenant_id: targetTenantId,
         status: 'active',
+        tenant_slug: tenantSlug,
         mqtt_credentials: {
           username: creds.username,
           password: creds.password,
@@ -379,6 +424,7 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
           mqtt_port: 8883,
           sent_via_mqtt: sentCreds,
         },
+        mqtt_commands_sent: sentCreds && sentTenant,
       },
     });
   } catch (err) {
@@ -960,6 +1006,9 @@ router.post('/:id/reassign', async (req, res, next) => {
       client.release();
     }
 
+    // Record assign timestamp for stuck-device detection grace period
+    mqttSvc.recordAssign(mqttId);
+
     // Rotate MQTT credentials for new tenant (outside transaction — best-effort)
     let creds = null;
     let mqttSent = false;
@@ -967,11 +1016,13 @@ router.post('/:id/reassign', async (req, res, next) => {
       creds = await mqttAuth.provisionDevice(newTenantId, mqttId);
 
       // Send credentials + tenant via MQTT using OLD slug (device still connected there)
-      mqttSvc.sendJsonCommand(oldSlug, mqttId, '_set_mqtt_creds', {
+      const routingSlug = mqttSvc.getDeviceRoutingSlug(mqttId, oldSlug);
+      mqttSvc.sendJsonCommand(routingSlug, mqttId, '_set_mqtt_creds', {
         username: creds.username,
         password: creds.password,
       });
-      mqttSvc.sendCommand(oldSlug, mqttId, '_set_tenant', newSlug);
+      // QoS 1 for reliability — critical configuration command
+      mqttSvc.sendCommand(routingSlug, mqttId, '_set_tenant', newSlug, { qos: 1 });
       mqttSent = true;
     } catch (mqttErr) {
       // MQTT send failed (device might be offline) — DB is already updated

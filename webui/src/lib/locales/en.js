@@ -199,8 +199,9 @@ export default {
     mqtt_generated: 'MQTT credentials generated',
     // Device delete / reset
     delete_device: 'Delete Device',
-    delete_confirm: 'Permanently delete device {0}? All telemetry, alarms, and service records will be lost. The device can re-register afterwards.',
+    delete_confirm: 'Delete device {0}? Active devices will be reset to pending (history cleared). Pending devices will be fully removed. The device can always reconnect.',
     device_deleted: 'Device {0} deleted',
+    device_reset_deleted: 'Device {0} reset to pending (history cleared)',
     reset_pending: 'Reset to Pending',
     reset_pending_hint: 'Reset device to pending status with bootstrap credentials — use when device failed to save new MQTT settings',
     reset_pending_confirm: 'Reset device {0} to pending? It will move back to the pending list and can be re-assigned.',

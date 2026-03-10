@@ -247,9 +247,14 @@
   async function confirmDeleteDevice() {
     deleting = true
     try {
-      await deleteDevice(resolvedId)
-      toast.success($t('device.device_deleted').replace('{0}', device.mqtt_device_id))
-      navigate('/')
+      const result = await deleteDevice(resolvedId)
+      if (result.reset) {
+        toast.success($t('device.device_reset_deleted').replace('{0}', device.mqtt_device_id))
+        navigate('/#/pending')
+      } else {
+        toast.success($t('device.device_deleted').replace('{0}', device.mqtt_device_id))
+        navigate('/')
+      }
     } catch (e) {
       toast.error(e.message)
     } finally {

@@ -62,6 +62,10 @@ const deviceRegistry = new Map();
  */
 const stateMap = new Map();
 
+/** @type {Map<string, number>}  mqttDeviceId → timestamp of last assign/reassign */
+const recentAssigns = new Map();
+const ASSIGN_GRACE_MS = 120_000; // 2 minutes grace before auto-reset
+
 let client = null;
 let logger = null;
 let timers = [];
@@ -82,6 +86,14 @@ async function start(log) {
     const bcrypt = require('bcrypt');
     BOOTSTRAP_HASH = await bcrypt.hash(bootstrapPass, 12);
     logger.info('MQTT bootstrap password hash computed');
+
+    // Populate mqtt_bootstrap table for go-auth fallback
+    await db.query(
+      `INSERT INTO mqtt_bootstrap (id, password_hash) VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET password_hash = $1`,
+      [BOOTSTRAP_HASH]
+    );
+    logger.info('mqtt_bootstrap table populated for go-auth fallback');
   } else {
     logger.warn('MQTT_BOOTSTRAP_PASSWORD not set — new devices will not get bootstrap credentials');
   }
@@ -285,6 +297,9 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
 
   // Ensure device exists in registry (auto-discovery for unknown devices)
   ensureDevice(tenantSlug, deviceId);
+
+  // Detect stuck devices (active in DB but publishing as pending)
+  checkStuckDevice(tenantSlug, deviceId);
 }
 
 function handleStatus(tenantSlug, deviceId, payload) {
@@ -332,6 +347,9 @@ function handleStatus(tenantSlug, deviceId, payload) {
 
   // Auto-discovery
   ensureDevice(tenantSlug, deviceId);
+
+  // Detect stuck devices (active in DB but publishing as pending)
+  checkStuckDevice(tenantSlug, deviceId);
 
   // Emit for WebSocket broadcast
   emitter.emit('device_status', {
@@ -500,6 +518,83 @@ function ensureDevice(tenantSlug, deviceId) {
   }).catch(err => {
     logger.error({ err, deviceId }, 'Failed to auto-discover device');
   });
+}
+
+// ── Stuck-device auto-detection ───────────────────────────
+
+/** Track recent assigns to avoid false-positive resets during assign window */
+function recordAssign(deviceId) {
+  recentAssigns.set(deviceId, Date.now());
+}
+
+/**
+ * Detect devices stuck in "pending" namespace after a failed assign.
+ * If deviceRegistry says device is active in a non-SYSTEM tenant,
+ * but it's still publishing as "pending", auto-reset to pending.
+ */
+function checkStuckDevice(tenantSlug, deviceId) {
+  if (tenantSlug !== 'pending') return;
+
+  const regEntry = deviceRegistry.get(deviceId);
+  if (!regEntry) return; // unknown → ensureDevice will handle
+
+  if (regEntry.status === 'active' && regEntry.tenantId !== db.SYSTEM_TENANT_ID) {
+    // Check grace period
+    const assignedAt = recentAssigns.get(deviceId);
+    if (assignedAt && (Date.now() - assignedAt < ASSIGN_GRACE_MS)) return;
+
+    logger.warn(
+      { deviceId, dbTenantId: regEntry.tenantId, mqttSlug: 'pending' },
+      'Stuck device detected: active in DB but publishing as pending — auto-resetting'
+    );
+
+    autoResetToPending(deviceId).catch(err => {
+      logger.error({ err, deviceId }, 'Failed to auto-reset stuck device');
+    });
+  }
+}
+
+/** Reset a stuck device back to pending with bootstrap credentials */
+async function autoResetToPending(deviceId) {
+  if (!BOOTSTRAP_HASH) {
+    logger.error({ deviceId }, 'Cannot auto-reset: no bootstrap hash');
+    return;
+  }
+
+  const username = `device_${deviceId}`;
+  const pgClient = await db.pool.connect();
+  try {
+    await pgClient.query('BEGIN');
+    await pgClient.query(
+      `UPDATE devices
+       SET tenant_id = $1, status = 'pending',
+           mqtt_username = $2, mqtt_password_hash = $3
+       WHERE mqtt_device_id = $4 AND status = 'active'`,
+      [db.SYSTEM_TENANT_ID, username, BOOTSTRAP_HASH, deviceId]
+    );
+    await pgClient.query(
+      `DELETE FROM user_devices WHERE device_id = (
+         SELECT id FROM devices WHERE mqtt_device_id = $1
+       )`, [deviceId]
+    );
+    await pgClient.query('COMMIT');
+  } catch (txErr) {
+    await pgClient.query('ROLLBACK');
+    throw txErr;
+  } finally {
+    pgClient.release();
+  }
+
+  // Update in-memory state
+  const state = stateMap.get(deviceId);
+  if (state) {
+    state._tenantId = db.SYSTEM_TENANT_ID;
+    state._tenantSlug = 'pending';
+    state._dirty = true;
+  }
+
+  await loadRegistries();
+  logger.info({ deviceId }, 'Auto-reset stuck device to pending');
 }
 
 // ── Tenant resolution ─────────────────────────────────────
@@ -679,6 +774,12 @@ async function offlineDetector() {
 
 async function refreshRegistries() {
   await loadRegistries();
+
+  // Clean stale recentAssigns entries
+  const now = Date.now();
+  for (const [id, ts] of recentAssigns) {
+    if (now - ts > ASSIGN_GRACE_MS * 2) recentAssigns.delete(id);
+  }
 }
 
 /**
@@ -809,11 +910,11 @@ function getDeviceRoutingSlug(deviceId, dbSlug) {
  * @param {string} key     e.g. "thermostat.setpoint"
  * @param {*}      value   scalar value
  */
-function sendCommand(tenantSlug, deviceId, key, value) {
+function sendCommand(tenantSlug, deviceId, key, value, { qos = 0 } = {}) {
   if (!client || !connected) throw new Error('MQTT not connected');
   const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/${key}`;
-  client.publish(topic, String(value), { qos: 0 });
-  logger.info({ tenantSlug, deviceId, key, value }, 'Command sent');
+  client.publish(topic, String(value), { qos });
+  logger.info({ tenantSlug, deviceId, key, value, qos }, 'Command sent');
 
   // Optimistic echo: update stateMap and broadcast via WebSocket
   // so the UI immediately reflects the sent value
@@ -881,11 +982,15 @@ function removeDeviceState(deviceId) {
 
 // ── Exports ───────────────────────────────────────────────
 
+/** Return pre-computed bootstrap password hash (or null if not configured) */
+function getBootstrapHash() { return BOOTSTRAP_HASH; }
+
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
+  getBootstrapHash, recordAssign,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),
