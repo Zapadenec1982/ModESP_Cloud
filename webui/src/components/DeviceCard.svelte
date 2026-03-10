@@ -44,8 +44,14 @@
       </div>
     </div>
 
-    {#if device.location || device.model || device.firmware_version}
+    {#if device.tenant_slug || device.location || device.model || device.firmware_version}
       <div class="card-footer">
+        {#if device.tenant_slug}
+          <span class="footer-item tenant-badge">
+            <Icon name="building" size={12} />
+            {device.tenant_name || device.tenant_slug}
+          </span>
+        {/if}
         {#if device.location}
           <span class="footer-item">
             <Icon name="map-pin" size={12} />
@@ -229,6 +235,11 @@
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  .tenant-badge {
+    color: var(--accent-cyan);
+    font-weight: 600;
   }
 
   .truncate {

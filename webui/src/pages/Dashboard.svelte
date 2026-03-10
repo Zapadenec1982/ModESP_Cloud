@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { getDevices } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { devices } from '../lib/stores.js'
+  import { devices, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
@@ -53,9 +53,12 @@
   function groupByLocation(list) {
     const map = new Map()
     for (const d of list) {
-      const loc = d.location || $t('dashboard.unassigned')
-      if (!map.has(loc)) map.set(loc, [])
-      map.get(loc).push(d)
+      // Superadmin: group by tenant name, then location
+      const group = $isSuperAdmin && d.tenant_name
+        ? `${d.tenant_name} — ${d.location || $t('dashboard.unassigned')}`
+        : (d.location || $t('dashboard.unassigned'))
+      if (!map.has(group)) map.set(group, [])
+      map.get(group).push(d)
     }
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }

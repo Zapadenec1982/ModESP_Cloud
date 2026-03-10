@@ -37,23 +37,40 @@ async function resolveRoutingSlug(mqttId, tenantId) {
 }
 
 // ── GET /api/devices ──────────────────────────────────────
-// List all devices for current tenant. Augments DB data with live state.
+// List devices. Superadmin sees ALL active devices cross-tenant.
+// Admin/tech/viewer see only their tenant (+ per-device RBAC for non-admin).
 router.get('/', filterDeviceAccess(), async (req, res, next) => {
   try {
-    let sql = `SELECT id, mqtt_device_id, name, location, serial_number,
-              model, comment, manufactured_at, firmware_version,
-              online, status, last_seen, created_at
-       FROM devices
-       WHERE tenant_id = $1`;
-    const params = [req.tenantId];
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+
+    let sql, params;
+    if (isSuperadmin) {
+      // Cross-tenant: all active devices with tenant info
+      sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
+                    d.model, d.comment, d.manufactured_at, d.firmware_version,
+                    d.online, d.status, d.last_seen, d.created_at,
+                    t.slug AS tenant_slug, t.name AS tenant_name
+             FROM devices d
+             LEFT JOIN tenants t ON t.id = d.tenant_id
+             WHERE d.status = 'active'`;
+      params = [];
+    } else {
+      sql = `SELECT id, mqtt_device_id, name, location, serial_number,
+                    model, comment, manufactured_at, firmware_version,
+                    online, status, last_seen, created_at
+             FROM devices
+             WHERE tenant_id = $1`;
+      params = [req.tenantId];
+    }
 
     // Per-device RBAC: non-admin users see only assigned devices
     if (req.deviceFilter) {
-      sql += ` AND id = ANY($2)`;
+      const idx = params.length + 1;
+      sql += ` AND ${isSuperadmin ? 'd.' : ''}id = ANY($${idx})`;
       params.push(req.deviceFilter);
     }
 
-    sql += ` ORDER BY name NULLS LAST, mqtt_device_id`;
+    sql += ` ORDER BY ${isSuperadmin ? 'd.' : ''}name NULLS LAST, ${isSuperadmin ? 'd.' : ''}mqtt_device_id`;
 
     const { rows } = await db.query(sql, params);
 

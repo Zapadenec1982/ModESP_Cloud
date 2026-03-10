@@ -7,24 +7,42 @@ const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-
 const router = Router();
 
 // ── GET /api/alarms ───────────────────────────────────────
-// List alarms for current tenant. Query: active (bool), from, to, limit, offset
+// List alarms. Superadmin sees cross-tenant; others see tenant-scoped.
 router.get('/', filterDeviceAccess(), async (req, res, next) => {
   try {
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
     const active = req.query.active;
     const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
-    let sql = `
-      SELECT a.id, a.device_id, a.alarm_code, a.severity,
-             a.active, a.value, a.limit_value,
-             a.triggered_at, a.cleared_at,
-             d.name AS device_name, d.mqtt_device_id
-      FROM alarms a
-      LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
-      WHERE a.tenant_id = $1
-    `;
-    const params = [req.tenantId];
-    let idx = 2;
+    let sql, params, idx;
+    if (isSuperadmin) {
+      sql = `
+        SELECT a.id, a.device_id, a.alarm_code, a.severity,
+               a.active, a.value, a.limit_value,
+               a.triggered_at, a.cleared_at,
+               d.name AS device_name, d.mqtt_device_id,
+               t.slug AS tenant_slug, t.name AS tenant_name
+        FROM alarms a
+        LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
+        LEFT JOIN tenants t ON t.id = a.tenant_id
+        WHERE 1=1
+      `;
+      params = [];
+      idx = 1;
+    } else {
+      sql = `
+        SELECT a.id, a.device_id, a.alarm_code, a.severity,
+               a.active, a.value, a.limit_value,
+               a.triggered_at, a.cleared_at,
+               d.name AS device_name, d.mqtt_device_id
+        FROM alarms a
+        LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
+        WHERE a.tenant_id = $1
+      `;
+      params = [req.tenantId];
+      idx = 2;
+    }
 
     // Per-device RBAC: filter by user's assigned devices
     if (req.deviceMqttIds) {

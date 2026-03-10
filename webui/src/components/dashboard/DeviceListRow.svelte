@@ -23,7 +23,9 @@
   </div>
   <div class="cell cell-name">
     <span class="name truncate">{device.name || device.mqtt_device_id}</span>
-    {#if device.location}
+    {#if device.tenant_name}
+      <span class="location truncate tenant-label">{device.tenant_name}{device.location ? ` — ${device.location}` : ''}</span>
+    {:else if device.location}
       <span class="location truncate">{device.location}</span>
     {/if}
   </div>
@@ -82,6 +84,10 @@
   .location {
     font-size: var(--text-xs);
     color: var(--text-muted);
+  }
+
+  .tenant-label {
+    color: var(--accent-cyan);
   }
 
   .cell-temp {
