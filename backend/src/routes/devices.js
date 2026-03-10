@@ -367,31 +367,20 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
     }
     const tenantSlug = tenantRes.rows[0].slug;
 
-    // Move device to the target tenant
-    await db.query(
-      `UPDATE devices
-       SET tenant_id = $1, status = 'active',
-           name = COALESCE($2, name), location = COALESCE($3, location),
-           model = COALESCE($4, model), serial_number = COALESCE($5, serial_number),
-           comment = COALESCE($6, comment)
-       WHERE id = $7`,
-      [targetTenantId, name || null, location || null, model || null,
-       serial_number || null, comment || null, rows[0].id]
-    );
+    // Generate unique MQTT credentials (password in plain text for MQTT delivery)
+    const newUsername = `device_${mqttId}`;
+    const newPassword = mqttAuth.generatePassword();
 
-    // Generate unique MQTT credentials (replaces bootstrap password)
-    const creds = await mqttAuth.provisionDevice(targetTenantId, mqttId);
-
-    // Record assign timestamp for stuck-device detection grace period
-    mqttSvc.recordAssign(mqttId);
-
-    // Send credentials + tenant via MQTT (zero-touch provisioning)
+    // Send credentials + tenant via MQTT BEFORE changing DB status.
+    // The device is still 'pending', so Mosquitto ACL allows delivery on
+    // the pending topic. If we changed status first, ACL would block delivery
+    // because the device would need the new tenant prefix.
     let sentCreds = false;
     try {
       // 1. Send credentials first (firmware saves but does NOT reconnect)
       mqttSvc.sendJsonCommand('pending', mqttId, '_set_mqtt_creds', {
-        username: creds.username,
-        password: creds.password,
+        username: newUsername,
+        password: newPassword,
       });
       sentCreds = true;
     } catch (err) {
@@ -408,6 +397,23 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
       // MQTT might be disconnected — device will get the command on reconnect
     }
 
+    // Now update DB: move device to tenant, set status active, store hashed password
+    const hash = await require('bcrypt').hash(newPassword, 12);
+    await db.query(
+      `UPDATE devices
+       SET tenant_id = $1, status = 'active',
+           mqtt_username = $2, mqtt_password_hash = $3,
+           name = COALESCE($4, name), location = COALESCE($5, location),
+           model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
+           comment = COALESCE($8, comment)
+       WHERE id = $9`,
+      [targetTenantId, newUsername, hash, name || null, location || null,
+       model || null, serial_number || null, comment || null, rows[0].id]
+    );
+
+    // Record assign timestamp for stuck-device detection grace period
+    mqttSvc.recordAssign(mqttId);
+
     await mqttSvc.refreshRegistries();
 
     res.json({
@@ -418,8 +424,8 @@ router.post('/pending/:mqttId/assign', async (req, res, next) => {
         status: 'active',
         tenant_slug: tenantSlug,
         mqtt_credentials: {
-          username: creds.username,
-          password: creds.password,
+          username: newUsername,
+          password: newPassword,
           mqtt_host: process.env.MQTT_PUBLIC_HOST || req.hostname,
           mqtt_port: 8883,
           sent_via_mqtt: sentCreds,
