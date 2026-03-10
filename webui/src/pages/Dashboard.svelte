@@ -29,8 +29,8 @@
   // Derived filtered list
   $: filtered = filterDevices($devices, search, filter)
 
-  // Group by location
-  $: groups = groupByLocation(filtered)
+  // Group by location (skip grouping for superadmin — tenant badge on cards is enough)
+  $: groups = $isSuperAdmin ? null : groupByLocation(filtered)
 
   function filterDevices(list, q, f) {
     let result = list
@@ -41,7 +41,8 @@
         (d.mqtt_device_id || '').toLowerCase().includes(lq) ||
         (d.location || '').toLowerCase().includes(lq) ||
         (d.model || '').toLowerCase().includes(lq) ||
-        (d.serial_number || '').toLowerCase().includes(lq)
+        (d.serial_number || '').toLowerCase().includes(lq) ||
+        (d.tenant_name || '').toLowerCase().includes(lq)
       )
     }
     if (f === 'online')  result = result.filter(d => d.online)
@@ -53,10 +54,7 @@
   function groupByLocation(list) {
     const map = new Map()
     for (const d of list) {
-      // Superadmin: group by tenant name, then location
-      const group = $isSuperAdmin && d.tenant_name
-        ? `${d.tenant_name} — ${d.location || $t('dashboard.unassigned')}`
-        : (d.location || $t('dashboard.unassigned'))
+      const group = d.location || $t('dashboard.unassigned')
       if (!map.has(group)) map.set(group, [])
       map.get(group).push(d)
     }
@@ -206,7 +204,7 @@
         <DeviceListRow {device} />
       {/each}
     </div>
-  {:else}
+  {:else if groups}
     {#each groups as [location, devicesInGroup]}
       {#if groups.length > 1}
         <div class="group-header">
@@ -221,6 +219,12 @@
         {/each}
       </div>
     {/each}
+  {:else}
+    <div class="grid">
+      {#each filtered as device (device.id)}
+        <DeviceCard {device} />
+      {/each}
+    </div>
   {/if}
 </div>
 

@@ -263,11 +263,13 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
     stateMap.set(deviceId, state);
   }
 
-  // Always sync observed tenant slug with actual MQTT topic
-  // (device may still publish as "pending" even though DB says "__system__")
+  // Always sync observed tenant slug + UUID with actual MQTT topic
+  // (device may still publish as "pending" even though DB says "cocacola")
   if (state._tenantSlug !== tenantSlug) {
     logger.info({ deviceId, from: state._tenantSlug, to: tenantSlug }, 'Tenant slug updated from MQTT');
     state._tenantSlug = tenantSlug;
+    const tenantInfo = resolveTenant(tenantSlug);
+    state._tenantId = tenantInfo.id;
   }
 
   // Detect alarm transitions BEFORE updating state
@@ -324,10 +326,12 @@ function handleStatus(tenantSlug, deviceId, payload) {
     state._dirty    = true;
   }
 
-  // Always sync observed tenant slug with actual MQTT topic
+  // Always sync observed tenant slug + UUID with actual MQTT topic
   if (state._tenantSlug !== tenantSlug) {
     logger.info({ deviceId, from: state._tenantSlug, to: tenantSlug }, 'Tenant slug updated from MQTT');
     state._tenantSlug = tenantSlug;
+    const resolved = resolveTenant(tenantSlug);
+    state._tenantId = resolved.id;
   }
 
   // Update DB immediately for status changes

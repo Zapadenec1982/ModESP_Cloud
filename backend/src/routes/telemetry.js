@@ -12,20 +12,32 @@ const VALID_BUCKETS  = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 8
 // ── Helpers ──────────────────────────────────────────────
 
 /**
- * Resolve device mqtt_device_id from UUID or short ID.
- * Returns null if not found.
+ * Resolve device mqtt_device_id + tenant_id from UUID or short ID.
+ * Superadmin: no tenant filter; others: scoped to req.tenantId.
+ * Returns { mqttId, tenantId } or null if not found.
  */
-async function resolveDeviceId(id, tenantId) {
+async function resolveDevice(id, req) {
   const isUuid = id.length > 8;
-  const where  = isUuid
-    ? 'id = $1 AND tenant_id = $2'
-    : 'mqtt_device_id = $1 AND tenant_id = $2';
+  const isSuperadmin = req.user && req.user.role === 'superadmin';
+
+  let where, params;
+  if (isSuperadmin) {
+    where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+    params = [id];
+  } else {
+    where = isUuid
+      ? 'id = $1 AND tenant_id = $2'
+      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    params = [id, req.tenantId];
+  }
 
   const { rows } = await db.query(
-    `SELECT mqtt_device_id FROM devices WHERE ${where}`,
-    [id, tenantId]
+    `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`,
+    params
   );
-  return rows.length > 0 ? rows[0].mqtt_device_id : null;
+  return rows.length > 0
+    ? { mqttId: rows[0].mqtt_device_id, tenantId: rows[0].tenant_id }
+    : null;
 }
 
 /**
@@ -64,8 +76,8 @@ function parseChannels(query) {
 
 router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const mqttId = await resolveDeviceId(req.params.id, req.tenantId);
-    if (!mqttId) {
+    const device = await resolveDevice(req.params.id, req);
+    if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
       });
@@ -88,7 +100,7 @@ router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
         AND time >= $3
         AND time < $4
     `;
-    const params = [req.tenantId, mqttId, range.from, range.to];
+    const params = [device.tenantId, device.mqttId, range.from, range.to];
 
     if (channels && channels.length > 0) {
       sql += ` AND channel = ANY($5)`;
@@ -114,8 +126,8 @@ router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
 
 router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const mqttId = await resolveDeviceId(req.params.id, req.tenantId);
-    if (!mqttId) {
+    const device = await resolveDevice(req.params.id, req);
+    if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
       });
@@ -157,7 +169,7 @@ router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) =
         AND time >= $3
         AND time < $4
     `;
-    const params = [req.tenantId, mqttId, range.from, range.to];
+    const params = [device.tenantId, device.mqttId, range.from, range.to];
 
     if (channels && channels.length > 0) {
       sql += ` AND channel = ANY($5)`;

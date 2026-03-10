@@ -120,15 +120,24 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
     const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
-    // Resolve mqtt_device_id
+    // Resolve mqtt_device_id — superadmin: cross-tenant; others: scoped
     const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+
+    let whereClause, devParams;
+    if (isSuperadmin) {
+      whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+      devParams = [id];
+    } else {
+      whereClause = isUuid
+        ? 'id = $1 AND tenant_id = $2'
+        : 'mqtt_device_id = $1 AND tenant_id = $2';
+      devParams = [id, req.tenantId];
+    }
 
     const devRes = await db.query(
-      `SELECT mqtt_device_id FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${whereClause}`,
+      devParams
     );
     if (devRes.rows.length === 0) {
       return res.status(404).json({
@@ -138,6 +147,7 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
       });
     }
     const mqttId = devRes.rows[0].mqtt_device_id;
+    const deviceTenantId = devRes.rows[0].tenant_id;
 
     let sql = `
       SELECT id, alarm_code, severity, active, value, limit_value,
@@ -145,7 +155,7 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
       FROM alarms
       WHERE tenant_id = $1 AND device_id = $2
     `;
-    const params = [req.tenantId, mqttId];
+    const params = [deviceTenantId, mqttId];
     let idx = 3;
 
     if (active === 'true') {
