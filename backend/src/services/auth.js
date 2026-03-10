@@ -65,7 +65,7 @@ function hashRefreshToken(token) {
  * @throws {jwt.JsonWebTokenError|jwt.TokenExpiredError}
  */
 function verifyAccessToken(token) {
-  return jwt.verify(token, process.env.JWT_SECRET);
+  return jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 }
 
 /**
@@ -89,7 +89,7 @@ function generatePendingToken(user) {
  * @throws {jwt.JsonWebTokenError|jwt.TokenExpiredError}
  */
 function verifyPendingToken(token) {
-  const payload = jwt.verify(token, process.env.JWT_SECRET);
+  const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   if (!payload.pending) throw new jwt.JsonWebTokenError('Not a pending token');
   return payload;
 }

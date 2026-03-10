@@ -13,17 +13,24 @@ const VALID_BUCKETS  = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 8
 
 /**
  * Resolve device mqtt_device_id + tenant_id from UUID or short ID.
- * Access control is already handled by checkDeviceAccess() middleware,
- * so we look up by device identifier only — no tenant filter needed.
+ * Enforces tenant isolation: non-superadmin users can only resolve
+ * devices within their own tenant.
  * Returns { mqttId, tenantId } or null if not found.
  */
-async function resolveDevice(id) {
+async function resolveDevice(id, tenantId, isSuperadmin) {
   const isUuid = id.length > 8;
-  const where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+  let where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+  const params = [id];
+
+  // Enforce tenant isolation (superadmin can access cross-tenant)
+  if (!isSuperadmin && tenantId) {
+    where += ' AND tenant_id = $2';
+    params.push(tenantId);
+  }
 
   const { rows } = await db.query(
     `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`,
-    [id]
+    params
   );
   return rows.length > 0
     ? { mqttId: rows[0].mqtt_device_id, tenantId: rows[0].tenant_id }
@@ -66,7 +73,8 @@ function parseChannels(query) {
 
 router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const device = await resolveDevice(req.params.id);
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
     if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
@@ -116,7 +124,8 @@ router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
 
 router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) => {
   try {
-    const device = await resolveDevice(req.params.id);
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
     if (!device) {
       return res.status(404).json({
         error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,

@@ -120,13 +120,19 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
     const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
-    // Resolve mqtt_device_id — access already checked by checkDeviceAccess()
+    // Resolve mqtt_device_id — enforce tenant isolation
     const isUuid = id.length > 8;
-    const where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    let where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+    const devParams = [id];
+    if (!isSuperadmin && req.tenantId) {
+      where += ' AND tenant_id = $2';
+      devParams.push(req.tenantId);
+    }
 
     const devRes = await db.query(
       `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`,
-      [id]
+      devParams
     );
     if (devRes.rows.length === 0) {
       return res.status(404).json({

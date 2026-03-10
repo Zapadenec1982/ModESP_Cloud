@@ -1,0 +1,17 @@
+# Claude Code local settings (may contain secrets in allow-list)
+.claude/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Logs
+*.log
+
+# Windows artifacts
+nul
+
+# Build output
+D*build_output.log

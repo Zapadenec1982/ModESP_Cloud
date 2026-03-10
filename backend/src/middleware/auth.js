@@ -20,6 +20,14 @@ function authenticate(req, res, next) {
   const token = header.slice(7);
   try {
     const payload = verifyAccessToken(token);
+    // Block pending tokens (tenant selection flow) from accessing API routes
+    if (payload.pending) {
+      return res.status(401).json({
+        error: 'unauthorized',
+        message: 'Tenant selection required',
+        status: 401,
+      });
+    }
     req.user = {
       id:       payload.sub,
       email:    payload.email,

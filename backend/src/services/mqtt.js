@@ -291,6 +291,12 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
     }
   }
 
+  // Reject internal metadata keys — prevent state injection and prototype pollution
+  if (key.startsWith('_') || key === '__proto__' || key === 'constructor') {
+    logger.warn({ deviceId, key }, 'Rejected dangerous state key');
+    return;
+  }
+
   // Update state
   state[key]       = value;
   state._lastSeen  = now;
@@ -499,8 +505,26 @@ async function flushEvents() {
 
 // ── Auto-discovery ────────────────────────────────────────
 
+/** Rate-limit new device discoveries to prevent MQTT flooding attacks */
+const discoveryCount = new Map(); // tenantSlug → { count, resetAt }
+const DISCOVERY_LIMIT = 20;       // new devices per tenant per minute
+const DISCOVERY_WINDOW_MS = 60000;
+
 function ensureDevice(tenantSlug, deviceId) {
   if (deviceRegistry.has(deviceId)) return;
+
+  // Rate-limit discoveries per tenant slug
+  const now = Date.now();
+  let entry = discoveryCount.get(tenantSlug);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + DISCOVERY_WINDOW_MS };
+    discoveryCount.set(tenantSlug, entry);
+  }
+  if (entry.count >= DISCOVERY_LIMIT) {
+    logger.warn({ tenantSlug, deviceId }, 'Auto-discovery rate limit exceeded — dropping');
+    return;
+  }
+  entry.count++;
 
   const tenantInfo = resolveTenant(tenantSlug);
   const status = tenantSlug === 'pending' ? 'pending' : 'active';
@@ -821,9 +845,10 @@ async function bootstrapStateMap() {
         _lastDbWrite: Date.now(),
       };
 
-      // Merge all state keys from DB
+      // Merge all state keys from DB (skip internal _ prefixed keys — defense-in-depth)
       if (row.last_state && typeof row.last_state === 'object') {
         for (const [k, v] of Object.entries(row.last_state)) {
+          if (k.startsWith('_')) continue;
           state[k] = v;
         }
       }

@@ -17,16 +17,34 @@ const otaSvc      = require('./services/ota');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize } = require('./middleware/auth');
 
+const { timingSafeEqual } = require('crypto');
+
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'info' : 'debug' });
+
+// ── Security guards ──────────────────────────────────────
+if (!AUTH_ENABLED && process.env.NODE_ENV === 'production') {
+  logger.fatal('AUTH_ENABLED=false is not allowed in production — exiting');
+  process.exit(1);
+}
+if (AUTH_ENABLED) {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret === 'change-me-to-a-random-string' || secret.length < 32) {
+    logger.fatal('JWT_SECRET must be set to a random string of at least 32 characters');
+    process.exit(1);
+  }
+}
 
 // ── Express ───────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
 
+// Trust proxy (Nginx sets X-Forwarded-For / X-Real-IP)
+app.set('trust proxy', 'loopback');
+
 // Body parsing
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 // CORS (dev: Vite on 5173, prod: same-origin via Nginx)
 const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
@@ -56,35 +74,6 @@ app.get('/api/meta', (_req, res) => {
   res.json(stateMeta);
 });
 
-// ── Debug: stateMap diagnostics (localhost only, no auth) ─────────
-app.get('/api/debug/state/:deviceId', (req, res) => {
-  // Only allow from localhost
-  const ip = req.ip || req.connection.remoteAddress;
-  if (ip !== '127.0.0.1' && ip !== '::1' && ip !== '::ffff:127.0.0.1') {
-    return res.status(403).json({ error: 'localhost only' });
-  }
-  const state = mqttSvc.getDeviceState(req.params.deviceId);
-  const meta  = mqttSvc.getDeviceMeta(req.params.deviceId);
-  if (!state) {
-    return res.json({ found: false, deviceId: req.params.deviceId });
-  }
-  // Separate internal keys from state keys
-  const stateKeys = {};
-  const internal = {};
-  for (const [k, v] of Object.entries(state)) {
-    if (k.startsWith('_')) internal[k] = v;
-    else stateKeys[k] = v;
-  }
-  res.json({
-    found: true,
-    deviceId: req.params.deviceId,
-    stateKeyCount: Object.keys(stateKeys).length,
-    online: meta ? meta.online : false,
-    internal,
-    state: stateKeys,
-  });
-});
-
 // ── Device self-registration (no JWT, requires bootstrap key) ───────
 // Devices call this before connecting to MQTT (port 8883 with go-auth).
 // Creates a pending device in DB with bootstrap credentials so go-auth
@@ -102,13 +91,18 @@ app.post('/api/devices/register', async (req, res) => {
     });
   }
 
-  // Validate bootstrap key (header or body)
+  // Validate bootstrap key (header or body) — timing-safe comparison
   const providedKey = req.headers['x-bootstrap-key'] || req.body?.bootstrap_key;
-  if (!providedKey || providedKey !== bootstrapKey) {
+  if (!providedKey) {
     return res.status(401).json({
-      error: 'unauthorized',
-      message: 'Invalid bootstrap key',
-      status: 401,
+      error: 'unauthorized', message: 'Invalid bootstrap key', status: 401,
+    });
+  }
+  const keyBuf = Buffer.from(bootstrapKey);
+  const providedBuf = Buffer.from(providedKey);
+  if (keyBuf.length !== providedBuf.length || !timingSafeEqual(keyBuf, providedBuf)) {
+    return res.status(401).json({
+      error: 'unauthorized', message: 'Invalid bootstrap key', status: 401,
     });
   }
 
@@ -247,7 +241,7 @@ app.post('/api/devices/register', async (req, res) => {
 // ── Firmware binary download (no auth — ESP32 downloads directly) ───
 const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
   || path.join(__dirname, '../firmware');
-app.use('/firmware', express.static(firmwareDir));
+app.use('/firmware', express.static(firmwareDir, { dotfiles: 'deny', index: false }));
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
