@@ -250,12 +250,46 @@
 
 ---
 
-### Фаза 9: Advanced Analytics (майбутнє)
+### Фаза 9a: Bulk Device Import
+**Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
+
+- [ ] Міграція 012: `import_batches` таблиця (трекінг імпортів)
+- [ ] `POST /api/devices/import` — CSV upload, per-row: знайти pending → assign + MQTT creds
+- [ ] `GET /api/devices/pending/export` — експорт pending списку в CSV (заповнити в Excel → re-upload)
+- [ ] `GET /api/devices/import/template` — порожній CSV шаблон з заголовками
+- [ ] npm: `csv-parse` для парсингу CSV
+- [ ] WebUI: `ImportModal.svelte` — drag-and-drop, preview, результат (assigned/skipped/errors)
+- [ ] WebUI: кнопка "Import CSV" на PendingDevices
+- [ ] i18n: import ключі (uk+en)
+
+CSV колонки: mqtt_device_id (обов'язковий), name, serial_number, location, model, comment — ті ж поля що при ручному assign.
+
+**Результат:** Адмін скачує pending список → заповнює метадані в Excel → завантажує назад → 500 пристроїв активовано за хвилину.
+
+---
+
+### Фаза 9b: REST API + OpenAPI (ERP Integration)
+**Ціль:** Зовнішні системи (1C, SAP, CRM) можуть автоматично реєструвати пристрої, отримувати статус, підписуватись на події.
+
+- [ ] Міграція 013: `api_keys` таблиця, `api_rate_limits`
+- [ ] API key middleware (`X-API-Key` header, bcrypt hash, rate limiting)
+- [ ] `POST /api/ext/devices` — реєстрація пристроїв (single/batch)
+- [ ] `GET /api/ext/devices` — список пристроїв тенанту
+- [ ] `GET /api/ext/devices/:id/status` — стан + алармі
+- [ ] `PATCH /api/ext/devices/:id` — оновлення метаданих
+- [ ] OpenAPI 3.0 spec (YAML) — Swagger UI для документації
+- [ ] WebUI: сторінка управління API ключами
+- [ ] Webhooks (опціонально): підписка на device_online/offline, alarm events
+
+**Результат:** 1С-розробник відкриває Swagger → бачить всі endpoints → пише інтеграцію.
+
+---
+
+### Фаза 10: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
 - [ ] Звіти для клієнтів (PDF, email)
-- [ ] API для інтеграції з ERP/CMMS системами
 
 ---
 
@@ -300,3 +334,4 @@
 - 2026-03-09 — Phase 8a: Tenant Management — superadmin role (migration 009), tenants CRUD API, device reassign endpoint, Tenants WebUI page, DeviceDetail "Change Tenant" modal, PendingDevices tenant select for superadmin, isSuperAdmin store, seed-admin --role flag, i18n (uk+en).
 - 2026-03-09 — Phase 8b: Multi-Tenant User Memberships — migration 010 (user_tenants M:N), pendingToken flow, login/select-tenant/switch-tenant endpoints, tenant membership CRUD, frontend tenant picker on login, sidebar tenant switcher, Users manage tenants modal, i18n (uk+en).
 - 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap table), device lifecycle (soft-reset active→pending, hard-delete pending, POST /devices/register), stuck device auto-detection (120s grace → auto-reset), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), QoS 1 for _set_tenant/_set_mqtt_creds. Full assign flow E2E verified with emulator.
+- 2026-03-10 — Roadmap: додано Phase 9a (Bulk CSV Import) і Phase 9b (REST API + OpenAPI для ERP). Advanced Analytics перенесено в Phase 10.
