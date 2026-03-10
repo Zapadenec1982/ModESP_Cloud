@@ -275,6 +275,9 @@ export default {
     creds_manual: 'MQTT unavailable. Enter manually:',
     creds_copy: 'Copy password',
     creds_copied: 'Password copied',
+    delete_device: 'Delete',
+    delete_confirm: 'Delete device {0}? It will be removed and can re-register.',
+    device_deleted: 'Device {0} deleted',
   },
 
   // ── Notifications ──

@@ -358,6 +358,10 @@ export function assignDevice(mqttId, { name, location, model, serial_number, com
   });
 }
 
+export function deletePendingDevice(mqttId) {
+  return request(`/devices/pending/${mqttId}`, { method: 'DELETE' });
+}
+
 export function updateDevice(id, data) {
   return request(`/devices/${id}`, {
     method: 'PATCH',

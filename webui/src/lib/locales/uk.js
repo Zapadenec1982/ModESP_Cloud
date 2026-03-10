@@ -275,6 +275,9 @@ export default {
     creds_manual: 'MQTT недоступний. Введіть вручну:',
     creds_copy: 'Копіювати пароль',
     creds_copied: 'Пароль скопійовано',
+    delete_device: 'Видалити',
+    delete_confirm: 'Видалити пристрій {0}? Його можна буде перереєструвати.',
+    device_deleted: 'Пристрій {0} видалено',
   },
 
   // ── Notifications ──

@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getPendingDevices, assignDevice, getTenants } from '../lib/api.js'
+  import { getPendingDevices, assignDevice, deletePendingDevice, getTenants } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
@@ -29,6 +29,10 @@
   // Tenants list for superadmin
   let tenantsList = []
   let tenantsLoaded = false
+
+  // Delete confirmation state
+  let deletingDevice = null
+  let deleting = false
 
   // Credentials result after assign
   let credsResult = null
@@ -121,6 +125,33 @@
     }
   }
 
+  function openDelete(dev) {
+    deletingDevice = dev
+  }
+
+  function closeDelete() {
+    deletingDevice = null
+  }
+
+  function handleDeleteKey(e) {
+    if (e.key === 'Escape') closeDelete()
+  }
+
+  async function confirmDelete() {
+    if (!deletingDevice) return
+    deleting = true
+    try {
+      await deletePendingDevice(deletingDevice.mqtt_device_id)
+      toast.success($t('pending.device_deleted', deletingDevice.mqtt_device_id))
+      deletingDevice = null
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      deleting = false
+    }
+  }
+
   onMount(load)
 </script>
 
@@ -166,6 +197,9 @@
           <div class="device-actions">
             <Button variant="primary" size="sm" on:click={() => openAssign(dev)}>
               {$t('pending.assign_to_tenant')}
+            </Button>
+            <Button variant="danger" size="sm" icon="trash-2" on:click={() => openDelete(dev)}>
+              {$t('pending.delete_device')}
             </Button>
           </div>
         </div>
@@ -288,6 +322,36 @@
   </div>
 {/if}
 
+<!-- Delete Confirmation Modal -->
+{#if deletingDevice}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={closeDelete} on:keydown={handleDeleteKey} role="dialog" aria-modal="true" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
+      <div class="modal-header">
+        <h3>{$t('pending.delete_device')}</h3>
+        <button class="close-btn" on:click={closeDelete} aria-label="Close">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-warning">
+          <Icon name="alert-triangle" size={16} />
+          <span>{$t('pending.delete_confirm', deletingDevice.mqtt_device_id)}</span>
+        </div>
+        <div class="assign-device-info">
+          <StatusDot status={deletingDevice.online ? 'online' : 'offline'} />
+          <span class="device-id">{deletingDevice.mqtt_device_id}</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <Button variant="secondary" on:click={closeDelete} disabled={deleting}>{$t('common.cancel')}</Button>
+        <Button variant="danger" on:click={confirmDelete} loading={deleting}>{$t('pending.delete_device')}</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .pending-page {
     display: flex;
@@ -353,7 +417,21 @@
   }
 
   .device-actions {
+    display: flex;
+    gap: var(--space-2);
     flex-shrink: 0;
+  }
+
+  .delete-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    color: var(--accent-red, #ef4444);
+    font-size: var(--text-sm);
   }
 
   /* Modal */

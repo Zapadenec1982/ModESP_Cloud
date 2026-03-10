@@ -869,13 +869,23 @@ function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
   }
 }
 
+/**
+ * Remove a device from in-memory stateMap and deviceRegistry.
+ * Called after device is deleted from DB.
+ * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
+ */
+function removeDeviceState(deviceId) {
+  stateMap.delete(deviceId);
+  deviceRegistry.delete(deviceId);
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 module.exports = {
   start, shutdown, isConnected,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
-  requestFullState, refreshRegistries, updateDeviceStateMap,
+  requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

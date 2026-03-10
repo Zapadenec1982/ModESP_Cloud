@@ -104,6 +104,101 @@ router.get('/pending', async (req, res, next) => {
   }
 });
 
+// ── DELETE /api/devices/pending/:mqttId ────────────────────
+// Delete a pending device from the system (any admin).
+// Allows re-registration of the same device_id.
+router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const { mqttId } = req.params;
+
+    // Find pending device in SYSTEM tenant
+    const { rows } = await db.query(
+      `SELECT id, mqtt_device_id FROM devices
+       WHERE mqtt_device_id = $1 AND tenant_id = $2 AND status = 'pending'`,
+      [mqttId, db.SYSTEM_TENANT_ID]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Pending device ${mqttId} not found`,
+        status: 404,
+      });
+    }
+
+    const deviceUuid = rows[0].id;
+    const deviceMqttId = rows[0].mqtt_device_id;
+
+    // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK)
+    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+    // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
+    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+    // Delete the device itself
+    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+
+    // Clean up in-memory state
+    mqttSvc.removeDeviceState(deviceMqttId);
+
+    res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /api/devices/:id ───────────────────────────────
+// Delete a device (admin: own tenant, superadmin: any).
+router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isUuid = id.length > 8;
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+    let whereClause, params;
+    if (isSuperAdmin) {
+      whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+      params = [id];
+    } else {
+      whereClause = isUuid
+        ? 'id = $1 AND tenant_id = $2'
+        : 'mqtt_device_id = $1 AND tenant_id = $2';
+      params = [id, req.tenantId];
+    }
+
+    const { rows } = await db.query(
+      `SELECT id, mqtt_device_id FROM devices WHERE ${whereClause}`,
+      params
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: `Device ${id} not found`,
+        status: 404,
+      });
+    }
+
+    const deviceUuid = rows[0].id;
+    const deviceMqttId = rows[0].mqtt_device_id;
+
+    // Delete related records
+    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+
+    mqttSvc.removeDeviceState(deviceMqttId);
+
+    res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── POST /api/devices/pending/:mqttId/assign ──────────────
 // Assign a pending device to the current tenant.
 // Body: { name?: string, location?: string }
