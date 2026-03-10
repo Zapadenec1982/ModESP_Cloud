@@ -188,7 +188,10 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     }
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, status FROM devices WHERE ${whereClause}`,
+      `SELECT d.id, d.mqtt_device_id, d.status, d.tenant_id, t.slug AS tenant_slug
+       FROM devices d
+       LEFT JOIN tenants t ON t.id = d.tenant_id
+       WHERE ${whereClause}`,
       params
     );
 
@@ -202,8 +205,9 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 
     const deviceUuid = rows[0].id;
     const deviceMqttId = rows[0].mqtt_device_id;
+    const oldTenantSlug = rows[0].tenant_slug || 'pending';
 
-    // Get bootstrap password hash
+    // Get bootstrap password
     const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
     if (!bootstrapKey) {
       return res.status(503).json({
@@ -213,10 +217,25 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
       });
     }
 
+    // ── Step 1: Send MQTT commands BEFORE changing DB credentials ──
+    // Device is still connected with old credentials on old tenant topic.
+    // Send bootstrap creds + pending tenant so it can reconnect after DB change.
+    let mqttSent = false;
+    try {
+      mqttSvc.sendJsonCommand(oldTenantSlug, deviceMqttId, '_set_mqtt_creds', {
+        user: `device_${deviceMqttId}`,
+        pass: bootstrapKey,
+      });
+      mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
+      mqttSent = true;
+    } catch (err) {
+      console.warn(`Failed to send MQTT reset commands for ${deviceMqttId} (device may be offline):`, err.message);
+    }
+
+    // ── Step 2: Update DB — move to SYSTEM tenant, restore bootstrap creds ──
     const bcrypt = require('bcrypt');
     const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
 
-    // Reset device: move to SYSTEM tenant, set status to pending, restore bootstrap creds
     await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices
@@ -240,6 +259,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
         mqtt_device_id: deviceMqttId,
         status: 'pending',
         reset: true,
+        mqtt_sent: mqttSent,
       },
     });
   } catch (err) {
@@ -301,8 +321,9 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
     } else {
       // Active/disabled → soft reset to pending with bootstrap credentials
+      const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
       const bootstrapHash = mqttSvc.getBootstrapHash();
-      if (!bootstrapHash) {
+      if (!bootstrapHash || !bootstrapKey) {
         // Fallback: hard delete if bootstrap not configured
         await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
         mqttSvc.removeDeviceState(deviceMqttId);
@@ -310,6 +331,27 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
         return res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
       }
 
+      // ── Step 1: Send MQTT commands BEFORE changing DB credentials ──
+      // Resolve tenant slug for MQTT topic routing
+      const tenantRes = await db.query(
+        `SELECT slug FROM tenants WHERE id = (SELECT tenant_id FROM devices WHERE id = $1)`,
+        [deviceUuid]
+      );
+      const oldTenantSlug = tenantRes.rows[0]?.slug || 'pending';
+
+      let mqttSent = false;
+      try {
+        mqttSvc.sendJsonCommand(oldTenantSlug, deviceMqttId, '_set_mqtt_creds', {
+          user: `device_${deviceMqttId}`,
+          pass: bootstrapKey,
+        });
+        mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
+        mqttSent = true;
+      } catch (err) {
+        console.warn(`Failed to send MQTT reset commands for ${deviceMqttId} (device may be offline):`, err.message);
+      }
+
+      // ── Step 2: Update DB ──
       await db.query(
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
@@ -325,7 +367,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       await mqttSvc.refreshRegistries();
 
       res.json({
-        data: { reset: true, deleted_history: true, mqtt_device_id: deviceMqttId, new_status: 'pending' },
+        data: { reset: true, deleted_history: true, mqtt_device_id: deviceMqttId, new_status: 'pending', mqtt_sent: mqttSent },
       });
     }
   } catch (err) {
