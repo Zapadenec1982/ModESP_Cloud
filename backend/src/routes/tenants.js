@@ -258,24 +258,14 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
     }
 
     // Soft delete: deactivate tenant + all its users
-    const client = await db.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    const result = await db.transaction(async (client) => {
       const { rows } = await client.query(
         `UPDATE tenants SET active = false WHERE id = $1 AND active = true
          RETURNING id, name, slug`,
         [id]
       );
 
-      if (rows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'not_found',
-          message: 'Tenant not found or already deactivated',
-          status: 404,
-        });
-      }
+      if (rows.length === 0) return null;
 
       // Deactivate all users of this tenant
       await client.query(
@@ -289,18 +279,21 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
         [id]
       );
 
-      await client.query('COMMIT');
+      return rows[0];
+    });
 
-      // Refresh MQTT tenant registry
-      await mqttSvc.refreshRegistries();
-
-      res.json({ data: { deleted: true, tenant: rows[0] } });
-    } catch (txErr) {
-      await client.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      client.release();
+    if (!result) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Tenant not found or already deactivated',
+        status: 404,
+      });
     }
+
+    // Refresh MQTT tenant registry
+    await mqttSvc.refreshRegistries();
+
+    res.json({ data: { deleted: true, tenant: result } });
   } catch (err) {
     next(err);
   }

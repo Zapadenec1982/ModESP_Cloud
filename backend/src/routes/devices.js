@@ -217,10 +217,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
 
     // Reset device: move to SYSTEM tenant, set status to pending, restore bootstrap creds
-    const client = await db.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
@@ -231,14 +228,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 
       // Clear per-device RBAC
       await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-
-      await client.query('COMMIT');
-    } catch (txErr) {
-      await client.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      client.release();
-    }
+    });
 
     // Clean up in-memory state
     mqttSvc.removeDeviceState(deviceMqttId);
@@ -1008,10 +998,7 @@ router.post('/:id/reassign', async (req, res, next) => {
     const mqttId = device.mqtt_device_id;
 
     // Transaction: move device + clear RBAC
-    const client = await db.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    await db.transaction(async (client) => {
       // Move device to new tenant
       await client.query(
         `UPDATE devices SET tenant_id = $1, status = 'active' WHERE id = $2`,
@@ -1023,14 +1010,7 @@ router.post('/:id/reassign', async (req, res, next) => {
         `DELETE FROM user_devices WHERE device_id = $1`,
         [device.id]
       );
-
-      await client.query('COMMIT');
-    } catch (txErr) {
-      await client.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      client.release();
-    }
+    });
 
     // Record assign timestamp for stuck-device detection grace period
     mqttSvc.recordAssign(mqttId);
