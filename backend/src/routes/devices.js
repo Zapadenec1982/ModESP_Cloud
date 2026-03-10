@@ -96,7 +96,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 
 // ── GET /api/devices/pending ──────────────────────────────
 // List pending (unassigned) devices — from SYSTEM tenant.
-router.get('/pending', async (req, res, next) => {
+router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { rows } = await db.query(
       `SELECT id, mqtt_device_id, firmware_version, online, last_seen, created_at
@@ -378,7 +378,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
 // ── POST /api/devices/pending/:mqttId/assign ──────────────
 // Assign a pending device to the current tenant.
 // Body: { name?: string, location?: string }
-router.post('/pending/:mqttId/assign', async (req, res, next) => {
+router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { mqttId } = req.params;
     const { name, location, model, serial_number, comment, tenant_id } = req.body || {};

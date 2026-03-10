@@ -318,8 +318,9 @@ async function main() {
   otaSvc.start(logger);
 
   // 6. HTTP
-  server.listen(PORT, '0.0.0.0', () => {
-    logger.info({ port: PORT, auth: AUTH_ENABLED }, 'HTTP server listening');
+  const HOST = process.env.HOST || '127.0.0.1';
+  server.listen(PORT, HOST, () => {
+    logger.info({ port: PORT, host: HOST, auth: AUTH_ENABLED }, 'HTTP server listening');
   });
 }
 
