@@ -24,7 +24,7 @@
     </div>
     <div class="vital-data">
       <span class="vital-value" class:alarm={state['protection.alarm_active']}>
-        {temp != null ? temp.toFixed(1) : '--'}
+        {temp != null ? Number(temp).toFixed(1) : '--'}
         <span class="vital-unit">°C</span>
       </span>
       <span class="vital-label">{$t('device.temperature')}</span>
@@ -38,7 +38,7 @@
     </div>
     <div class="vital-data">
       <span class="vital-value">
-        {setpoint != null ? setpoint.toFixed(1) : '--'}
+        {setpoint != null ? Number(setpoint).toFixed(1) : '--'}
         <span class="vital-unit">°C</span>
       </span>
       <span class="vital-label">{$t('device.setpoint')}</span>

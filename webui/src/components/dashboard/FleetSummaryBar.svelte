@@ -50,7 +50,7 @@
     </div>
     <div class="stat-content">
       <span class="stat-value temp-val">
-        {avgTemp != null ? avgTemp.toFixed(1) : '--'}
+        {avgTemp != null ? Number(avgTemp).toFixed(1) : '--'}
         <span class="stat-unit">°C</span>
       </span>
       <span class="stat-label">{$t('dashboard.fleet_avg_temp')}</span>

@@ -35,7 +35,7 @@ export function timeAgo(date) {
  */
 export function formatTemp(value, decimals = 1) {
   if (value == null || isNaN(value)) return { text: '—', colorClass: '' }
-  const text = `${value.toFixed(decimals)}\u00B0C`
+  const text = `${Number(value).toFixed(decimals)}\u00B0C`
   let colorClass = ''
   if (value <= -10) colorClass = 'temp-cold'
   else if (value <= 10) colorClass = 'temp-normal'

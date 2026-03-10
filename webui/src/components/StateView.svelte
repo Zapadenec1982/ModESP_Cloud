@@ -26,8 +26,9 @@
   function formatValue(val) {
     if (val === true)  return $t('device.on')
     if (val === false) return $t('device.off')
-    if (typeof val === 'number') {
-      return Number.isInteger(val) ? val.toString() : val.toFixed(2)
+    if (typeof val === 'number' || (typeof val === 'string' && val !== '' && !isNaN(val))) {
+      const num = Number(val)
+      return Number.isInteger(num) ? num.toString() : num.toFixed(2)
     }
     return String(val)
   }
