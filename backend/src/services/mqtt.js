@@ -562,28 +562,20 @@ async function autoResetToPending(deviceId) {
   }
 
   const username = `device_${deviceId}`;
-  const pgClient = await db.pool.connect();
-  try {
-    await pgClient.query('BEGIN');
-    await pgClient.query(
+  await db.transaction(async (client) => {
+    await client.query(
       `UPDATE devices
        SET tenant_id = $1, status = 'pending',
            mqtt_username = $2, mqtt_password_hash = $3
        WHERE mqtt_device_id = $4 AND status = 'active'`,
       [db.SYSTEM_TENANT_ID, username, BOOTSTRAP_HASH, deviceId]
     );
-    await pgClient.query(
+    await client.query(
       `DELETE FROM user_devices WHERE device_id = (
          SELECT id FROM devices WHERE mqtt_device_id = $1
        )`, [deviceId]
     );
-    await pgClient.query('COMMIT');
-  } catch (txErr) {
-    await pgClient.query('ROLLBACK');
-    throw txErr;
-  } finally {
-    pgClient.release();
-  }
+  });
 
   // Update in-memory state
   const state = stateMap.get(deviceId);
