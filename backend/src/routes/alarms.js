@@ -80,24 +80,41 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 // Alarm frequency statistics. Query: from, to
 router.get('/stats', filterDeviceAccess(), async (req, res, next) => {
   try {
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
     const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400 * 1000);
     const to   = req.query.to   ? new Date(req.query.to)   : new Date();
 
-    let sql = `
-      SELECT
-        alarm_code,
-        COUNT(*)::int AS count,
-        ROUND(AVG(EXTRACT(EPOCH FROM (COALESCE(cleared_at, NOW()) - triggered_at))))::int AS avg_duration_sec
-      FROM alarms
-      WHERE tenant_id = $1
-        AND triggered_at >= $2
-        AND triggered_at < $3
-    `;
-    const params = [req.tenantId, from, to];
+    let sql, params, nextIdx;
+    if (isSuperadmin) {
+      sql = `
+        SELECT
+          alarm_code,
+          COUNT(*)::int AS count,
+          ROUND(AVG(EXTRACT(EPOCH FROM (COALESCE(cleared_at, NOW()) - triggered_at))))::int AS avg_duration_sec
+        FROM alarms
+        WHERE triggered_at >= $1
+          AND triggered_at < $2
+      `;
+      params = [from, to];
+      nextIdx = 3;
+    } else {
+      sql = `
+        SELECT
+          alarm_code,
+          COUNT(*)::int AS count,
+          ROUND(AVG(EXTRACT(EPOCH FROM (COALESCE(cleared_at, NOW()) - triggered_at))))::int AS avg_duration_sec
+        FROM alarms
+        WHERE tenant_id = $1
+          AND triggered_at >= $2
+          AND triggered_at < $3
+      `;
+      params = [req.tenantId, from, to];
+      nextIdx = 4;
+    }
 
     // Per-device RBAC
     if (req.deviceMqttIds) {
-      sql += ` AND device_id = ANY($4)`;
+      sql += ` AND device_id = ANY($${nextIdx})`;
       params.push(req.deviceMqttIds);
     }
 

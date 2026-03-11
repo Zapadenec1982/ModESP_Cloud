@@ -36,6 +36,21 @@ async function resolveRoutingSlug(mqttId, tenantId) {
   return mqttSvc.getDeviceRoutingSlug(mqttId, dbSlug);
 }
 
+/**
+ * Build WHERE clause for device lookup with superadmin bypass.
+ * Superadmin: no tenant_id filter. Others: scoped to req.tenantId.
+ * Returns { where, params }.
+ */
+function buildDeviceWhere(id, req) {
+  const isUuid = id.length > 8;
+  const field = isUuid ? 'id' : 'mqtt_device_id';
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
+  if (isSuperAdmin) {
+    return { where: `${field} = $1`, params: [id] };
+  }
+  return { where: `${field} = $1 AND tenant_id = $2`, params: [id, req.tenantId] };
+}
+
 // ── GET /api/devices ──────────────────────────────────────
 // List devices. Superadmin sees ALL active devices cross-tenant.
 // Admin/tech/viewer see only their tenant (+ per-device RBAC for non-admin).
@@ -577,14 +592,11 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
 router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, status, mqtt_password_hash FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT id, mqtt_device_id, tenant_id, status, mqtt_password_hash FROM devices WHERE ${where}`,
+      params
     );
 
     if (rows.length === 0) {
@@ -596,15 +608,16 @@ router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(
     }
 
     const device = rows[0];
+    const deviceTenantId = device.tenant_id;
     const isRotation = device.mqtt_password_hash != null;
     const creds = isRotation
-      ? await mqttAuth.rotatePassword(req.tenantId, device.mqtt_device_id)
-      : await mqttAuth.provisionDevice(req.tenantId, device.mqtt_device_id);
+      ? await mqttAuth.rotatePassword(deviceTenantId, device.mqtt_device_id)
+      : await mqttAuth.provisionDevice(deviceTenantId, device.mqtt_device_id);
 
     // Try to send via MQTT (zero-touch)
     let sent = false;
     try {
-      const routingSlug = await resolveRoutingSlug(device.mqtt_device_id, req.tenantId);
+      const routingSlug = await resolveRoutingSlug(device.mqtt_device_id, deviceTenantId);
       mqttSvc.sendJsonCommand(routingSlug, device.mqtt_device_id, '_set_mqtt_creds', {
         user: creds.username,
         pass: creds.password,
@@ -633,14 +646,11 @@ router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(
 router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     const { rows } = await db.query(
-      `SELECT mqtt_device_id FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`,
+      params
     );
 
     if (rows.length === 0) {
@@ -651,7 +661,7 @@ router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAcces
       });
     }
 
-    await mqttAuth.revokeCredentials(req.tenantId, rows[0].mqtt_device_id);
+    await mqttAuth.revokeCredentials(rows[0].tenant_id, rows[0].mqtt_device_id);
 
     res.json({ data: { revoked: true } });
   } catch (err) {
@@ -684,26 +694,25 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
     }
 
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereField = isUuid ? 'id' : 'mqtt_device_id';
+    const { where, params: whereParams } = buildDeviceWhere(id, req);
 
     // Build dynamic SET clause
     const fields = parsed.data;
     const keys = Object.keys(fields);
     const setClauses = keys.map((k, i) => `${k} = $${i + 1}`);
-    const values = keys.map(k => fields[k] || null);
+    const values = keys.map(k => fields[k] ?? null);
 
-    // tenant_id param index
-    const tenantIdx = values.length + 1;
-    const idIdx = values.length + 2;
+    // Append WHERE params after SET values (shift indices)
+    const offset = values.length;
+    const shiftedWhere = where.replace(/\$(\d+)/g, (_, n) => `$${+n + offset}`);
 
     const { rows } = await db.query(
       `UPDATE devices
        SET ${setClauses.join(', ')}
-       WHERE ${whereField} = $${idIdx} AND tenant_id = $${tenantIdx}
+       WHERE ${shiftedWhere}
        RETURNING id, mqtt_device_id, name, location, serial_number,
                  model, comment, manufactured_at, firmware_version, status, created_at`,
-      [...values, req.tenantId, id]
+      [...values, ...whereParams]
     );
 
     if (rows.length === 0) {
@@ -745,14 +754,11 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
     }
 
     // Look up device (including status to determine MQTT topic prefix)
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     const { rows } = await db.query(
-      `SELECT mqtt_device_id, status FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT mqtt_device_id, tenant_id, status FROM devices WHERE ${where}`,
+      params
     );
 
     if (rows.length === 0) {
@@ -766,7 +772,7 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
     const mqttId = rows[0].mqtt_device_id;
 
     // Use observed MQTT slug (where device actually publishes) with DB fallback
-    const tenantSlug = await resolveRoutingSlug(mqttId, req.tenantId);
+    const tenantSlug = await resolveRoutingSlug(mqttId, rows[0].tenant_id);
 
     mqttSvc.sendCommand(tenantSlug, mqttId, key, value);
 
@@ -790,14 +796,11 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
 router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     const { rows } = await db.query(
-      `SELECT mqtt_device_id, status FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT mqtt_device_id, tenant_id, status FROM devices WHERE ${where}`,
+      params
     );
 
     if (rows.length === 0) {
@@ -811,7 +814,7 @@ router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) =>
     const mqttId = rows[0].mqtt_device_id;
 
     // Use observed MQTT slug (where device actually publishes) with DB fallback
-    const tenantSlug = await resolveRoutingSlug(mqttId, req.tenantId);
+    const tenantSlug = await resolveRoutingSlug(mqttId, rows[0].tenant_id);
 
     mqttSvc.requestFullState(tenantSlug, mqttId);
 
@@ -835,15 +838,12 @@ router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) =>
 router.get('/:id/service-records', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     // Resolve device UUID (service_records references device.id)
     const devRes = await db.query(
-      `SELECT id FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT id, tenant_id FROM devices WHERE ${where}`,
+      params
     );
     if (devRes.rows.length === 0) {
       return res.status(404).json({
@@ -854,12 +854,13 @@ router.get('/:id/service-records', checkDeviceAccess(), async (req, res, next) =
     }
 
     const deviceUuid = devRes.rows[0].id;
+    const deviceTenantId = devRes.rows[0].tenant_id;
     const { rows } = await db.query(
       `SELECT id, service_date, technician, reason, work_done, created_at
        FROM service_records
        WHERE device_id = $1 AND tenant_id = $2
        ORDER BY service_date DESC`,
-      [deviceUuid, req.tenantId]
+      [deviceUuid, deviceTenantId]
     );
 
     res.json({ data: rows });
@@ -889,14 +890,11 @@ router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), check
     }
 
     const { id } = req.params;
-    const isUuid = id.length > 8;
-    const whereClause = isUuid
-      ? 'id = $1 AND tenant_id = $2'
-      : 'mqtt_device_id = $1 AND tenant_id = $2';
+    const { where, params } = buildDeviceWhere(id, req);
 
     const devRes = await db.query(
-      `SELECT id FROM devices WHERE ${whereClause}`,
-      [id, req.tenantId]
+      `SELECT id, tenant_id FROM devices WHERE ${where}`,
+      params
     );
     if (devRes.rows.length === 0) {
       return res.status(404).json({
@@ -907,13 +905,14 @@ router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), check
     }
 
     const deviceUuid = devRes.rows[0].id;
+    const deviceTenantId = devRes.rows[0].tenant_id;
     const { service_date, technician, reason, work_done } = parsed.data;
 
     const { rows } = await db.query(
       `INSERT INTO service_records (tenant_id, device_id, service_date, technician, reason, work_done)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, service_date, technician, reason, work_done, created_at`,
-      [req.tenantId, deviceUuid, service_date, technician, reason, work_done]
+      [deviceTenantId, deviceUuid, service_date, technician, reason, work_done]
     );
 
     res.status(201).json({ data: rows[0] });
@@ -927,11 +926,11 @@ router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), check
 router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { recordId } = req.params;
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
-    const { rowCount } = await db.query(
-      `DELETE FROM service_records WHERE id = $1 AND tenant_id = $2`,
-      [recordId, req.tenantId]
-    );
+    const { rowCount } = isSuperAdmin
+      ? await db.query(`DELETE FROM service_records WHERE id = $1`, [recordId])
+      : await db.query(`DELETE FROM service_records WHERE id = $1 AND tenant_id = $2`, [recordId, req.tenantId]);
 
     if (rowCount === 0) {
       return res.status(404).json({
