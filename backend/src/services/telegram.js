@@ -398,7 +398,7 @@ async function handleStatus(chatId, ctx, deviceIdArg, editMsgId) {
   }
 
   const { rows } = await db.query(
-    `SELECT mqtt_device_id, name, online, last_seen, firmware_version, last_state
+    `SELECT mqtt_device_id, name, online, last_seen, firmware_version, last_state, location
      FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'`,
     [ctx.tenantId, deviceIdArg]
   );
@@ -415,8 +415,11 @@ async function handleStatus(chatId, ctx, deviceIdArg, editMsgId) {
 
   const lines = [
     `\u{1F4CD} ${name} (${d.mqtt_device_id})`,
-    `${t(chatId, 'status_label')}: ${dot}`,
   ];
+  if (d.location) {
+    lines.push(`\u{1F4CD} ${d.location}`);
+  }
+  lines.push(`${t(chatId, 'status_label')}: ${dot}`);
 
   if (d.last_seen) {
     lines.push(`${t(chatId, 'last_seen')}: ${formatTime(chatId, d.last_seen)}`);
