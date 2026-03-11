@@ -206,11 +206,16 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
   const handler = channels.get('telegram');
   if (!handler) return;
 
-  // Get all linked users in this tenant
+  // Get all linked users who have access to this tenant:
+  // 1. Primary tenant match (users.tenant_id)
+  // 2. Multi-tenant membership (user_tenants)
+  // 3. Superadmin (sees all tenants)
   const { rows: users } = await db.query(
-    `SELECT u.id, u.role, u.telegram_id
+    `SELECT DISTINCT u.id, u.role, u.telegram_id
      FROM users u
-     WHERE u.tenant_id = $1 AND u.telegram_id IS NOT NULL AND u.active = true`,
+     LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
+     WHERE u.telegram_id IS NOT NULL AND u.active = true
+       AND (u.tenant_id = $1 OR ut.tenant_id IS NOT NULL OR u.role = 'superadmin')`,
     [tenantId]
   );
 
@@ -243,8 +248,10 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
  */
 async function getLinkedTelegramIds(tenantId) {
   const { rows } = await db.query(
-    `SELECT telegram_id FROM users
-     WHERE tenant_id = $1 AND telegram_id IS NOT NULL AND active = true`,
+    `SELECT DISTINCT u.telegram_id FROM users u
+     LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
+     WHERE u.telegram_id IS NOT NULL AND u.active = true
+       AND (u.tenant_id = $1 OR ut.tenant_id IS NOT NULL OR u.role = 'superadmin')`,
     [tenantId]
   );
   return new Set(rows.map(r => String(r.telegram_id)));
