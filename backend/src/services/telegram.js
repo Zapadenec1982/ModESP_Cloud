@@ -31,6 +31,42 @@ const SEVERITY_EMOJI = {
   info:     '\u{2139}\u{FE0F}', // ℹ️
 };
 
+// ── Inline Keyboard Helpers ──────────────────────────────
+
+function mainMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '\u{1F4E6} Пристрої', callback_data: 'menu_devices' },
+        { text: '\u{1F6A8} Аварії', callback_data: 'menu_alarms' },
+      ],
+      [
+        { text: '\u{1F504} Тенант', callback_data: 'menu_tenant' },
+        { text: '\u{2753} Допомога', callback_data: 'menu_help' },
+      ],
+    ],
+  };
+}
+
+function refreshMenuKeyboard(refreshAction) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '\u{1F504} Оновити', callback_data: refreshAction },
+        { text: '\u{1F4CB} Меню', callback_data: 'menu' },
+      ],
+    ],
+  };
+}
+
+function backToMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '\u{1F4CB} Меню', callback_data: 'menu' }],
+    ],
+  };
+}
+
 // ── Init / Shutdown ───────────────────────────────────────
 
 /**
@@ -140,6 +176,277 @@ async function sendNotLinked(chatId) {
   );
 }
 
+// ── Reusable Command Handlers ─────────────────────────────
+
+async function handleDevices(chatId, ctx) {
+  const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
+
+  let query, params;
+  if (!filter) {
+    query = `SELECT mqtt_device_id, name, online, last_state
+             FROM devices WHERE tenant_id = $1 AND status = 'active'
+             ORDER BY name NULLS LAST LIMIT 50`;
+    params = [ctx.tenantId];
+  } else if (filter.uuids.length === 0) {
+    await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.', {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  } else {
+    query = `SELECT mqtt_device_id, name, online, last_state
+             FROM devices WHERE tenant_id = $1 AND id = ANY($2) AND status = 'active'
+             ORDER BY name NULLS LAST`;
+    params = [ctx.tenantId, filter.uuids];
+  }
+
+  const { rows } = await db.query(query, params);
+  if (!rows.length) {
+    await bot.sendMessage(chatId, 'Немає активних пристроїв.', {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  }
+
+  const lines = rows.map(d => {
+    const dot = d.online ? '\u{1F7E2}' : '\u{26AA}';
+    const name = d.name || d.mqtt_device_id;
+    const temp = d.last_state?.['equipment.air_temp'];
+    const tempStr = temp != null ? `  ${Number(temp).toFixed(1)}\u{00B0}C` : '';
+    return `${dot} ${name} (${d.mqtt_device_id})${tempStr}`;
+  });
+
+  // Build device status buttons (rows of 3)
+  const deviceButtons = [];
+  for (let i = 0; i < rows.length && i < 30; i += 3) {
+    const row = [];
+    for (let j = i; j < i + 3 && j < rows.length; j++) {
+      const d = rows[j];
+      row.push({ text: `\u{1F4CA} ${d.mqtt_device_id}`, callback_data: `status_${d.mqtt_device_id}` });
+    }
+    deviceButtons.push(row);
+  }
+
+  // Add refresh + menu row
+  deviceButtons.push([
+    { text: '\u{1F504} Оновити', callback_data: 'refresh_devices' },
+    { text: '\u{1F4CB} Меню', callback_data: 'menu' },
+  ]);
+
+  await bot.sendMessage(chatId,
+    `\u{1F4E6} Пристрої [${ctx.tenantName}] (${rows.length}):\n\n${lines.join('\n')}`,
+    { reply_markup: { inline_keyboard: deviceButtons } }
+  );
+}
+
+async function handleStatus(chatId, ctx, deviceIdArg) {
+  // RBAC check
+  const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
+  if (filter && !filter.mqttIds.includes(deviceIdArg)) {
+    await bot.sendMessage(chatId, '\u{1F6AB} У вас немає доступу до цього пристрою.', {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  }
+
+  const { rows } = await db.query(
+    `SELECT mqtt_device_id, name, online, last_seen, firmware_version, last_state
+     FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'`,
+    [ctx.tenantId, deviceIdArg]
+  );
+
+  if (!rows.length) {
+    await bot.sendMessage(chatId, `Пристрій ${deviceIdArg} не знайдений.`, {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  }
+
+  const d = rows[0];
+  const s = d.last_state || {};
+  const dot = d.online ? '\u{1F7E2} Онлайн' : '\u{26AA} Офлайн';
+  const name = d.name || d.mqtt_device_id;
+
+  const lines = [
+    `\u{1F4CD} ${name} (${d.mqtt_device_id})`,
+    `Статус: ${dot}`,
+  ];
+
+  if (d.last_seen) {
+    lines.push(`Востаннє: ${formatTime(d.last_seen)}`);
+  }
+  if (s['equipment.air_temp'] != null) {
+    lines.push(`\u{1F321}\u{FE0F} Повітря: ${Number(s['equipment.air_temp']).toFixed(1)}\u{00B0}C`);
+  }
+  if (s['equipment.evap_temp'] != null) {
+    lines.push(`\u{2744}\u{FE0F} Випарник: ${Number(s['equipment.evap_temp']).toFixed(1)}\u{00B0}C`);
+  }
+  if (s['thermostat.effective_setpoint'] != null) {
+    lines.push(`\u{1F3AF} Уставка: ${Number(s['thermostat.effective_setpoint']).toFixed(1)}\u{00B0}C`);
+  }
+  if (s['equipment.compressor'] != null) {
+    lines.push(`\u{2699}\u{FE0F} Компресор: ${s['equipment.compressor'] ? 'Увімк' : 'Вимк'}`);
+  }
+  if (s['defrost.active'] != null && s['defrost.active']) {
+    lines.push(`\u{1F525} Розморозка: Активна`);
+  }
+
+  // Active alarms
+  const { rows: alarms } = await db.query(
+    `SELECT alarm_code, severity, triggered_at FROM alarms
+     WHERE tenant_id = $1 AND device_id = $2 AND active = true
+     ORDER BY triggered_at DESC`,
+    [ctx.tenantId, deviceIdArg]
+  );
+
+  if (alarms.length) {
+    lines.push('');
+    lines.push(`\u{1F6A8} Активні аварії (${alarms.length}):`);
+    for (const a of alarms) {
+      const aName = ALARM_NAMES_UA[a.alarm_code] || a.alarm_code;
+      const emoji = a.severity === 'critical' ? '\u{1F6A8}' : '\u{26A0}\u{FE0F}';
+      lines.push(`  ${emoji} ${aName}`);
+    }
+  }
+
+  if (d.firmware_version) {
+    lines.push(`\nFW: ${d.firmware_version}`);
+  }
+
+  await bot.sendMessage(chatId, lines.join('\n'), {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '\u{1F504} Оновити', callback_data: `status_${deviceIdArg}` },
+          { text: '\u{1F4E6} Пристрої', callback_data: 'menu_devices' },
+          { text: '\u{1F4CB} Меню', callback_data: 'menu' },
+        ],
+      ],
+    },
+  });
+}
+
+async function handleAlarms(chatId, ctx) {
+  const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
+
+  let query, params;
+  if (!filter) {
+    query = `SELECT a.alarm_code, a.severity, a.triggered_at, a.device_id,
+                    d.name AS device_name
+             FROM alarms a
+             LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = $1
+             WHERE a.tenant_id = $1 AND a.active = true
+             ORDER BY a.triggered_at DESC LIMIT 30`;
+    params = [ctx.tenantId];
+  } else if (filter.mqttIds.length === 0) {
+    await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.', {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  } else {
+    query = `SELECT a.alarm_code, a.severity, a.triggered_at, a.device_id,
+                    d.name AS device_name
+             FROM alarms a
+             LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = $1
+             WHERE a.tenant_id = $1 AND a.active = true AND a.device_id = ANY($2)
+             ORDER BY a.triggered_at DESC LIMIT 30`;
+    params = [ctx.tenantId, filter.mqttIds];
+  }
+
+  const { rows } = await db.query(query, params);
+  if (!rows.length) {
+    await bot.sendMessage(chatId, '\u{2705} Активних аварій немає.', {
+      reply_markup: refreshMenuKeyboard('refresh_alarms'),
+    });
+    return;
+  }
+
+  const lines = rows.map(a => {
+    const emoji = a.severity === 'critical' ? '\u{1F6A8}' : '\u{26A0}\u{FE0F}';
+    const name = ALARM_NAMES_UA[a.alarm_code] || a.alarm_code;
+    const dev = a.device_name || a.device_id;
+    return `${emoji} ${name}\n   ${dev} \u{2022} ${formatTime(a.triggered_at)}`;
+  });
+
+  await bot.sendMessage(chatId,
+    `\u{1F6A8} Активні аварії (${rows.length}):\n\n${lines.join('\n\n')}`,
+    { reply_markup: refreshMenuKeyboard('refresh_alarms') }
+  );
+}
+
+async function handleTenantList(chatId, ctx) {
+  const { rows: tenants } = await db.query(
+    `SELECT t.id, t.name, t.slug FROM user_tenants ut
+     JOIN tenants t ON t.id = ut.tenant_id
+     WHERE ut.user_id = $1 AND t.active = true ORDER BY t.name`,
+    [ctx.user.id]
+  );
+
+  if (tenants.length <= 1) {
+    await bot.sendMessage(chatId, `Поточний тенант: ${ctx.tenantName}`, {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  }
+
+  const lines = tenants.map(t => {
+    const marker = t.id === ctx.tenantId ? ' \u{2190} поточний' : '';
+    return `  ${t.slug} \u{2014} ${t.name}${marker}`;
+  });
+
+  // Build tenant switch buttons (rows of 2)
+  const tenantButtons = [];
+  for (let i = 0; i < tenants.length; i += 2) {
+    const row = [];
+    for (let j = i; j < i + 2 && j < tenants.length; j++) {
+      const t = tenants[j];
+      const current = t.id === ctx.tenantId ? '\u{2705} ' : '';
+      row.push({ text: `${current}${t.name}`, callback_data: `tenant_${t.slug}` });
+    }
+    tenantButtons.push(row);
+  }
+  tenantButtons.push([{ text: '\u{1F4CB} Меню', callback_data: 'menu' }]);
+
+  await bot.sendMessage(chatId,
+    `Поточний тенант: ${ctx.tenantName}\n\nДоступні:\n${lines.join('\n')}`,
+    { reply_markup: { inline_keyboard: tenantButtons } }
+  );
+}
+
+async function handleTenantSwitch(chatId, ctx, slug) {
+  const { rows: tenants } = await db.query(
+    `SELECT t.id, t.name, t.slug FROM user_tenants ut
+     JOIN tenants t ON t.id = ut.tenant_id
+     WHERE ut.user_id = $1 AND t.active = true ORDER BY t.name`,
+    [ctx.user.id]
+  );
+
+  const target = tenants.find(t => t.slug === slug);
+  if (!target) {
+    await bot.sendMessage(chatId, `Тенант "${slug}" не знайдений серед доступних.`, {
+      reply_markup: backToMenuKeyboard(),
+    });
+    return;
+  }
+
+  tenantContext.set(String(chatId), target.id);
+  await bot.sendMessage(chatId,
+    `\u{2705} Переключено на: ${target.name} (${target.slug})`,
+    { reply_markup: mainMenuKeyboard() }
+  );
+}
+
+async function handleHelp(chatId) {
+  await bot.sendMessage(chatId, commandList(), {
+    reply_markup: mainMenuKeyboard(),
+  });
+}
+
+async function sendMainMenu(chatId) {
+  await bot.sendMessage(chatId, '\u{1F4CB} Головне меню:', {
+    reply_markup: mainMenuKeyboard(),
+  });
+}
+
 // ── Bot Commands ──────────────────────────────────────────
 
 function setupCommands() {
@@ -157,7 +464,8 @@ function setupCommands() {
         if (ctx) {
           await bot.sendMessage(chatId,
             `\u{2705} Акаунт ${ctx.user.email} прив\'язаний.\n\n` +
-            commandList()
+            commandList(),
+            { reply_markup: mainMenuKeyboard() }
           );
           return;
         }
@@ -213,8 +521,8 @@ function setupCommands() {
 
       await bot.sendMessage(chatId,
         `\u{2705} Акаунт ${user.email} успішно прив\'язаний!\n` +
-        'Ви будете отримувати сповіщення про аварії.\n\n' +
-        commandList()
+        'Ви будете отримувати сповіщення про аварії.',
+        { reply_markup: mainMenuKeyboard() }
       );
 
       logger.info({ chatId, userId: user.id, email: user.email }, 'Telegram account linked');
@@ -231,42 +539,7 @@ function setupCommands() {
     try {
       const ctx = await resolveUser(chatId);
       if (!ctx) return sendNotLinked(chatId);
-
-      const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
-
-      let query, params;
-      if (!filter) {
-        query = `SELECT mqtt_device_id, name, online, last_state
-                 FROM devices WHERE tenant_id = $1 AND status = 'active'
-                 ORDER BY name NULLS LAST LIMIT 50`;
-        params = [ctx.tenantId];
-      } else if (filter.uuids.length === 0) {
-        await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.');
-        return;
-      } else {
-        query = `SELECT mqtt_device_id, name, online, last_state
-                 FROM devices WHERE tenant_id = $1 AND id = ANY($2) AND status = 'active'
-                 ORDER BY name NULLS LAST`;
-        params = [ctx.tenantId, filter.uuids];
-      }
-
-      const { rows } = await db.query(query, params);
-      if (!rows.length) {
-        await bot.sendMessage(chatId, 'Немає активних пристроїв.');
-        return;
-      }
-
-      const lines = rows.map(d => {
-        const dot = d.online ? '\u{1F7E2}' : '\u{26AA}';
-        const name = d.name || d.mqtt_device_id;
-        const temp = d.last_state?.['equipment.air_temp'];
-        const tempStr = temp != null ? `  ${Number(temp).toFixed(1)}\u{00B0}C` : '';
-        return `${dot} ${name} (${d.mqtt_device_id})${tempStr}`;
-      });
-
-      await bot.sendMessage(chatId,
-        `\u{1F4E6} Пристрої [${ctx.tenantName}] (${rows.length}):\n\n${lines.join('\n')}`
-      );
+      await handleDevices(chatId, ctx);
     } catch (err) {
       logger.error({ err, chatId }, 'Telegram /devices error');
       await safeSend(chatId, '\u{274C} Помилка отримання списку.');
@@ -285,81 +558,13 @@ function setupCommands() {
 
       if (!deviceIdArg) {
         await bot.sendMessage(chatId,
-          'Використання: /status ID\nНаприклад: /status F27FCD'
+          'Використання: /status ID\nНаприклад: /status F27FCD',
+          { reply_markup: backToMenuKeyboard() }
         );
         return;
       }
 
-      // RBAC check
-      const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
-      if (filter && !filter.mqttIds.includes(deviceIdArg)) {
-        await bot.sendMessage(chatId, '\u{1F6AB} У вас немає доступу до цього пристрою.');
-        return;
-      }
-
-      const { rows } = await db.query(
-        `SELECT mqtt_device_id, name, online, last_seen, firmware_version, last_state
-         FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'`,
-        [ctx.tenantId, deviceIdArg]
-      );
-
-      if (!rows.length) {
-        await bot.sendMessage(chatId, `Пристрій ${deviceIdArg} не знайдений.`);
-        return;
-      }
-
-      const d = rows[0];
-      const s = d.last_state || {};
-      const dot = d.online ? '\u{1F7E2} Онлайн' : '\u{26AA} Офлайн';
-      const name = d.name || d.mqtt_device_id;
-
-      const lines = [
-        `\u{1F4CD} ${name} (${d.mqtt_device_id})`,
-        `Статус: ${dot}`,
-      ];
-
-      if (d.last_seen) {
-        lines.push(`Востаннє: ${formatTime(d.last_seen)}`);
-      }
-      if (s['equipment.air_temp'] != null) {
-        lines.push(`\u{1F321}\u{FE0F} Повітря: ${Number(s['equipment.air_temp']).toFixed(1)}\u{00B0}C`);
-      }
-      if (s['equipment.evap_temp'] != null) {
-        lines.push(`\u{2744}\u{FE0F} Випарник: ${Number(s['equipment.evap_temp']).toFixed(1)}\u{00B0}C`);
-      }
-      if (s['thermostat.effective_setpoint'] != null) {
-        lines.push(`\u{1F3AF} Уставка: ${Number(s['thermostat.effective_setpoint']).toFixed(1)}\u{00B0}C`);
-      }
-      if (s['equipment.compressor'] != null) {
-        lines.push(`\u{2699}\u{FE0F} Компресор: ${s['equipment.compressor'] ? 'Увімк' : 'Вимк'}`);
-      }
-      if (s['defrost.active'] != null && s['defrost.active']) {
-        lines.push(`\u{1F525} Розморозка: Активна`);
-      }
-
-      // Active alarms
-      const { rows: alarms } = await db.query(
-        `SELECT alarm_code, severity, triggered_at FROM alarms
-         WHERE tenant_id = $1 AND device_id = $2 AND active = true
-         ORDER BY triggered_at DESC`,
-        [ctx.tenantId, deviceIdArg]
-      );
-
-      if (alarms.length) {
-        lines.push('');
-        lines.push(`\u{1F6A8} Активні аварії (${alarms.length}):`);
-        for (const a of alarms) {
-          const aName = ALARM_NAMES_UA[a.alarm_code] || a.alarm_code;
-          const emoji = a.severity === 'critical' ? '\u{1F6A8}' : '\u{26A0}\u{FE0F}';
-          lines.push(`  ${emoji} ${aName}`);
-        }
-      }
-
-      if (d.firmware_version) {
-        lines.push(`\nFW: ${d.firmware_version}`);
-      }
-
-      await bot.sendMessage(chatId, lines.join('\n'));
+      await handleStatus(chatId, ctx, deviceIdArg);
     } catch (err) {
       logger.error({ err, chatId }, 'Telegram /status error');
       await safeSend(chatId, '\u{274C} Помилка отримання статусу.');
@@ -373,47 +578,7 @@ function setupCommands() {
     try {
       const ctx = await resolveUser(chatId);
       if (!ctx) return sendNotLinked(chatId);
-
-      const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
-
-      let query, params;
-      if (!filter) {
-        query = `SELECT a.alarm_code, a.severity, a.triggered_at, a.device_id,
-                        d.name AS device_name
-                 FROM alarms a
-                 LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = $1
-                 WHERE a.tenant_id = $1 AND a.active = true
-                 ORDER BY a.triggered_at DESC LIMIT 30`;
-        params = [ctx.tenantId];
-      } else if (filter.mqttIds.length === 0) {
-        await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.');
-        return;
-      } else {
-        query = `SELECT a.alarm_code, a.severity, a.triggered_at, a.device_id,
-                        d.name AS device_name
-                 FROM alarms a
-                 LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = $1
-                 WHERE a.tenant_id = $1 AND a.active = true AND a.device_id = ANY($2)
-                 ORDER BY a.triggered_at DESC LIMIT 30`;
-        params = [ctx.tenantId, filter.mqttIds];
-      }
-
-      const { rows } = await db.query(query, params);
-      if (!rows.length) {
-        await bot.sendMessage(chatId, '\u{2705} Активних аварій немає.');
-        return;
-      }
-
-      const lines = rows.map(a => {
-        const emoji = a.severity === 'critical' ? '\u{1F6A8}' : '\u{26A0}\u{FE0F}';
-        const name = ALARM_NAMES_UA[a.alarm_code] || a.alarm_code;
-        const dev = a.device_name || a.device_id;
-        return `${emoji} ${name}\n   ${dev} \u{2022} ${formatTime(a.triggered_at)}`;
-      });
-
-      await bot.sendMessage(chatId,
-        `\u{1F6A8} Активні аварії (${rows.length}):\n\n${lines.join('\n\n')}`
-      );
+      await handleAlarms(chatId, ctx);
     } catch (err) {
       logger.error({ err, chatId }, 'Telegram /alarms error');
       await safeSend(chatId, '\u{274C} Помилка отримання аварій.');
@@ -429,38 +594,11 @@ function setupCommands() {
       if (!ctx) return sendNotLinked(chatId);
 
       const targetSlug = match?.[1]?.trim();
-
-      const { rows: tenants } = await db.query(
-        `SELECT t.id, t.name, t.slug FROM user_tenants ut
-         JOIN tenants t ON t.id = ut.tenant_id
-         WHERE ut.user_id = $1 AND t.active = true ORDER BY t.name`,
-        [ctx.user.id]
-      );
-
       if (!targetSlug) {
-        if (tenants.length <= 1) {
-          await bot.sendMessage(chatId, `Поточний тенант: ${ctx.tenantName}`);
-          return;
-        }
-        const lines = tenants.map(t => {
-          const marker = t.id === ctx.tenantId ? ' \u{2190} поточний' : '';
-          return `  ${t.slug} \u{2014} ${t.name}${marker}`;
-        });
-        await bot.sendMessage(chatId,
-          `Поточний тенант: ${ctx.tenantName}\n\nДоступні:\n${lines.join('\n')}\n\n` +
-          'Переключити: /tenant slug'
-        );
+        await handleTenantList(chatId, ctx);
         return;
       }
-
-      const target = tenants.find(t => t.slug === targetSlug);
-      if (!target) {
-        await bot.sendMessage(chatId, `Тенант "${targetSlug}" не знайдений серед доступних.`);
-        return;
-      }
-
-      tenantContext.set(String(chatId), target.id);
-      await bot.sendMessage(chatId, `\u{2705} Переключено на: ${target.name} (${target.slug})`);
+      await handleTenantSwitch(chatId, ctx, targetSlug);
     } catch (err) {
       logger.error({ err, chatId }, 'Telegram /tenant error');
     }
@@ -494,7 +632,62 @@ function setupCommands() {
   // ── /help — command list ───────────────────────────────
 
   bot.onText(/\/help/, async (msg) => {
-    await bot.sendMessage(msg.chat.id, commandList());
+    await handleHelp(msg.chat.id);
+  });
+
+  // ── /menu — show main menu ─────────────────────────────
+
+  bot.onText(/\/menu/, async (msg) => {
+    await sendMainMenu(msg.chat.id);
+  });
+
+  // ── Callback query handler (inline button taps) ────────
+
+  bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+
+    try {
+      await bot.answerCallbackQuery(query.id);
+    } catch (_) { /* ignore if already answered */ }
+
+    try {
+      // Main menu doesn't need auth
+      if (query.data === 'menu') {
+        return sendMainMenu(chatId);
+      }
+      if (query.data === 'menu_help') {
+        return handleHelp(chatId);
+      }
+
+      const ctx = await resolveUser(chatId);
+      if (!ctx) return sendNotLinked(chatId);
+
+      switch (query.data) {
+        case 'menu_devices':
+        case 'refresh_devices':
+          return handleDevices(chatId, ctx);
+
+        case 'menu_alarms':
+        case 'refresh_alarms':
+          return handleAlarms(chatId, ctx);
+
+        case 'menu_tenant':
+          return handleTenantList(chatId, ctx);
+
+        default:
+          if (query.data.startsWith('tenant_')) {
+            const slug = query.data.slice(7);
+            return handleTenantSwitch(chatId, ctx, slug);
+          }
+          if (query.data.startsWith('status_')) {
+            const deviceId = query.data.slice(7);
+            return handleStatus(chatId, ctx, deviceId);
+          }
+      }
+    } catch (err) {
+      logger.error({ err, chatId, data: query.data }, 'Telegram callback_query error');
+      await safeSend(chatId, '\u{274C} Помилка. Спробуйте пізніше.');
+    }
   });
 }
 
@@ -506,6 +699,7 @@ function commandList() {
     '/alarms \u{2014} активні аварії\n' +
     '/tenant \u{2014} показати/переключити тенант\n' +
     '/unlink \u{2014} відв\'язати Telegram\n' +
+    '/menu \u{2014} головне меню\n' +
     '/help \u{2014} ця довідка'
   );
 }
@@ -602,7 +796,7 @@ function buildOfflineMessage(payload) {
 // ── Helpers ───────────────────────────────────────────────
 
 function formatTime(isoStr) {
-  if (!isoStr) return '—';
+  if (!isoStr) return '\u{2014}';
   return new Date(isoStr).toLocaleString('uk-UA', {
     timeZone: 'Europe/Kyiv',
     day: '2-digit', month: '2-digit', year: 'numeric',
