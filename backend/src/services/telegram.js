@@ -31,6 +31,24 @@ const SEVERITY_EMOJI = {
   info:     '\u{2139}\u{FE0F}', // ℹ️
 };
 
+// ── Persistent Reply Keyboard (bottom buttons) ──────────
+
+const BTN_DEVICES = '\u{1F4E6} Пристрої';
+const BTN_ALARMS  = '\u{1F6A8} Аварії';
+const BTN_TENANT  = '\u{1F504} Тенант';
+const BTN_HELP    = '\u{2753} Допомога';
+
+function persistentKeyboard() {
+  return {
+    keyboard: [
+      [{ text: BTN_DEVICES }, { text: BTN_ALARMS }],
+      [{ text: BTN_TENANT },  { text: BTN_HELP }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
 // ── Inline Keyboard Helpers ──────────────────────────────
 
 function mainMenuKeyboard() {
@@ -482,6 +500,53 @@ async function sendMainMenu(chatId, editMsgId) {
 
 function setupCommands() {
 
+  // Register bot commands for Telegram menu
+  bot.setMyCommands([
+    { command: 'devices', description: '\u{1F4E6} Список пристроїв' },
+    { command: 'alarms',  description: '\u{1F6A8} Активні аварії' },
+    { command: 'tenant',  description: '\u{1F504} Переключити тенант' },
+    { command: 'help',    description: '\u{2753} Допомога' },
+    { command: 'menu',    description: '\u{1F4CB} Головне меню' },
+    { command: 'unlink',  description: '\u{274C} Відв\'язати акаунт' },
+  ]).catch(err => logger.warn({ err: err.message }, 'Failed to set bot commands'));
+
+  // ── Persistent keyboard text handler ───────────────────
+  // Handles taps on the bottom reply keyboard buttons
+
+  bot.on('message', async (msg) => {
+    if (!msg.text || msg.text.startsWith('/')) return; // skip commands
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+
+    // Match persistent keyboard buttons
+    let handler;
+    switch (text) {
+      case BTN_DEVICES: handler = 'devices'; break;
+      case BTN_ALARMS:  handler = 'alarms';  break;
+      case BTN_TENANT:  handler = 'tenant';  break;
+      case BTN_HELP:    handler = 'help';    break;
+      default: return; // not a known button — ignore
+    }
+
+    try {
+      if (handler === 'help') {
+        return handleHelp(chatId);
+      }
+
+      const ctx = await resolveUser(chatId);
+      if (!ctx) return sendNotLinked(chatId);
+
+      switch (handler) {
+        case 'devices': return handleDevices(chatId, ctx);
+        case 'alarms':  return handleAlarms(chatId, ctx);
+        case 'tenant':  return handleTenantList(chatId, ctx);
+      }
+    } catch (err) {
+      logger.error({ err, chatId, handler }, 'Telegram button handler error');
+      await safeSend(chatId, '\u{274C} Помилка. Спробуйте пізніше.');
+    }
+  });
+
   // ── /start [CODE] — link account or show help ──────────
 
   bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
@@ -495,8 +560,8 @@ function setupCommands() {
         if (ctx) {
           await bot.sendMessage(chatId,
             `\u{2705} Акаунт ${ctx.user.email} прив\'язаний.\n\n` +
-            commandList(),
-            { reply_markup: mainMenuKeyboard() }
+            'Використовуйте кнопки внизу екрану \u{2B07}\u{FE0F}',
+            { reply_markup: persistentKeyboard() }
           );
           return;
         }
@@ -552,8 +617,9 @@ function setupCommands() {
 
       await bot.sendMessage(chatId,
         `\u{2705} Акаунт ${user.email} успішно прив\'язаний!\n` +
-        'Ви будете отримувати сповіщення про аварії.',
-        { reply_markup: mainMenuKeyboard() }
+        'Ви будете отримувати сповіщення про аварії.\n\n' +
+        'Використовуйте кнопки внизу екрану \u{2B07}\u{FE0F}',
+        { reply_markup: persistentKeyboard() }
       );
 
       logger.info({ chatId, userId: user.id, email: user.email }, 'Telegram account linked');
