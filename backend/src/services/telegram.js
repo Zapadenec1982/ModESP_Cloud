@@ -9,6 +9,9 @@ let logger = null;
 // In-memory tenant context for multi-tenant users: Map<chatId_str, tenantId>
 const tenantContext = new Map();
 
+/** @type {Map<string, number>}  chatId_str → last bot message_id (for cleanup) */
+const lastBotMsg = new Map();
+
 // ── Alarm name translations (UA) ──────────────────────────
 
 const ALARM_NAMES_UA = {
@@ -120,6 +123,7 @@ function shutdown() {
     if (logger) logger.info('Telegram bot stopped');
   }
   tenantContext.clear();
+  lastBotMsg.clear();
 }
 
 // ── User Context Resolution ──────────────────────────────
@@ -205,6 +209,7 @@ async function reply(chatId, text, opts, editMsgId) {
   if (editMsgId) {
     try {
       await bot.editMessageText(text, { chat_id: chatId, message_id: editMsgId, ...opts });
+      lastBotMsg.set(String(chatId), editMsgId); // track edited msg
       return;
     } catch (err) {
       // If edit fails (message too old, deleted, or unchanged), fall back to new message
@@ -215,7 +220,8 @@ async function reply(chatId, text, opts, editMsgId) {
       }
     }
   }
-  await bot.sendMessage(chatId, text, opts);
+  const sent = await bot.sendMessage(chatId, text, opts);
+  if (sent?.message_id) lastBotMsg.set(String(chatId), sent.message_id);
 }
 
 // ── Reusable Command Handlers ─────────────────────────────
@@ -511,7 +517,8 @@ function setupCommands() {
   ]).catch(err => logger.warn({ err: err.message }, 'Failed to set bot commands'));
 
   // ── Persistent keyboard text handler ───────────────────
-  // Handles taps on the bottom reply keyboard buttons
+  // Handles taps on the bottom reply keyboard buttons.
+  // Deletes the user's button message + previous bot reply to keep chat clean.
 
   bot.on('message', async (msg) => {
     if (!msg.text || msg.text.startsWith('/')) return; // skip commands
@@ -526,6 +533,15 @@ function setupCommands() {
       case BTN_TENANT:  handler = 'tenant';  break;
       case BTN_HELP:    handler = 'help';    break;
       default: return; // not a known button — ignore
+    }
+
+    // Delete the user's button-tap message (the text like "📦 Пристрої")
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) {}
+
+    // Delete previous bot response to keep only one active
+    const prevMsgId = lastBotMsg.get(String(chatId));
+    if (prevMsgId) {
+      try { await bot.deleteMessage(chatId, prevMsgId); } catch (_) {}
     }
 
     try {
