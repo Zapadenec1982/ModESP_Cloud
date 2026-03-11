@@ -398,11 +398,28 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
 
 // ── POST /api/devices/pending/:mqttId/assign ──────────────
 // Assign a pending device to the current tenant.
-// Body: { name?: string, location?: string }
+// Body: { name: string, location?: string }
+const assignDeviceSchema = z.object({
+  name:          z.string().min(1, 'Device name is required').max(100),
+  location:      z.string().max(200).optional(),
+  model:         z.string().max(100).optional(),
+  serial_number: z.string().max(100).optional(),
+  comment:       z.string().max(500).optional(),
+  tenant_id:     z.string().uuid().optional(),
+});
+
 router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { mqttId } = req.params;
-    const { name, location, model, serial_number, comment, tenant_id } = req.body || {};
+    const parsed = assignDeviceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: parsed.error.issues[0]?.message || 'Validation failed',
+        status: 400,
+      });
+    }
+    const { name, location, model, serial_number, comment, tenant_id } = parsed.data;
 
     // Superadmin can assign to any tenant; regular admin assigns to own tenant
     const isSuperAdmin = req.user && req.user.role === 'superadmin';

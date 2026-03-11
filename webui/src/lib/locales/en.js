@@ -278,6 +278,7 @@ export default {
     model_placeholder: 'e.g. ModESP-4R',
     serial_placeholder: 'e.g. MX-2024-001',
     comment_placeholder: 'Notes (optional)',
+    name_required: 'Device name is required',
     device_assigned: 'Device {0} assigned',
     creds_sent_mqtt: 'Credentials sent via MQTT',
     creds_sent_mqtt_hint: 'Device will reconnect automatically',

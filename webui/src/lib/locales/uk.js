@@ -278,6 +278,7 @@ export default {
     model_placeholder: 'напр. ModESP-4R',
     serial_placeholder: 'напр. MX-2024-001',
     comment_placeholder: 'Нотатки (необов\'язково)',
+    name_required: 'Назва пристрою обов\'язкова',
     device_assigned: 'Пристрій {0} призначено',
     creds_sent_mqtt: 'Credentials надіслано через MQTT',
     creds_sent_mqtt_hint: 'Пристрій перепідключиться автоматично',

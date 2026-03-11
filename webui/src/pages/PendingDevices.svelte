@@ -98,10 +98,14 @@
 
   async function confirmAssign() {
     if (!assigningDevice) return
+    if (!assignName.trim()) {
+      toast.error($t('pending.name_required'))
+      return
+    }
     assigning = true
     try {
       const opts = {
-        name: assignName || undefined,
+        name: assignName.trim(),
         location: assignLocation || undefined,
         model: assignModel || undefined,
         serial_number: assignSerial || undefined,
@@ -242,8 +246,8 @@
         {/if}
 
         <label class="field">
-          <span>{$t('pending.device_name')}</span>
-          <input type="text" bind:value={assignName} placeholder={$t('pending.device_name_placeholder')} />
+          <span>{$t('pending.device_name')} <span class="required">*</span></span>
+          <input type="text" bind:value={assignName} placeholder={$t('pending.device_name_placeholder')} required />
         </label>
 
         <label class="field">
@@ -533,6 +537,11 @@
     outline: none;
     border-color: var(--accent-blue);
     box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+  }
+
+  .required {
+    color: var(--accent-red, #ef4444);
+    margin-left: 2px;
   }
 
   .tenant-select {
