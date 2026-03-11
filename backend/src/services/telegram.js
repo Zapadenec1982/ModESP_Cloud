@@ -850,6 +850,7 @@ function buildAlarmRaisedMessage(chatId, payload) {
     `${emoji} ${t(chatId, 'alarm_raised')}: ${aName}`,
     `${t(chatId, 'device_label')}: ${deviceLabel}`,
   ];
+  if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
 
   const airTemp = Number(payload.airTemp);
   if (payload.airTemp != null && isFinite(airTemp)) {
@@ -873,6 +874,7 @@ function buildAlarmClearedMessage(chatId, payload) {
     `\u{1F7E2} ${t(chatId, 'alarm_cleared')}: ${aName}`,
     `${t(chatId, 'device_label')}: ${deviceLabel}`,
   ];
+  if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
 
   const airTemp = Number(payload.airTemp);
   if (payload.airTemp != null && isFinite(airTemp)) {
@@ -891,10 +893,12 @@ function buildOfflineMessage(chatId, payload) {
     ? `${payload.deviceName} (${payload.deviceId})`
     : payload.deviceId;
 
-  return [
+  const lines = [
     `${t(chatId, 'device_offline_msg')}: ${deviceLabel}`,
-    `${t(chatId, 'device_last_seen')}: ${formatTime(chatId, payload.lastSeen)}`,
-  ].join('\n');
+  ];
+  if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
+  lines.push(`${t(chatId, 'device_last_seen')}: ${formatTime(chatId, payload.lastSeen)}`);
+  return lines.join('\n');
 }
 
 // ── Helpers ───────────────────────────────────────────────

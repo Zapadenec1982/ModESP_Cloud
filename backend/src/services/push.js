@@ -106,11 +106,12 @@ async function handleAlarm(evt) {
 
     // Resolve device name for enrichment
     const { rows: devRows } = await db.query(
-      'SELECT id, name FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+      'SELECT id, name, location FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
       [tenantId, evt.deviceId]
     );
     const deviceUuid = devRows.length ? devRows[0].id : null;
     payload.deviceName = devRows.length ? devRows[0].name : null;
+    payload.location = devRows.length ? devRows[0].location : null;
 
     // Path 1: Legacy notification_subscribers (alarm RAISE only — backward compat)
     if (evt.active) {
@@ -172,7 +173,7 @@ function handleDeviceStatus(evt) {
 
       // Resolve device info
       const { rows } = await db.query(
-        'SELECT id, name FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+        'SELECT id, name, location FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
         [tenantId, evt.deviceId]
       );
       const deviceUuid = rows.length ? rows[0].id : null;
@@ -181,6 +182,7 @@ function handleDeviceStatus(evt) {
         type:       'device_offline',
         deviceId:   evt.deviceId,
         deviceName: rows.length ? rows[0].name : null,
+        location:   rows.length ? rows[0].location : null,
         lastSeen:   evt.lastSeen,
         timestamp:  new Date().toISOString(),
       };
