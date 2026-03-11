@@ -463,17 +463,7 @@ async function handleStatus(chatId, ctx, deviceIdArg, editMsgId) {
     lines.push(`\nFW: ${d.firmware_version}`);
   }
 
-  // Inline: refresh + back to devices
-  await reply(chatId, lines.join('\n'), {
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: t(chatId, 'btn_refresh'), callback_data: `status_${deviceIdArg}` },
-          { text: t(chatId, 'btn_back_devices'), callback_data: 'back_devices' },
-        ],
-      ],
-    },
-  }, editMsgId);
+  await reply(chatId, lines.join('\n'), {}, editMsgId);
 }
 
 async function handleAlarms(chatId, ctx, editMsgId) {
@@ -808,9 +798,6 @@ function setupCommands() {
       const ctx = await resolveUser(chatId);
       if (!ctx) return sendNotLinked(chatId);
 
-      if (query.data === 'back_devices') {
-        return handleDevices(chatId, ctx, msgId);
-      }
       if (query.data.startsWith('tenant_')) {
         const slug = query.data.slice(7);
         return handleTenantSwitch(chatId, ctx, slug, msgId);
