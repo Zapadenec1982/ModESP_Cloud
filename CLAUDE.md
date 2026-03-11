@@ -164,7 +164,8 @@ ModESP_Cloud/
 │   │   │   ├── db.js            # PostgreSQL пул (pg library)
 │   │   │   ├── mqtt.js          # MQTT клієнт + topic parsing + state aggregation
 │   │   │   ├── ws.js            # WebSocket сервер
-│   │   │   ├── push.js          # FCM + Telegram
+│   │   │   ├── push.js          # FCM + Telegram (alarm/cleared/offline + location)
+│   │   │   ├── telegram.js      # Telegram Bot (i18n UA/EN, RBAC, persistent keyboard)
 │   │   │   └── auth.js          # JWT логіка
 │   │   ├── routes/
 │   │   │   ├── auth.js          # POST /auth/login, /refresh, /logout
@@ -329,7 +330,7 @@ git push origin main
 
 ## Поточний стан
 
-**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users + MQTT Auth Hardening + Telegram Bot Redesign — повністю завершено**
+**Фаза 7 + Phase 4 MQTT Auth + Tenant Management + Multi-Tenant Users + MQTT Auth Hardening + Telegram Bot Redesign + UX — повністю завершено**
 
 | Компонент | Статус |
 |-----------|--------|
@@ -358,6 +359,7 @@ git push origin main
 | Tenant Management (Phase 8a) | ✅ superadmin role (migration 009), tenants CRUD API, device reassign, Tenants WebUI, PendingDevices tenant select |
 | Multi-Tenant Users (Phase 8b) | ✅ user_tenants M:N (migration 010), login tenant picker, switch-tenant, sidebar switcher, Users manage tenants |
 | Telegram Bot Redesign (Phase 8c) | ✅ user auth (link code), 7 commands, RBAC, alarm cleared/offline push, user-based dispatch, duplicate prevention, WebUI link modal |
+| Telegram Bot UX (Phase 8c.1) | ✅ persistent reply keyboard, i18n UA/EN, interactive device buttons, chat cleanup, NaN fix, location in notifications, superadmin cross-tenant bypass |
 | MQTT Auth Hardening | ✅ go-auth bootstrap fallback (migration 011), ACL $2=4 fix, stuck device auto-reset, device lifecycle (soft-reset/hard-delete), QoS 1 commands |
 
 ---
@@ -398,3 +400,4 @@ git push origin main
 - 2026-03-10 — MQTT Auth Hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap singleton), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), stuck device auto-detection (120s grace → auto-reset to pending), device lifecycle (DELETE soft-reset active→pending, hard-delete pending, POST /devices/register), QoS 1 for _set_tenant/_set_mqtt_creds. Full E2E assign verified with emulator (SubAck: Success).
 - 2026-03-10 — Bugfixes: reset-to-pending ordering (MQTT commands before DB credential change), heartbeat empty payload guard, credential key standardization (user/pass), session restore await. go-auth auth_cache_seconds 300→5 (root cause of assign loop — cached old hash rejected new credentials for up to 5 minutes).
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires + indexes), telegram.js full rewrite (user auth via link code, 7 commands, RBAC per-device access, multi-tenant context switch, 3 message types: alarm raised/cleared/offline), push.js rewrite (removed alarm-clear block, user-based dispatch via dispatchToLinkedUsers, device offline with 2min delay, duplicate prevention), users.js 3 new endpoints (POST/DELETE /me/telegram-link, POST /:id/telegram-link), api.js 3 functions, Users.svelte Telegram column + link modal, i18n uk+en.
+- 2026-03-11 — Phase 8c.1: Telegram Bot UX — persistent reply keyboard (4 buttons), i18n UA/EN with per-chat language preference and language toggle, interactive device status buttons, chat cleanup (auto-delete old messages), NaN temperature fix (isFinite guard), device location on status page and in all notification types (alarm raised/cleared/offline), removed inline menu/refresh/back buttons, setMyCommands, superadmin cross-tenant bypass in device/alarm routes (buildDeviceWhere helper).

@@ -271,7 +271,19 @@
 - [x] Users.svelte: Telegram link modal (code + /start instructions)
 - [x] i18n: telegram keys (uk+en)
 
-**Результат:** Telegram бот з авторизацією, per-device доступом, сповіщеннями про аварії та їх зняття + офлайн пристрої.
+#### Telegram Bot UX (Phase 8c.1) ✅
+- [x] Persistent reply keyboard (📦 Пристрої / 🚨 Аварії / 🔀 Тенант / EN↔UA)
+- [x] Interactive device buttons (tap device → detailed status with location)
+- [x] i18n (UA/EN) — full bilingual support with per-chat language preference
+- [x] Language switch button (persistent keyboard)
+- [x] Chat cleanup (auto-delete old messages on navigation)
+- [x] NaN temperature fix (isFinite guard on all Number().toFixed() calls)
+- [x] Device location on status page and in all notification types (alarm raised, alarm cleared, offline)
+- [x] Removed inline menu/refresh/back buttons — cleaner UX
+- [x] `setMyCommands` for Telegram command autocomplete
+- [x] Superadmin cross-tenant bypass for device/alarm API routes
+
+**Результат:** Telegram бот з авторизацією, per-device доступом, i18n, зручною навігацією через persistent keyboard і сповіщеннями з локацією.
 
 ---
 
@@ -362,3 +374,4 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 - 2026-03-10 — Roadmap: додано Phase 9a (Bulk CSV Import) і Phase 9b (REST API + OpenAPI для ERP). Advanced Analytics перенесено в Phase 10.
 - 2026-03-10 — Bugfix session: reset-to-pending ordering (MQTT commands before DB change), heartbeat empty payload guard, credential key standardization (user/pass), go-auth cache fix (300s→5s — root cause of assign loop after credential rotation).
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires), telegram.js full rewrite (user auth, 7 commands, RBAC, multi-tenant), push.js rewrite (alarm cleared, device offline with 2min delay, user-based dispatch, duplicate prevention), users.js 3 new endpoints, WebUI Telegram column + link modal, i18n (uk+en).
+- 2026-03-11 — Phase 8c.1: Telegram Bot UX — persistent reply keyboard, i18n UA/EN with per-chat preference, interactive device status buttons, chat cleanup (auto-delete), NaN temperature fix, device location in status page and all notification types, removed inline menu/refresh/back buttons, setMyCommands, superadmin cross-tenant bypass in device/alarm routes.
