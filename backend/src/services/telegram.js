@@ -234,8 +234,8 @@ async function handleDevices(chatId, ctx, editMsgId) {
   const lines = rows.map(d => {
     const dot = d.online ? '\u{1F7E2}' : '\u{26AA}';
     const name = d.name || d.mqtt_device_id;
-    const temp = d.last_state?.['equipment.air_temp'];
-    const tempStr = temp != null ? `  ${Number(temp).toFixed(1)}\u{00B0}C` : '';
+    const temp = Number(d.last_state?.['equipment.air_temp']);
+    const tempStr = isFinite(temp) ? `  ${temp.toFixed(1)}\u{00B0}C` : '';
     return `${dot} ${name} (${d.mqtt_device_id})${tempStr}`;
   });
 
@@ -299,14 +299,17 @@ async function handleStatus(chatId, ctx, deviceIdArg, editMsgId) {
   if (d.last_seen) {
     lines.push(`Востаннє: ${formatTime(d.last_seen)}`);
   }
-  if (s['equipment.air_temp'] != null) {
-    lines.push(`\u{1F321}\u{FE0F} Повітря: ${Number(s['equipment.air_temp']).toFixed(1)}\u{00B0}C`);
+  const airT = Number(s['equipment.air_temp']);
+  if (isFinite(airT)) {
+    lines.push(`\u{1F321}\u{FE0F} Повітря: ${airT.toFixed(1)}\u{00B0}C`);
   }
-  if (s['equipment.evap_temp'] != null) {
-    lines.push(`\u{2744}\u{FE0F} Випарник: ${Number(s['equipment.evap_temp']).toFixed(1)}\u{00B0}C`);
+  const evapT = Number(s['equipment.evap_temp']);
+  if (isFinite(evapT)) {
+    lines.push(`\u{2744}\u{FE0F} Випарник: ${evapT.toFixed(1)}\u{00B0}C`);
   }
-  if (s['thermostat.effective_setpoint'] != null) {
-    lines.push(`\u{1F3AF} Уставка: ${Number(s['thermostat.effective_setpoint']).toFixed(1)}\u{00B0}C`);
+  const setpT = Number(s['thermostat.effective_setpoint']);
+  if (isFinite(setpT)) {
+    lines.push(`\u{1F3AF} Уставка: ${setpT.toFixed(1)}\u{00B0}C`);
   }
   if (s['equipment.compressor'] != null) {
     lines.push(`\u{2699}\u{FE0F} Компресор: ${s['equipment.compressor'] ? 'Увімк' : 'Вимк'}`);
@@ -778,8 +781,9 @@ function buildAlarmRaisedMessage(payload) {
     `\u{1F4CD} Пристрій: ${deviceLabel}`,
   ];
 
-  if (payload.airTemp != null) {
-    lines.push(`\u{1F321}\u{FE0F} Температура: ${Number(payload.airTemp).toFixed(1)}\u{00B0}C`);
+  const airTemp = Number(payload.airTemp);
+  if (payload.airTemp != null && isFinite(airTemp)) {
+    lines.push(`\u{1F321}\u{FE0F} Температура: ${airTemp.toFixed(1)}\u{00B0}C`);
   }
   if (payload.severity === 'critical') {
     lines.push(`\n\u{26A0}\u{FE0F} Критична аварія \u{2014} потрібна негайна увага!`);
@@ -800,8 +804,9 @@ function buildAlarmClearedMessage(payload) {
     `\u{1F4CD} Пристрій: ${deviceLabel}`,
   ];
 
-  if (payload.airTemp != null) {
-    lines.push(`\u{1F321}\u{FE0F} Температура: ${Number(payload.airTemp).toFixed(1)}\u{00B0}C`);
+  const airTemp = Number(payload.airTemp);
+  if (payload.airTemp != null && isFinite(airTemp)) {
+    lines.push(`\u{1F321}\u{FE0F} Температура: ${airTemp.toFixed(1)}\u{00B0}C`);
   }
   if (payload.duration != null) {
     lines.push(`\u{23F1}\u{FE0F} Тривалість: ${formatDuration(payload.duration)}`);
