@@ -176,9 +176,33 @@ async function sendNotLinked(chatId) {
   );
 }
 
+/**
+ * Send new message or edit existing one in-place.
+ * @param {number} chatId
+ * @param {string} text
+ * @param {object} opts - reply_markup, parse_mode, etc.
+ * @param {number|null} editMsgId - if set, edit this message instead of sending new
+ */
+async function reply(chatId, text, opts, editMsgId) {
+  if (editMsgId) {
+    try {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: editMsgId, ...opts });
+      return;
+    } catch (err) {
+      // If edit fails (message too old, deleted, or unchanged), fall back to new message
+      if (!err.message?.includes('message is not modified')) {
+        logger.debug({ err: err.message, chatId, editMsgId }, 'Edit failed, sending new message');
+      } else {
+        return; // text unchanged — no-op
+      }
+    }
+  }
+  await bot.sendMessage(chatId, text, opts);
+}
+
 // ── Reusable Command Handlers ─────────────────────────────
 
-async function handleDevices(chatId, ctx) {
+async function handleDevices(chatId, ctx, editMsgId) {
   const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
 
   let query, params;
@@ -188,9 +212,9 @@ async function handleDevices(chatId, ctx) {
              ORDER BY name NULLS LAST LIMIT 50`;
     params = [ctx.tenantId];
   } else if (filter.uuids.length === 0) {
-    await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.', {
+    await reply(chatId, 'У вас немає призначених пристроїв.', {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   } else {
     query = `SELECT mqtt_device_id, name, online, last_state
@@ -201,9 +225,9 @@ async function handleDevices(chatId, ctx) {
 
   const { rows } = await db.query(query, params);
   if (!rows.length) {
-    await bot.sendMessage(chatId, 'Немає активних пристроїв.', {
+    await reply(chatId, 'Немає активних пристроїв.', {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   }
 
@@ -232,19 +256,20 @@ async function handleDevices(chatId, ctx) {
     { text: '\u{1F4CB} Меню', callback_data: 'menu' },
   ]);
 
-  await bot.sendMessage(chatId,
+  await reply(chatId,
     `\u{1F4E6} Пристрої [${ctx.tenantName}] (${rows.length}):\n\n${lines.join('\n')}`,
-    { reply_markup: { inline_keyboard: deviceButtons } }
+    { reply_markup: { inline_keyboard: deviceButtons } },
+    editMsgId
   );
 }
 
-async function handleStatus(chatId, ctx, deviceIdArg) {
+async function handleStatus(chatId, ctx, deviceIdArg, editMsgId) {
   // RBAC check
   const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
   if (filter && !filter.mqttIds.includes(deviceIdArg)) {
-    await bot.sendMessage(chatId, '\u{1F6AB} У вас немає доступу до цього пристрою.', {
+    await reply(chatId, '\u{1F6AB} У вас немає доступу до цього пристрою.', {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   }
 
@@ -255,9 +280,9 @@ async function handleStatus(chatId, ctx, deviceIdArg) {
   );
 
   if (!rows.length) {
-    await bot.sendMessage(chatId, `Пристрій ${deviceIdArg} не знайдений.`, {
+    await reply(chatId, `Пристрій ${deviceIdArg} не знайдений.`, {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   }
 
@@ -312,7 +337,7 @@ async function handleStatus(chatId, ctx, deviceIdArg) {
     lines.push(`\nFW: ${d.firmware_version}`);
   }
 
-  await bot.sendMessage(chatId, lines.join('\n'), {
+  await reply(chatId, lines.join('\n'), {
     reply_markup: {
       inline_keyboard: [
         [
@@ -322,10 +347,10 @@ async function handleStatus(chatId, ctx, deviceIdArg) {
         ],
       ],
     },
-  });
+  }, editMsgId);
 }
 
-async function handleAlarms(chatId, ctx) {
+async function handleAlarms(chatId, ctx, editMsgId) {
   const filter = await getUserDeviceFilter(ctx.user.id, ctx.user.role, ctx.tenantId);
 
   let query, params;
@@ -338,9 +363,9 @@ async function handleAlarms(chatId, ctx) {
              ORDER BY a.triggered_at DESC LIMIT 30`;
     params = [ctx.tenantId];
   } else if (filter.mqttIds.length === 0) {
-    await bot.sendMessage(chatId, 'У вас немає призначених пристроїв.', {
+    await reply(chatId, 'У вас немає призначених пристроїв.', {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   } else {
     query = `SELECT a.alarm_code, a.severity, a.triggered_at, a.device_id,
@@ -354,9 +379,9 @@ async function handleAlarms(chatId, ctx) {
 
   const { rows } = await db.query(query, params);
   if (!rows.length) {
-    await bot.sendMessage(chatId, '\u{2705} Активних аварій немає.', {
+    await reply(chatId, '\u{2705} Активних аварій немає.', {
       reply_markup: refreshMenuKeyboard('refresh_alarms'),
-    });
+    }, editMsgId);
     return;
   }
 
@@ -367,13 +392,14 @@ async function handleAlarms(chatId, ctx) {
     return `${emoji} ${name}\n   ${dev} \u{2022} ${formatTime(a.triggered_at)}`;
   });
 
-  await bot.sendMessage(chatId,
+  await reply(chatId,
     `\u{1F6A8} Активні аварії (${rows.length}):\n\n${lines.join('\n\n')}`,
-    { reply_markup: refreshMenuKeyboard('refresh_alarms') }
+    { reply_markup: refreshMenuKeyboard('refresh_alarms') },
+    editMsgId
   );
 }
 
-async function handleTenantList(chatId, ctx) {
+async function handleTenantList(chatId, ctx, editMsgId) {
   const { rows: tenants } = await db.query(
     `SELECT t.id, t.name, t.slug FROM user_tenants ut
      JOIN tenants t ON t.id = ut.tenant_id
@@ -382,9 +408,9 @@ async function handleTenantList(chatId, ctx) {
   );
 
   if (tenants.length <= 1) {
-    await bot.sendMessage(chatId, `Поточний тенант: ${ctx.tenantName}`, {
+    await reply(chatId, `Поточний тенант: ${ctx.tenantName}`, {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   }
 
@@ -406,13 +432,14 @@ async function handleTenantList(chatId, ctx) {
   }
   tenantButtons.push([{ text: '\u{1F4CB} Меню', callback_data: 'menu' }]);
 
-  await bot.sendMessage(chatId,
+  await reply(chatId,
     `Поточний тенант: ${ctx.tenantName}\n\nДоступні:\n${lines.join('\n')}`,
-    { reply_markup: { inline_keyboard: tenantButtons } }
+    { reply_markup: { inline_keyboard: tenantButtons } },
+    editMsgId
   );
 }
 
-async function handleTenantSwitch(chatId, ctx, slug) {
+async function handleTenantSwitch(chatId, ctx, slug, editMsgId) {
   const { rows: tenants } = await db.query(
     `SELECT t.id, t.name, t.slug FROM user_tenants ut
      JOIN tenants t ON t.id = ut.tenant_id
@@ -422,29 +449,30 @@ async function handleTenantSwitch(chatId, ctx, slug) {
 
   const target = tenants.find(t => t.slug === slug);
   if (!target) {
-    await bot.sendMessage(chatId, `Тенант "${slug}" не знайдений серед доступних.`, {
+    await reply(chatId, `Тенант "${slug}" не знайдений серед доступних.`, {
       reply_markup: backToMenuKeyboard(),
-    });
+    }, editMsgId);
     return;
   }
 
   tenantContext.set(String(chatId), target.id);
-  await bot.sendMessage(chatId,
+  await reply(chatId,
     `\u{2705} Переключено на: ${target.name} (${target.slug})`,
-    { reply_markup: mainMenuKeyboard() }
+    { reply_markup: mainMenuKeyboard() },
+    editMsgId
   );
 }
 
-async function handleHelp(chatId) {
-  await bot.sendMessage(chatId, commandList(), {
+async function handleHelp(chatId, editMsgId) {
+  await reply(chatId, commandList(), {
     reply_markup: mainMenuKeyboard(),
-  });
+  }, editMsgId);
 }
 
-async function sendMainMenu(chatId) {
-  await bot.sendMessage(chatId, '\u{1F4CB} Головне меню:', {
+async function sendMainMenu(chatId, editMsgId) {
+  await reply(chatId, '\u{1F4CB} Головне меню:', {
     reply_markup: mainMenuKeyboard(),
-  });
+  }, editMsgId);
 }
 
 // ── Bot Commands ──────────────────────────────────────────
@@ -645,6 +673,7 @@ function setupCommands() {
 
   bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
+    const msgId = query.message.message_id; // edit this message in-place
 
     try {
       await bot.answerCallbackQuery(query.id);
@@ -653,10 +682,10 @@ function setupCommands() {
     try {
       // Main menu doesn't need auth
       if (query.data === 'menu') {
-        return sendMainMenu(chatId);
+        return sendMainMenu(chatId, msgId);
       }
       if (query.data === 'menu_help') {
-        return handleHelp(chatId);
+        return handleHelp(chatId, msgId);
       }
 
       const ctx = await resolveUser(chatId);
@@ -665,23 +694,23 @@ function setupCommands() {
       switch (query.data) {
         case 'menu_devices':
         case 'refresh_devices':
-          return handleDevices(chatId, ctx);
+          return handleDevices(chatId, ctx, msgId);
 
         case 'menu_alarms':
         case 'refresh_alarms':
-          return handleAlarms(chatId, ctx);
+          return handleAlarms(chatId, ctx, msgId);
 
         case 'menu_tenant':
-          return handleTenantList(chatId, ctx);
+          return handleTenantList(chatId, ctx, msgId);
 
         default:
           if (query.data.startsWith('tenant_')) {
             const slug = query.data.slice(7);
-            return handleTenantSwitch(chatId, ctx, slug);
+            return handleTenantSwitch(chatId, ctx, slug, msgId);
           }
           if (query.data.startsWith('status_')) {
             const deviceId = query.data.slice(7);
-            return handleStatus(chatId, ctx, deviceId);
+            return handleStatus(chatId, ctx, deviceId, msgId);
           }
       }
     } catch (err) {
