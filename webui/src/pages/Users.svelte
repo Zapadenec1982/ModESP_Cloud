@@ -154,11 +154,13 @@
   let deviceSearch = ''
 
   $: filteredDevices = deviceSearch
-    ? allDevices.filter(d =>
-        (d.name || '').toLowerCase().includes(deviceSearch.toLowerCase()) ||
-        (d.mqtt_device_id || '').toLowerCase().includes(deviceSearch.toLowerCase()) ||
-        (d.model || '').toLowerCase().includes(deviceSearch.toLowerCase())
-      )
+    ? allDevices.filter(d => {
+        const q = deviceSearch.toLowerCase()
+        return (d.name || '').toLowerCase().includes(q) ||
+          (d.mqtt_device_id || '').toLowerCase().includes(q) ||
+          (d.location || '').toLowerCase().includes(q) ||
+          (d.model || '').toLowerCase().includes(q)
+      })
     : allDevices
 
   async function openDevices(user) {
@@ -167,8 +169,10 @@
     showDevices = true
     deviceSearch = ''
     try {
+      // Superadmin: scope devices to target user's tenant
+      const devParams = $isSuperAdmin && user.tenant_id ? { tenant_id: user.tenant_id } : {}
       const [devs, assigned] = await Promise.all([
-        getDevices(),
+        getDevices(devParams),
         getUserDevices(user.id),
       ])
       allDevices = (devs?.data || devs || []).filter(d => d.status === 'active')
@@ -597,6 +601,9 @@
                     <span class="device-check-name">{device.name || device.mqtt_device_id}</span>
                     {#if device.name}
                       <span class="device-check-id">{device.mqtt_device_id}</span>
+                    {/if}
+                    {#if device.location}
+                      <span class="device-check-location">{device.location}</span>
                     {/if}
                     {#if device.model}
                       <span class="device-check-model">{device.model}</span>
@@ -1097,6 +1104,11 @@
     font-size: var(--text-xs);
     color: var(--text-muted);
     font-family: var(--font-mono, monospace);
+  }
+
+  .device-check-location {
+    font-size: var(--text-xs);
+    color: var(--text-secondary, var(--text-muted));
   }
 
   .device-check-model {

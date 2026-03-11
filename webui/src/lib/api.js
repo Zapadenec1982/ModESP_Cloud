@@ -339,8 +339,9 @@ export async function checkAuthEnabled() {
 
 // ── Devices ──────────────────────────────────────────────
 
-export function getDevices() {
-  return request('/devices');
+export function getDevices(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request('/devices' + (qs ? `?${qs}` : ''));
 }
 
 export function getDevice(id) {

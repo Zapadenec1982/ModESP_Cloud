@@ -61,6 +61,8 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     let sql, params;
     if (isSuperadmin) {
       // Cross-tenant: all active devices with tenant info
+      // Optional ?tenant_id= filter for scoping (e.g. device assignment modal)
+      const filterTenant = req.query.tenant_id;
       sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
                     d.model, d.comment, d.manufactured_at, d.firmware_version,
                     d.online, d.status, d.last_seen, d.created_at,
@@ -69,6 +71,10 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
              LEFT JOIN tenants t ON t.id = d.tenant_id
              WHERE d.status = 'active'`;
       params = [];
+      if (filterTenant) {
+        params.push(filterTenant);
+        sql += ` AND d.tenant_id = $${params.length}`;
+      }
     } else {
       sql = `SELECT id, mqtt_device_id, name, location, serial_number,
                     model, comment, manufactured_at, firmware_version,

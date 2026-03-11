@@ -574,14 +574,19 @@ router.delete('/:id/tenants/:tenantId', async (req, res) => {
 
 router.get('/:id/devices', async (req, res) => {
   try {
-    // Verify target user is in the same tenant
-    const userCheck = await db.query(
-      'SELECT id FROM users WHERE id = $1 AND tenant_id = $2',
-      [req.params.id, req.tenantId]
-    );
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+
+    // Lookup target user — superadmin can see any user, others only same tenant
+    const userSql = isSuperAdmin
+      ? 'SELECT id, tenant_id FROM users WHERE id = $1'
+      : 'SELECT id, tenant_id FROM users WHERE id = $1 AND tenant_id = $2';
+    const userParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
+    const userCheck = await db.query(userSql, userParams);
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
     }
+
+    const targetTenantId = userCheck.rows[0].tenant_id;
 
     const { rows } = await db.query(
       `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.model, d.online
@@ -589,7 +594,7 @@ router.get('/:id/devices', async (req, res) => {
        JOIN devices d ON d.id = ud.device_id
        WHERE ud.user_id = $1 AND d.tenant_id = $2
        ORDER BY d.name NULLS LAST, d.mqtt_device_id`,
-      [req.params.id, req.tenantId]
+      [req.params.id, targetTenantId]
     );
 
     res.json({ data: rows });
@@ -617,23 +622,27 @@ router.put('/:id/devices', async (req, res) => {
 
   const { device_ids } = parsed.data;
   const userId = req.params.id;
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
   try {
-    // Verify target user belongs to this tenant
-    const userCheck = await db.query(
-      'SELECT id FROM users WHERE id = $1 AND tenant_id = $2',
-      [userId, req.tenantId]
-    );
+    // Lookup target user — superadmin can manage any user, others only same tenant
+    const userSql = isSuperAdmin
+      ? 'SELECT id, tenant_id FROM users WHERE id = $1'
+      : 'SELECT id, tenant_id FROM users WHERE id = $1 AND tenant_id = $2';
+    const userParams = isSuperAdmin ? [userId] : [userId, req.tenantId];
+    const userCheck = await db.query(userSql, userParams);
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
     }
 
-    // Verify all device_ids belong to this tenant
+    const targetTenantId = userCheck.rows[0].tenant_id;
+
+    // Verify all device_ids belong to the target user's tenant
     if (device_ids.length > 0) {
       const devCheck = await db.query(
         `SELECT COUNT(*)::int AS count FROM devices
          WHERE id = ANY($1) AND tenant_id = $2`,
-        [device_ids, req.tenantId]
+        [device_ids, targetTenantId]
       );
       if (devCheck.rows[0].count !== device_ids.length) {
         return res.status(400).json({
