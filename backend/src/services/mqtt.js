@@ -144,7 +144,7 @@ async function shutdown() {
   // Flush remaining buffered events before closing
   if (eventBuffer.length > 0) {
     logger.info({ count: eventBuffer.length }, 'Flushing event buffer on shutdown');
-    await flushEvents().catch(() => {});
+    await flushEvents().catch(err => logger.error({ err }, 'Failed to flush events on shutdown'));
   }
 
   if (client) {

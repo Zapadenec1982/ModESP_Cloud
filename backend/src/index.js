@@ -343,15 +343,17 @@ async function main() {
 // ── Graceful shutdown ─────────────────────────────────────
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
-  otaSvc.shutdown();
-  pushSvc.shutdown();
-  telegramSvc.shutdown();
-  fcmSvc.shutdown();
-  webpushSvc.shutdown();
-  wsSvc.shutdown();
+  await Promise.allSettled([
+    otaSvc.shutdown(),
+    pushSvc.shutdown(),
+    telegramSvc.shutdown(),
+    fcmSvc.shutdown(),
+    webpushSvc.shutdown(),
+    wsSvc.shutdown(),
+  ]);
   await mqttSvc.shutdown();
   await db.shutdown();
-  server.close();
+  await new Promise(resolve => server.close(resolve));
   process.exit(0);
 }
 
