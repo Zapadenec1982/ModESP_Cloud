@@ -1,6 +1,10 @@
 # Claude Code local settings (may contain secrets in allow-list)
 .claude/
 
+# Claude Code working notes
+CLAUDE.md
+ARCHITECTURE_INTERNAL.md
+
 # Dependencies
 node_modules/
 
@@ -15,3 +19,8 @@ nul
 
 # Build output
 D*build_output.log
+
+# Dev artifacts
+test_ota.js
+/package.json
+/package-lock.json

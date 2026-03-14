@@ -137,7 +137,7 @@ ModESP_Cloud/
 │   ├── DEPLOYMENT.md             # VPS setup, міграції, cron
 │   └── ROADMAP.md                # Фази розробки
 │
-└── CLAUDE.md                     # Повна інструкція проекту
+└── LICENSE                        # PolyForm Noncommercial License
 ```
 
 ---
@@ -290,13 +290,33 @@ sudo systemctl restart modesp-backend
 
 | Документ | Опис |
 |----------|------|
-| [`CLAUDE.md`](CLAUDE.md) | Повна інструкція проекту (архітектура, правила, структура) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Компоненти системи, потоки даних, безпека |
 | [`docs/MQTT_PROTOCOL.md`](docs/MQTT_PROTOCOL.md) | MQTT v1 протокол, топіки, формати повідомлень |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Схема БД, партиціонування, індекси |
 | [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 30+ REST endpoints з прикладами |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Розгортання на VPS, міграції, cron |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Фази розробки, прогрес |
+
+---
+
+## License
+
+This project is licensed under the [**PolyForm Noncommercial License 1.0.0**](LICENSE).
+
+You are free to view, learn from, and use this code for personal and non-commercial purposes.
+**Commercial use requires written permission** from the author.
+
+For commercial licensing inquiries, contact: [github.com/Zapadenec1982](https://github.com/Zapadenec1982)
+
+---
+
+## Author
+
+**Oleksandr Tepliak** — Full-Stack IoT Engineer, Ukraine
+
+- Industrial IoT cloud platforms
+- Multi-tenant SaaS architecture
+- ESP32 firmware + Node.js backend + Svelte frontend
 
 ---
 

@@ -12,9 +12,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: modesp_cloud
-      POSTGRES_USER: modesp_cloud
-      POSTGRES_PASSWORD: dev_password
+      POSTGRES_DB: ${POSTGRES_DB:-modesp_cloud}
+      POSTGRES_USER: ${POSTGRES_USER:-modesp_cloud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro

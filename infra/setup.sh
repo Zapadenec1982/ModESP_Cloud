@@ -45,7 +45,8 @@ fi
 
 # ── 4. PostgreSQL ──────────────────────────────────────────
 echo "[4/8] Setting up PostgreSQL..."
-sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD 'CHANGE_ME';" 2>/dev/null || true
+DB_PASS="${DB_PASS:?ERROR: Set DB_PASS environment variable before running setup}"
+sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || true
 sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
 sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
 
@@ -58,9 +59,9 @@ cp "$APP_DIR/infra/mosquitto/mosquitto.conf" /etc/mosquitto/conf.d/modesp.conf
 cp "$APP_DIR/infra/mosquitto/acl.conf" /etc/mosquitto/acl.conf
 
 # Create password file
-mosquitto_passwd -c -b /etc/mosquitto/passwd modesp_backend "CHANGE_ME_BACKEND"
-# Add device password (example)
-# mosquitto_passwd -b /etc/mosquitto/passwd device_F27FCD "CHANGE_ME_DEVICE"
+MQTT_BACKEND_PASS="${MQTT_BACKEND_PASS:?ERROR: Set MQTT_BACKEND_PASS environment variable}"
+mosquitto_passwd -c -b /etc/mosquitto/passwd modesp_backend "$MQTT_BACKEND_PASS"
+# Add device passwords via API after deployment
 
 # TLS certs directory (symlink after certbot)
 mkdir -p /etc/mosquitto/certs
