@@ -738,4 +738,77 @@ router.delete('/:id/devices/:deviceId', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════
+// ── Push Subscriptions (Web Push API) ────────────────────
+// ══════════════════════════════════════════════════════════
+
+const pushSubSchema = z.object({
+  endpoint:   z.string().url(),
+  keys: z.object({
+    p256dh: z.string().min(1),
+    auth:   z.string().min(1),
+  }),
+});
+
+// POST /users/me/push-subscription — save Web Push subscription
+router.post('/me/push-subscription', async (req, res) => {
+  const parsed = pushSubSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: parsed.error.issues[0].message,
+      status: 400,
+    });
+  }
+
+  const { endpoint, keys } = parsed.data;
+  const userId   = req.user.id || req.user.sub;
+  const tenantId = req.tenantId;
+
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO push_subscriptions (user_id, tenant_id, endpoint, key_p256dh, key_auth, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (endpoint) DO UPDATE SET
+         key_p256dh = EXCLUDED.key_p256dh,
+         key_auth   = EXCLUDED.key_auth,
+         user_id    = EXCLUDED.user_id,
+         tenant_id  = EXCLUDED.tenant_id,
+         active     = true,
+         user_agent = EXCLUDED.user_agent
+       RETURNING id`,
+      [userId, tenantId, endpoint, keys.p256dh, keys.auth, req.headers['user-agent'] || null]
+    );
+    res.json({ data: { id: rows[0].id, message: 'Subscription saved' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Save push subscription failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to save subscription', status: 500 });
+  }
+});
+
+// DELETE /users/me/push-subscription — remove Web Push subscription by endpoint
+router.delete('/me/push-subscription', async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: 'endpoint is required',
+      status: 400,
+    });
+  }
+
+  const userId = req.user.id || req.user.sub;
+
+  try {
+    await db.query(
+      `DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2`,
+      [userId, endpoint]
+    );
+    res.json({ data: { message: 'Subscription removed' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Delete push subscription failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to remove subscription', status: 500 });
+  }
+});
+
 module.exports = router;

@@ -203,23 +203,24 @@ function handleDeviceStatus(evt) {
 /**
  * Send notification to all users who have telegram_id linked
  * and have access to this device (admin=all, others=user_devices).
+ * Also dispatches to Web Push subscriptions.
  */
 async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
-  const handler = channels.get('telegram');
-  if (!handler) return;
+  // Enrich payload with device UUID for deep links
+  payload.deviceUuid = deviceUuid;
 
-  // Get all linked users who have access to this tenant:
-  // 1. Primary tenant match (users.tenant_id)
-  // 2. Multi-tenant membership (user_tenants)
-  // 3. Superadmin (sees all tenants)
+  // Get all users who have access to this tenant
   const { rows: users } = await db.query(
     `SELECT DISTINCT u.id, u.role, u.telegram_id
      FROM users u
      LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
-     WHERE u.telegram_id IS NOT NULL AND u.active = true
+     WHERE u.active = true
        AND (u.tenant_id = $1 OR ut.tenant_id IS NOT NULL OR u.role = 'superadmin')`,
     [tenantId]
   );
+
+  const tgHandler = channels.get('telegram');
+  const wpHandler = channels.get('webpush');
 
   for (const user of users) {
     // RBAC: admin/superadmin see all; others need user_devices entry
@@ -232,15 +233,44 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
       if (!access.length) continue;
     }
 
-    try {
-      await handler.send(String(user.telegram_id), payload);
-      logger.info({
-        channel: 'telegram', userId: user.id,
-        deviceId, active: payload.active,
-        type: payload.type || 'alarm',
-      }, 'User push sent');
-    } catch (err) {
-      logger.error({ err, userId: user.id, telegram_id: user.telegram_id }, 'User push send failed');
+    // Telegram
+    if (tgHandler && user.telegram_id) {
+      try {
+        await tgHandler.send(String(user.telegram_id), payload);
+        logger.info({
+          channel: 'telegram', userId: user.id,
+          deviceId, active: payload.active,
+          type: payload.type || 'alarm',
+        }, 'User push sent');
+      } catch (err) {
+        logger.error({ err, userId: user.id, telegram_id: user.telegram_id }, 'Telegram push send failed');
+      }
+    }
+
+    // Web Push — send to all active subscriptions for this user
+    if (wpHandler) {
+      try {
+        const { rows: subs } = await db.query(
+          `SELECT endpoint, key_p256dh, key_auth FROM push_subscriptions
+           WHERE user_id = $1 AND active = true`,
+          [user.id]
+        );
+        for (const sub of subs) {
+          const subscription = {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.key_p256dh, auth: sub.key_auth }
+          };
+          try {
+            await wpHandler.send(subscription, payload);
+            logger.info({ channel: 'webpush', userId: user.id, deviceId }, 'WebPush sent');
+          } catch (err) {
+            // 410/404 handled inside webpush.js (deactivates sub)
+            logger.debug({ err: err.statusCode || err.message, userId: user.id }, 'WebPush send failed');
+          }
+        }
+      } catch (err) {
+        logger.error({ err, userId: user.id }, 'WebPush dispatch error');
+      }
     }
   }
 }

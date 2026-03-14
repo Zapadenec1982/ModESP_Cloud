@@ -13,6 +13,7 @@ const wsSvc       = require('./services/ws');
 const pushSvc     = require('./services/push');
 const telegramSvc = require('./services/telegram');
 const fcmSvc      = require('./services/fcm');
+const webpushSvc  = require('./services/webpush');
 const otaSvc      = require('./services/ota');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize } = require('./middleware/auth');
@@ -72,6 +73,19 @@ app.get('/api/health', async (_req, res) => {
 const stateMeta = require('./config/state_meta.json');
 app.get('/api/meta', (_req, res) => {
   res.json(stateMeta);
+});
+
+// ── VAPID public key for Web Push (no auth — needed before subscription) ──
+app.get('/api/vapid-public-key', (_req, res) => {
+  const key = process.env.VAPID_PUBLIC_KEY;
+  if (!key) {
+    return res.status(503).json({
+      error: 'not_configured',
+      message: 'Web Push not configured',
+      status: 503,
+    });
+  }
+  res.json({ data: { publicKey: key } });
 });
 
 // ── Device self-registration (no JWT, requires bootstrap key) ───────
@@ -307,11 +321,13 @@ async function main() {
   // 3. WebSocket
   wsSvc.attach(server, logger);
 
-  // 4. Push notifications (Telegram + FCM)
+  // 4. Push notifications (Telegram + FCM + Web Push)
   const tgHandler  = telegramSvc.init(logger);
   const fcmHandler = fcmSvc.init(logger);
+  const wpHandler  = webpushSvc.init(logger);
   if (tgHandler)  pushSvc.registerChannel('telegram', tgHandler);
   if (fcmHandler) pushSvc.registerChannel('fcm', fcmHandler);
+  if (wpHandler)  pushSvc.registerChannel('webpush', wpHandler);
   pushSvc.start(logger);
 
   // 5. OTA service (periodic status checker + rollout scheduler)
@@ -331,6 +347,7 @@ async function shutdown(signal) {
   pushSvc.shutdown();
   telegramSvc.shutdown();
   fcmSvc.shutdown();
+  webpushSvc.shutdown();
   wsSvc.shutdown();
   await mqttSvc.shutdown();
   await db.shutdown();
