@@ -41,9 +41,9 @@ async function issueTokens(user, tenantId) {
   const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
 
   await db.query(
-    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3)`,
-    [user.id, tokenHash, expiresAt]
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, tenant_id)
+     VALUES ($1, $2, $3, $4)`,
+    [user.id, tokenHash, expiresAt, tenantId]
   );
 
   return { accessToken, refreshToken };
@@ -317,10 +317,11 @@ router.post('/refresh', async (req, res) => {
   const tokenHash = authSvc.hashRefreshToken(refresh_token);
 
   try {
-    // Find token
+    // Find token — use rt.tenant_id (preserves selected tenant context)
     const { rows } = await db.query(
       `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
-              u.email, u.role, u.tenant_id, u.active
+              COALESCE(rt.tenant_id, u.tenant_id) AS tenant_id,
+              u.email, u.role, u.active
        FROM refresh_tokens rt
        JOIN users u ON u.id = rt.user_id
        WHERE rt.token_hash = $1`,
@@ -369,9 +370,9 @@ router.post('/refresh', async (req, res) => {
     const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
 
     await db.query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3)`,
-      [row.user_id, newTokenHash, expiresAt]
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, tenant_id)
+       VALUES ($1, $2, $3, $4)`,
+      [row.user_id, newTokenHash, expiresAt, row.tenant_id]
     );
 
     // Fetch user's tenants for frontend
