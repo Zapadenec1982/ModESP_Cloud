@@ -219,18 +219,45 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
     [tenantId]
   );
 
+  if (!users.length) return;
+
+  // Batch: fetch device access for non-admin users (avoids N+1)
+  const nonAdminIds = users
+    .filter(u => u.role !== 'admin' && u.role !== 'superadmin')
+    .map(u => u.id);
+  const accessSet = new Set();
+  if (nonAdminIds.length > 0 && deviceUuid) {
+    const { rows: accessRows } = await db.query(
+      `SELECT user_id FROM user_devices WHERE user_id = ANY($1) AND device_id = $2`,
+      [nonAdminIds, deviceUuid]
+    );
+    for (const r of accessRows) accessSet.add(r.user_id);
+  }
+
   const tgHandler = channels.get('telegram');
   const wpHandler = channels.get('webpush');
+
+  // Batch: fetch all push subscriptions for eligible users (avoids N+1)
+  const eligibleUserIds = users
+    .filter(u => u.role === 'admin' || u.role === 'superadmin' || accessSet.has(u.id))
+    .map(u => u.id);
+  let subsByUser = new Map();
+  if (wpHandler && eligibleUserIds.length > 0) {
+    const { rows: allSubs } = await db.query(
+      `SELECT user_id, endpoint, key_p256dh, key_auth FROM push_subscriptions
+       WHERE user_id = ANY($1) AND active = true`,
+      [eligibleUserIds]
+    );
+    for (const sub of allSubs) {
+      if (!subsByUser.has(sub.user_id)) subsByUser.set(sub.user_id, []);
+      subsByUser.get(sub.user_id).push(sub);
+    }
+  }
 
   for (const user of users) {
     // RBAC: admin/superadmin see all; others need user_devices entry
     if (user.role !== 'admin' && user.role !== 'superadmin') {
-      if (!deviceUuid) continue;
-      const { rows: access } = await db.query(
-        'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2 LIMIT 1',
-        [user.id, deviceUuid]
-      );
-      if (!access.length) continue;
+      if (!deviceUuid || !accessSet.has(user.id)) continue;
     }
 
     // Telegram
@@ -248,28 +275,19 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
     }
 
     // Web Push — send to all active subscriptions for this user
-    if (wpHandler) {
-      try {
-        const { rows: subs } = await db.query(
-          `SELECT endpoint, key_p256dh, key_auth FROM push_subscriptions
-           WHERE user_id = $1 AND active = true`,
-          [user.id]
-        );
-        for (const sub of subs) {
-          const subscription = {
-            endpoint: sub.endpoint,
-            keys: { p256dh: sub.key_p256dh, auth: sub.key_auth }
-          };
-          try {
-            await wpHandler.send(subscription, payload);
-            logger.info({ channel: 'webpush', userId: user.id, deviceId }, 'WebPush sent');
-          } catch (err) {
-            // 410/404 handled inside webpush.js (deactivates sub)
-            logger.debug({ err: err.statusCode || err.message, userId: user.id }, 'WebPush send failed');
-          }
+    const userSubs = subsByUser.get(user.id);
+    if (wpHandler && userSubs) {
+      for (const sub of userSubs) {
+        const subscription = {
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.key_p256dh, auth: sub.key_auth }
+        };
+        try {
+          await wpHandler.send(subscription, payload);
+          logger.info({ channel: 'webpush', userId: user.id, deviceId }, 'WebPush sent');
+        } catch (err) {
+          logger.debug({ err: err.statusCode || err.message, userId: user.id }, 'WebPush send failed');
         }
-      } catch (err) {
-        logger.error({ err, userId: user.id }, 'WebPush dispatch error');
       }
     }
   }
