@@ -343,7 +343,7 @@ sudo systemctl restart modesp-backend
 
 **Next phases:** Energy Monitoring & Health Score, Fleet Benchmarking & Anomaly Detection, Webhooks & OpenAPI, PWA.
 
-Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md) | [`docs/ROADMAP_NEXT.md`](docs/ROADMAP_NEXT.md)
+Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 
 ---
 
@@ -357,8 +357,7 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md) | [`docs/ROADMAP_NEXT.md`](do
 | [`docs/DATABASE.md`](docs/DATABASE.md) | DB schema (15 tables), partitioning, indexes |
 | [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 60+ REST endpoints with request/response examples |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | VPS deployment guide, migrations, monitoring |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & progress |
-| [`docs/ROADMAP_NEXT.md`](docs/ROADMAP_NEXT.md) | Future roadmap (Energy, Anomaly Detection, SaaS) |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & future roadmap |
 
 ---
 
