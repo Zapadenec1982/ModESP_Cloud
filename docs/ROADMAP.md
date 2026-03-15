@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅**
+**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅, Security Hardening ✅**
 
 ---
 
@@ -287,6 +287,40 @@
 
 ---
 
+### Фаза 11: Security & Infrastructure Hardening ✅
+**Ціль:** Захист firmware downloads, HTTP security headers, backup automation, password reset.
+
+#### Signed Firmware URLs ✅
+- [x] `firmware-url.js`: HMAC-SHA256 signed URLs (JWT_SECRET, 30-хв expiry)
+- [x] `firmware-download.js`: GET `/api/firmware/dl` (signature verification, path traversal protection)
+- [x] `ota.js`: генерує signed URL замість прямого посилання
+- [x] `index.js`: видалено `express.static('/firmware')`, маршрут зареєстровано ПЕРЕД authenticate middleware
+- [x] Nginx: `/api/firmware/` location з rate limit та 120s read timeout
+
+#### CSP + HSTS ✅
+- [x] Helmet: повна Content Security Policy (self, unsafe-inline для стилів, wss: для WebSocket)
+- [x] Nginx: CSP header в основному та static assets блоках
+- [x] HSTS: додано `preload` директиву в обидва nginx блоки
+
+#### Password Reset ✅
+- [x] Міграція 016: `password_reset_code`, `password_reset_expires` колонки
+- [x] `POST /users/:id/password-reset` — адмін генерує 16-char hex код (30-хв TTL)
+- [x] `POST /auth/reset-password` — публічний endpoint, timing-safe comparison
+- [x] Login.svelte: "Забули пароль?" → форма з email/код/новий пароль
+- [x] Users.svelte: іконка ключа → модалка з згенерованим кодом
+- [x] i18n: uk.js + en.js
+
+#### Backup Automation ✅
+- [x] `backup-postgres.sh`: pg_dump + gzip, GPG шифрування, offsite rsync, 14-днів ретенція
+- [x] systemd timer: `modesp-backup.timer` (щодня 02:00, Persistent=true)
+
+#### Telemetry Partitions ✅
+- [x] `ensure-partitions.js`: lookahead 3→6 місяців
+
+**Результат:** Firmware захищений підписаними URL, HTTP headers відповідають OWASP рекомендаціям, автоматичний backup, можливість скидання пароля без email-сервера.
+
+---
+
 ### Фаза 9a: Bulk Device Import
 **Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
 
@@ -375,3 +409,4 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 - 2026-03-10 — Bugfix session: reset-to-pending ordering (MQTT commands before DB change), heartbeat empty payload guard, credential key standardization (user/pass), go-auth cache fix (300s→5s — root cause of assign loop after credential rotation).
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires), telegram.js full rewrite (user auth, 7 commands, RBAC, multi-tenant), push.js rewrite (alarm cleared, device offline with 2min delay, user-based dispatch, duplicate prevention), users.js 3 new endpoints, WebUI Telegram column + link modal, i18n (uk+en).
 - 2026-03-11 — Phase 8c.1: Telegram Bot UX — persistent reply keyboard, i18n UA/EN with per-chat preference, interactive device status buttons, chat cleanup (auto-delete), NaN temperature fix, device location in status page and all notification types, removed inline menu/refresh/back buttons, setMyCommands, superadmin cross-tenant bypass in device/alarm routes.
+- 2026-03-15 — Phase 11: Security & Infrastructure Hardening — signed firmware URLs (HMAC-SHA256, 30-min expiry), CSP headers (helmet + nginx), HSTS preload, password reset (admin-generated codes, Login page UI, Users page button), backup automation (systemd timer, pg_dump + gzip + GPG + rsync), telemetry partition lookahead 3→6 months.

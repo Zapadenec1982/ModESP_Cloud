@@ -54,7 +54,8 @@ Ubuntu 24.04
 │   │   │       ├── 005_device_model_comment.sql
 │   │   │       ├── 006_device_rbac.sql
 │   │   │       ├── 007_firmware_board_type.sql
-│   │   │       └── 008_mqtt_auth.sql
+│   │   │       ├── 008_mqtt_auth.sql
+│   │   │       └── 016_password_reset.sql
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration
@@ -69,7 +70,11 @@ Ubuntu 24.04
     ├── systemd/
     │   ├── modesp-backend.service
     │   ├── modesp-telemetry-partition.service
-    │   └── modesp-telemetry-partition.timer
+    │   ├── modesp-telemetry-partition.timer
+    │   ├── modesp-backup.service
+    │   └── modesp-backup.timer
+    ├── scripts/
+    │   └── backup-postgres.sh
     ├── nginx/
     └── mosquitto/
 ```
@@ -138,6 +143,9 @@ sudo -u postgres psql -d modesp_cloud \
 
 sudo -u postgres psql -d modesp_cloud \
   -f backend/src/db/migrations/008_mqtt_auth.sql
+
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/016_password_reset.sql
 ```
 
 **Після міграції 006** (RBAC) — призначити всі пристрої існуючим юзерам:
@@ -349,9 +357,13 @@ systemctl daemon-reload
 systemctl enable modesp-backend
 systemctl start modesp-backend
 
-# Таймер партицій телеметрії — створює партицію на 2 місяці вперед, 25-го числа
+# Таймер партицій телеметрії — створює партицію на 6 місяців вперед, 25-го числа
 systemctl enable modesp-telemetry-partition.timer
 systemctl start modesp-telemetry-partition.timer
+
+# Таймер backup — щодня о 02:00
+systemctl enable modesp-backup.timer
+systemctl start modesp-backup.timer
 ```
 
 Зміст `/etc/systemd/system/modesp-backend.service`:
@@ -424,7 +436,7 @@ ln -s /opt/modesp-cloud/webui/dist /var/www/modesp/webui
 nginx -t && systemctl reload nginx
 ```
 
-Повний конфіг: `infra/nginx/modesp.conf` (HTTP→HTTPS redirect, TLS, API proxy, WebSocket, rate limiting).
+Повний конфіг: `infra/nginx/modesp.conf` (HTTP→HTTPS redirect, TLS, API proxy, WebSocket, rate limiting, CSP, HSTS preload).
 
 **Важливо:** Nginx використовує той самий Let's Encrypt сертифікат, що й Mosquitto. Шляхи до сертифікатів — напряму з `/etc/letsencrypt/live/YOUR_DOMAIN/`.
 
@@ -521,20 +533,38 @@ GET /api/health
 
 ## Backup
 
-```bash
-# Щоденний backup PostgreSQL (cron для root)
-sudo crontab -e
-```
+Автоматизований backup через systemd timer (`infra/scripts/backup-postgres.sh`).
 
-```cron
-# Backup БД щодня о 2:00, зберігати 30 днів
-0 2 * * * pg_dump -U postgres modesp_cloud | gzip > /backup/modesp_$(date +\%Y\%m\%d).sql.gz
-30 2 * * * find /backup -name "modesp_*.sql.gz" -mtime +30 -delete
-```
+**Функції:**
+- `pg_dump` + gzip → `/var/backups/modesp/`
+- Опціональне GPG шифрування (`BACKUP_PASSPHRASE` env var)
+- Опціональна offsite копія через rsync (`BACKUP_REMOTE` env var)
+- Retention: 14 днів (автоматична ротація)
 
 ```bash
-# Створити директорію для бекапів
-mkdir -p /backup
+# Встановити скрипт та systemd юніти
+chmod +x /opt/modesp-cloud/infra/scripts/backup-postgres.sh
+cp /opt/modesp-cloud/infra/systemd/modesp-backup.service /etc/systemd/system/
+cp /opt/modesp-cloud/infra/systemd/modesp-backup.timer /etc/systemd/system/
+
+# Активувати
+systemctl daemon-reload
+systemctl enable --now modesp-backup.timer
+
+# Перевірити
+systemctl list-timers modesp-backup.timer
+```
+
+**Конфігурація** (опціонально, через `/opt/modesp-cloud/infra/backup.env`):
+```bash
+BACKUP_PASSPHRASE=your_encryption_passphrase
+BACKUP_REMOTE=u123456@u123456.your-storagebox.de:backups/
+```
+
+**Ручний запуск:**
+```bash
+systemctl start modesp-backup.service
+journalctl -u modesp-backup.service --no-pager -n 5
 ```
 
 ---
@@ -546,3 +576,4 @@ mkdir -p /backup
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-03-15 — Security & Infra: backup automation (systemd timer, GPG, offsite), nginx CSP + HSTS preload, signed firmware URLs, password reset (migration 016), partition lookahead 6 months.

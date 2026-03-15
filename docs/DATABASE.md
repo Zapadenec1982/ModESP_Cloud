@@ -83,6 +83,8 @@ CREATE TABLE users (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_login   TIMESTAMPTZ,
   active       BOOLEAN     NOT NULL DEFAULT true,
+  password_reset_code    VARCHAR(32),       -- hex code, 30-min TTL (migration 016)
+  password_reset_expires TIMESTAMPTZ,       -- expiry timestamp
 
   UNIQUE (tenant_id, email)
 );
@@ -262,3 +264,4 @@ $$ LANGUAGE plpgsql;
 
 - 2026-03-07 — Створено. Початкова схема.
 - 2026-03-07 — Оновлено. Нові колонки devices (mqtt_device_id, serial_number, last_state, status, mqtt_password_hash). State metadata registry. Уточнення щодо server-side семплування.
+- 2026-03-15 — Migration 016: password_reset_code + password_reset_expires колонки в users (admin-generated reset codes).

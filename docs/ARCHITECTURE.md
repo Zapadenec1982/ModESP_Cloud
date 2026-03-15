@@ -199,15 +199,18 @@ modesp/v1/acme/{device}/... (нормальна робота)
 | Шар | Захист |
 |-----|--------|
 | ESP32 → Mosquitto | MQTT over TLS (порт 8883), унікальний логін/пароль на пристрій |
-| Браузер → Nginx | HTTPS (Let's Encrypt), HSTS |
+| Браузер → Nginx | HTTPS (Let's Encrypt), HSTS preload, CSP, X-Frame-Options DENY |
 | WebUI → API | JWT Bearer токен, refresh token rotation |
+| API headers | Helmet (CSP, HSTS, X-Content-Type-Options, noSniff), rate limiting |
 | API → DB | Prepared statements, параметризовані запити |
 | API → MQTT | Валідація команд через state_meta (type, range, writable) |
 | Між тенантами | tenant_id в кожному запиті + PostgreSQL RLS |
 | Per-device RBAC | `user_devices` таблиця, filterDeviceAccess/checkDeviceAccess middleware |
 | Ролі | admin (все), technician (assigned devices, write), viewer (assigned devices, read-only) |
 | Push | FCM server key зберігається тільки на сервері |
-| OTA | Board compatibility перевірка, SHA256 checksum, файли ≤4MB, .bin only |
+| OTA | HMAC-SHA256 підписані URL (30-хв expiry), board compatibility, SHA256 checksum, ≤4MB, .bin only |
+| Password reset | Admin-generated codes (16 hex chars, 30-хв TTL), timing-safe comparison |
+| Backup | Автоматичний pg_dump + gzip (systemd timer, щодня 02:00), GPG шифрування, offsite rsync |
 
 ---
 
@@ -247,3 +250,4 @@ modesp/v1/acme/{device}/... (нормальна робота)
 - 2026-03-07 — Створено. Базова архітектура.
 - 2026-03-07 — Оновлено. Cloud adapter pattern, state aggregation, server-side telemetry sampling, auto-discovery flow, command translation.
 - 2026-03-08 — Оновлено. Phase 7: per-device RBAC (ролі, middleware), scalability оптимізації (batch writes, dedup, retention, backpressure), OTA board compatibility.
+- 2026-03-15 — Security: CSP headers (helmet + nginx), HSTS preload, signed firmware URLs, password reset, backup automation, оновлена таблиця безпеки.
