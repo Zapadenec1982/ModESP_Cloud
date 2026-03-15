@@ -65,8 +65,8 @@ app.use(helmet({
 
 // Rate limiting — auth & registration endpoints
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 20,                    // 20 attempts per IP
+  windowMs: 5 * 60 * 1000,  // 5 min
+  max: 50,                    // 50 attempts per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
@@ -287,8 +287,10 @@ app.use('/api', createAuditMiddleware(logger));
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
-  // Public auth routes (no JWT required, rate-limited)
-  app.use('/api/auth', authLimiter, require('./routes/auth'));
+  // Public auth routes (no JWT required)
+  // Rate limit login only — refresh fires automatically and shouldn't count
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT
   app.use('/api', authenticate);
