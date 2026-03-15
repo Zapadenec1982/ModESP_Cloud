@@ -436,6 +436,11 @@ export default {
     role_updated: 'Role updated',
     user_deactivated: '{0} deactivated',
     user_reactivated: '{0} reactivated',
+    user_deleted: '{0} deleted',
+    confirm_delete: 'Delete user {0}? This action cannot be undone.',
+    deactivate: 'Deactivate',
+    reactivate: 'Reactivate',
+    delete: 'Delete',
     // Device assignment
     devices: 'Devices',
     assign_devices: 'Assign Devices',

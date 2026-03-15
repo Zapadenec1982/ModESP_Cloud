@@ -436,6 +436,11 @@ export default {
     role_updated: 'Роль оновлено',
     user_deactivated: '{0} деактивовано',
     user_reactivated: '{0} реактивовано',
+    user_deleted: '{0} видалено',
+    confirm_delete: 'Видалити користувача {0}? Цю дію неможливо скасувати.',
+    deactivate: 'Деактивувати',
+    reactivate: 'Реактивувати',
+    delete: 'Видалити',
     // Device assignment
     devices: 'Пристрої',
     assign_devices: 'Призначити пристрої',
