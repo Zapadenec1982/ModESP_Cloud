@@ -17,22 +17,46 @@
   let loading = true
   let error = null
   let exportingCsv = false
+  let loadingMore = false
+  let hasMore = true
   let wsUnsub
   let severityFilter = null  // null = all, 'critical', 'warning', 'info'
 
+  const PAGE_SIZE = 50
+
+  // Date range filter
+  let dateFrom = ''
+  let dateTo = ''
+  let appliedFrom = ''
+  let appliedTo = ''
+
+  function defaultDates() {
+    const now = new Date()
+    const weekAgo = new Date(now.getTime() - 7 * 86400000)
+    return {
+      from: weekAgo.toISOString().slice(0, 16),
+      to: now.toISOString().slice(0, 16)
+    }
+  }
+
   async function load() {
+    loading = true
     try {
-      const params = { active: true }
-      if (severityFilter) params.severity = severityFilter
-      const histParams = { limit: 50 }
+      const activeParams = { active: true }
+      if (severityFilter) activeParams.severity = severityFilter
+
+      const histParams = { limit: PAGE_SIZE }
       if (severityFilter) histParams.severity = severityFilter
+      if (appliedFrom) histParams.from = new Date(appliedFrom).toISOString()
+      if (appliedTo) histParams.to = new Date(appliedTo).toISOString()
 
       const [activeRes, histRes] = await Promise.all([
-        getAlarms(params),
+        getAlarms(activeParams),
         getAlarms(histParams),
       ])
       activeAlarms = activeRes.data || activeRes || []
       historyAlarms = (histRes.data || histRes || []).filter(a => !a.active)
+      hasMore = (histRes.data || histRes || []).length >= PAGE_SIZE
       error = null
     } catch (e) {
       error = e.message
@@ -41,8 +65,42 @@
     }
   }
 
+  async function loadMore() {
+    if (loadingMore || !hasMore) return
+    loadingMore = true
+    try {
+      const params = { limit: PAGE_SIZE, offset: historyAlarms.length + activeAlarms.length }
+      if (severityFilter) params.severity = severityFilter
+      if (appliedFrom) params.from = new Date(appliedFrom).toISOString()
+      if (appliedTo) params.to = new Date(appliedTo).toISOString()
+
+      const res = await getAlarms(params)
+      const rows = (res.data || res || []).filter(a => !a.active)
+      historyAlarms = [...historyAlarms, ...rows]
+      hasMore = (res.data || res || []).length >= PAGE_SIZE
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      loadingMore = false
+    }
+  }
+
   function setSeverityFilter(sev) {
     severityFilter = severityFilter === sev ? null : sev
+    load()
+  }
+
+  function applyDateRange() {
+    appliedFrom = dateFrom
+    appliedTo = dateTo
+    load()
+  }
+
+  function resetDateRange() {
+    dateFrom = ''
+    dateTo = ''
+    appliedFrom = ''
+    appliedTo = ''
     load()
   }
 
@@ -55,8 +113,8 @@
   async function handleExportCsv() {
     exportingCsv = true
     try {
-      const from = new Date(Date.now() - 90 * 86400000).toISOString()
-      const to = new Date().toISOString()
+      const from = appliedFrom ? new Date(appliedFrom).toISOString() : new Date(Date.now() - 90 * 86400000).toISOString()
+      const to = appliedTo ? new Date(appliedTo).toISOString() : new Date().toISOString()
       await exportAlarmsCsv(from, to, severityFilter)
       toast.success($t('export.export_success'))
     } catch (e) {
@@ -97,6 +155,30 @@
       <Icon name="download" size={14} />
       {exportingCsv ? $t('export.exporting') : $t('export.export_csv')}
     </button>
+  </div>
+
+  <!-- Date range filter -->
+  <div class="date-range-row">
+    <div class="date-inputs">
+      <label class="date-field">
+        <span class="date-label">{$t('alarm.date_from')}</span>
+        <input type="datetime-local" bind:value={dateFrom} />
+      </label>
+      <label class="date-field">
+        <span class="date-label">{$t('alarm.date_to')}</span>
+        <input type="datetime-local" bind:value={dateTo} />
+      </label>
+      <button class="btn-date-action" on:click={applyDateRange} disabled={!dateFrom && !dateTo}>
+        <Icon name="search" size={14} />
+        {$t('alarm.apply')}
+      </button>
+      {#if appliedFrom || appliedTo}
+        <button class="btn-date-action btn-reset" on:click={resetDateRange}>
+          <Icon name="x" size={14} />
+          {$t('alarm.reset')}
+        </button>
+      {/if}
+    </div>
   </div>
 
   {#if loading}
@@ -150,6 +232,9 @@
       <h2 class="section-title">
         <Icon name="clock" size={18} />
         {$t('alarm.history')}
+        {#if historyAlarms.length > 0}
+          <span class="history-count">{$t('alarm.showing_count').replace('{count}', historyAlarms.length)}</span>
+        {/if}
       </h2>
 
       {#if historyAlarms.length === 0}
@@ -181,6 +266,20 @@
             </button>
           {/each}
         </div>
+
+        <!-- Load more -->
+        {#if hasMore}
+          <button class="btn-load-more" on:click={loadMore} disabled={loadingMore}>
+            {#if loadingMore}
+              <span class="spinner"></span>
+            {:else}
+              <Icon name="chevrons-down" size={16} />
+            {/if}
+            {loadingMore ? '...' : $t('alarm.load_more')}
+          </button>
+        {:else if historyAlarms.length >= PAGE_SIZE}
+          <div class="no-more-hint">{$t('alarm.no_more')}</div>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -271,6 +370,91 @@
     border-color: var(--accent-blue, #3b82f6);
   }
 
+  /* Date range row */
+  .date-range-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .date-inputs {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .date-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .date-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+
+  .date-field input {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .date-field input:focus {
+    border-color: var(--accent-blue);
+  }
+
+  /* Fix datetime-local picker colors for dark theme */
+  .date-field input::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+    cursor: pointer;
+  }
+
+  .btn-date-action {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+    height: fit-content;
+  }
+
+  .btn-date-action:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .btn-date-action:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-date-action.btn-reset {
+    border-color: rgba(248, 81, 73, 0.3);
+    color: var(--accent-red, #ef4444);
+  }
+
+  .btn-date-action.btn-reset:hover {
+    background: rgba(248, 81, 73, 0.08);
+  }
+
   .section {
     display: flex;
     flex-direction: column;
@@ -284,6 +468,13 @@
     font-size: var(--text-lg);
     font-weight: 600;
     color: var(--text-primary);
+  }
+
+  .history-count {
+    font-size: var(--text-xs);
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-left: auto;
   }
 
   .no-alarms {
@@ -397,6 +588,53 @@
     white-space: nowrap;
   }
 
+  /* Load more */
+  .btn-load-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+  }
+
+  .btn-load-more:hover:not(:disabled) {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    background: rgba(88, 166, 255, 0.04);
+  }
+
+  .btn-load-more:disabled {
+    cursor: wait;
+  }
+
+  .no-more-hint {
+    text-align: center;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    padding: var(--space-2);
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
   @media (max-width: 640px) {
     .table-header { display: none; }
     .alarm-row.history {
@@ -404,6 +642,16 @@
     }
     .td:nth-child(4), .td:nth-child(5) {
       font-size: var(--text-xs);
+    }
+    .date-inputs {
+      width: 100%;
+    }
+    .date-field {
+      flex: 1;
+      min-width: 0;
+    }
+    .date-field input {
+      width: 100%;
     }
   }
 </style>

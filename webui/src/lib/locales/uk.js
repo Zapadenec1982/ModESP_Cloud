@@ -253,6 +253,14 @@ export default {
     critical: 'критична',
     warning: 'попередження',
     info: 'інфо',
+    // Date range & pagination
+    date_from: 'Від',
+    date_to: 'До',
+    apply: 'Застосувати',
+    reset: 'Скинути',
+    load_more: 'Завантажити ще',
+    showing_count: 'Показано {count}',
+    no_more: 'Більше немає',
   },
 
   // ── Events ──

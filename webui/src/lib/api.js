@@ -497,12 +497,13 @@ export function getTelemetryStats(deviceId, { hours, from, to, channels, bucket 
 
 // ── Alarms ───────────────────────────────────────────────
 
-export function getAlarms({ active, from, to, limit, severity } = {}) {
+export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
   if (severity) params.set('severity', severity);
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);

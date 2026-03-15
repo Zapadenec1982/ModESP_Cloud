@@ -253,6 +253,14 @@ export default {
     critical: 'critical',
     warning: 'warning',
     info: 'info',
+    // Date range & pagination
+    date_from: 'From',
+    date_to: 'To',
+    apply: 'Apply',
+    reset: 'Reset',
+    load_more: 'Load more',
+    showing_count: 'Showing {count}',
+    no_more: 'No more alarms',
   },
 
   // ── Events ──
