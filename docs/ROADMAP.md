@@ -2,7 +2,9 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅, Audit Logging ✅, 130+ Tests ✅**
+**Production deployed ✅ — 10 phases complete, ESP32 connected, MQTT+TLS, OTA, Multi-Tenant, RBAC, Telegram Bot, Audit Logging, 130+ Tests**
+
+**Next: Phase 11 — Platform Hardening & Compliance (Events API, HACCP Export, Password UI, Alarm Severity)**
 
 ---
 
@@ -314,10 +316,60 @@
 
 ---
 
-### Фаза 11a: Bulk Device Import
+### Фаза 11: Platform Hardening & Compliance
+**Ціль:** Закрити реальні гепи виявлені ревізією (2026-03-15). Пріоритизовано за ROI на основі аналізу конкурентів (Danfoss AK-SM, Dixell XWEB, Carel BOSS), стандартів (HACCP, NIST SP 800-63B Rev 4, ISA-18.2, OWASP) та реального масштабу платформи.
+
+#### 11a: Events API & Device Activity Log
+**Обґрунтування:** Дані events вже пишуться в БД (~150/день/пристрій: compressor on/off, defrost, online/offline), але немає жодного endpoint'у для читання. Частота циклів компресора — головний діагностичний показник.
+
+- [ ] `GET /api/devices/:id/events` — query з `from`, `to`, `type`, `limit` фільтрами
+- [ ] WebUI: Events tab в DeviceDetail (таблиця з фільтрами, хронологія подій)
+- [ ] i18n: events ключі (uk+en)
+
+**Результат:** Технік бачить історію роботи обладнання — цикли компресора, дефрости, перепідключення.
+
+#### 11b: HACCP Data Export (CSV + PDF)
+**Обґрунтування:** HACCP обов'язковий в Україні з 20.09.2019 (Держпродспоживслужба). Форма 498-10/о вимагає журнал реєстрації температурного режиму. Всі конкуренти (Danfoss, Dixell, Carel) мають export. Без цього платформа не є повноцінним рішенням для холодильного обладнання.
+
+- [ ] `GET /api/telemetry/:deviceId/export?from=&to=&format=csv` — CSV download температурних даних
+- [ ] `GET /api/devices/export?format=csv` — CSV інвентаризація пристроїв
+- [ ] `GET /api/alarms/export?from=&to=&format=csv` — CSV export алармів
+- [ ] `GET /api/telemetry/:deviceId/export?format=pdf` — PDF compliance report (HACCP температурний лог)
+- [ ] PDF: заголовок (організація, пристрій, діапазон дат), таблиця (час, температура), min/max/avg summary
+- [ ] WebUI: кнопки "Export CSV" / "Export PDF" на TelemetryChart, Alarms, Dashboard
+- [ ] npm: `pdfkit` або `puppeteer` для генерації PDF
+- [ ] i18n: export ключі (uk+en)
+
+**Результат:** Адмін натискає "Export" → отримує файл для інспектора Держпродспоживслужби або внутрішнього аудиту.
+
+#### 11c: Password Change UI + NIST-aligned Password Policy
+**Обґрунтування:** Backend PUT /users/me вже є, але UI відсутній. NIST SP 800-63B Rev 4 (2025): мінімум 15 символів, НЕ вимагати complexity rules, перевіряти через breach databases.
+
+- [ ] WebUI: "Change Password" модалка з sidebar меню (old/new/confirm, НЕ окрема сторінка)
+- [ ] Backend: збільшити мінімум пароля до 15 символів (NIST-aligned)
+- [ ] Backend: HaveIBeenPwned k-anonymity API check при створенні/зміні пароля
+- [ ] Backend: НЕ додавати complexity rules (NIST явно забороняє)
+- [ ] i18n: password change ключі (uk+en)
+
+**Результат:** Юзер може змінити пароль через UI. Слабкі/скомпрометовані паролі відхиляються.
+
+#### 11d: Alarm Severity Classification
+**Обґрунтування:** ISA-18.2 визначає alarm fatigue як >10 алармів за 10 хв. 2/3 операторів BMS ігнорують сповіщення. Не всі аларми рівні: high_temp = CRITICAL (продукт псується), door_alarm = INFO (нормальна операція). Конкуренти (Danfoss, Copeland) мають Alarm Action Matrix.
+
+- [ ] Backend mqtt.js: severity рівні на ALARM_KEYS (critical / warning / info)
+- [ ] Backend push.js: severity-aware dispatch (critical = завжди, warning = configurable, info = тільки in-app)
+- [ ] Backend push.js: time-delay для nuisance алармів (door_alarm 3хв, pulldown 5хв після дефросту)
+- [ ] DB migration: `alarm_severity` поле або lookup table
+- [ ] WebUI Alarms: severity badge (колір/іконка)
+- [ ] API: severity filter на GET /alarms
+
+**Результат:** Техніки отримують лише важливі сповіщення. Критичні аларми (температура) — завжди, операційні (двері) — з затримкою.
+
+---
+
+### Фаза 12: Bulk Device Import
 **Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
 
-- [ ] Міграція 013: `import_batches` таблиця (трекінг імпортів)
 - [ ] `POST /api/devices/import` — CSV upload, per-row: знайти pending → assign + MQTT creds
 - [ ] `GET /api/devices/pending/export` — експорт pending списку в CSV (заповнити в Excel → re-upload)
 - [ ] `GET /api/devices/import/template` — порожній CSV шаблон з заголовками
@@ -332,28 +384,55 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 
 ---
 
-### Фаза 11b: REST API + OpenAPI (ERP Integration)
-**Ціль:** Зовнішні системи (1C, SAP, CRM) можуть автоматично реєструвати пристрої, отримувати статус, підписуватись на події.
+### Фаза 13: REST API + OpenAPI (ERP Integration)
+**Ціль:** Зовнішні системи можуть отримувати статус пристроїв, підписуватись на події.
+**Статус: ВІДКЛАДЕНО** — реалізувати коли з'явиться перший клієнт з запитом на інтеграцію.
+**Обґрунтування відкладення:** 1С в Україні не інтегрується з IoT-сенсорами програмно. Жоден клієнт не запитує API. Мінімальна реалізація (API key + endpoints) = 4-6 годин коли знадобиться.
 
-- [ ] Міграція 014: `api_keys` таблиця, `api_rate_limits`
-- [ ] API key middleware (`X-API-Key` header, bcrypt hash, rate limiting)
-- [ ] `POST /api/ext/devices` — реєстрація пристроїв (single/batch)
-- [ ] `GET /api/ext/devices` — список пристроїв тенанту
-- [ ] `GET /api/ext/devices/:id/status` — стан + алармі
-- [ ] `PATCH /api/ext/devices/:id` — оновлення метаданих
-- [ ] OpenAPI 3.0 spec (YAML) — Swagger UI для документації
-- [ ] WebUI: сторінка управління API ключами
-- [ ] Webhooks (опціонально): підписка на device_online/offline, alarm events
+- [ ] `api_keys` таблиця (tenant_id, key_hash, name, created_at, last_used_at, active)
+- [ ] API key middleware (`X-API-Key` header, SHA-256 hash, rate limiting)
+- [ ] Expose existing endpoints під API key auth
+- [ ] Webhooks: alarm events, device online/offline (HMAC-SHA256 signed)
+- [ ] OpenAPI 3.0 spec (YAML) — Swagger UI
 
-**Результат:** 1С-розробник відкриває Swagger → бачить всі endpoints → пише інтеграцію.
+**Результат:** Зовнішня система отримує дані через API або webhook.
 
 ---
 
-### Фаза 12: Advanced Analytics (майбутнє)
+### Фаза 14: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
-- [ ] Звіти для клієнтів (PDF, email)
+
+---
+
+## Ревізія та аналіз конкурентів (2026-03-15)
+
+### Що досліджено
+Порівняння з AWS IoT, Azure IoT Hub, ThingsBoard, Blynk, Losant, Danfoss AK-SM 800, Dixell XWEB, Carel BOSS. Аналіз стандартів: HACCP (Україна, з 2019), NIST SP 800-63B Rev 4, ISA-18.2 (alarm management), OWASP, IEC 62443.
+
+### Що підтверджено як реальна потреба
+- **HACCP data export** — обов'язковий за законодавством, всі конкуренти мають
+- **Events API** — дані пишуться, але недоступні (dead data)
+- **Password change UI** — backend є, UI немає
+- **Alarm severity** — ISA-18.2 підтверджує alarm fatigue як реальну проблему
+- **NIST password policy** — мінімум 15 символів, breach check, НЕ complexity rules
+
+### Що відхилено як over-engineering для поточного масштабу
+- **TOTP 2FA** — конкуренти не мають (Dixell: Admin/Admin), IEC 62443 SL 1-2 не вимагає, 40-60 год розробки для 10 юзерів
+- **Account lockout** — OWASP: lockout = DoS вектор, rate limiting достатній, для 10 юзерів з компресорами lockout = операційний ризик
+- **Device tags/groups** — при <100 пристроях location+model покривають 80-90% потреб, PostgreSQL TEXT[] = 2 год коли знадобиться
+- **API keys / ERP** — жоден клієнт не запитує, 1С не інтегрується з IoT
+- **Quiet hours** — неприйнятно для холодильного обладнання, HACCP вимагає 24/7 реакції
+- **Per-alarm-type UI** — 48 чекбоксів ніхто не налаштує правильно, severity classification ефективніший
+- **Timezone per-user** — Україна = 1 часовий пояс
+- **Dedicated Settings page** — модалка достатня для <50 юзерів (ThingsBoard, Blynk так само)
+
+### Аудит кодової бази — знахідки
+- **Критичних: 0** ✅
+- Console.log у фронтенді (12 шт) — всі навмисні з [WS]/[Auth] префіксами, не debug
+- schema.sql не синхронізований з міграціями — косметично, тести працюють (schema + migrations)
+- Дублювання request()/requestFull() в api.js — low priority refactor
 
 ---
 
@@ -402,3 +481,6 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 - 2026-03-10 — Bugfix session: reset-to-pending ordering (MQTT commands before DB change), heartbeat empty payload guard, credential key standardization (user/pass), go-auth cache fix (300s→5s — root cause of assign loop after credential rotation).
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires), telegram.js full rewrite (user auth, 7 commands, RBAC, multi-tenant), push.js rewrite (alarm cleared, device offline with 2min delay, user-based dispatch, duplicate prevention), users.js 3 new endpoints, WebUI Telegram column + link modal, i18n (uk+en).
 - 2026-03-11 — Phase 8c.1: Telegram Bot UX — persistent reply keyboard, i18n UA/EN with per-chat preference, interactive device status buttons, chat cleanup (auto-delete), NaN temperature fix, device location in status page and all notification types, removed inline menu/refresh/back buttons, setMyCommands, superadmin cross-tenant bypass in device/alarm routes.
+- 2026-03-15 — Documentation refactoring: README rewritten for portfolio (EN), AGENTS.md updated, ARCHITECTURE_INTERNAL.md synced, docs updated.
+- 2026-03-15 — Access control fixes: Pending Devices sidebar visibility (admin-only), Firmware page access for technicians (view+deploy assigned, admin-only: upload/delete/rollout), user hard delete with FK cleanup.
+- 2026-03-15 — Full platform audit & competitor research. Compared with AWS IoT, ThingsBoard, Danfoss AK-SM 800, Dixell XWEB, Carel BOSS. Analyzed HACCP (UA law), NIST 800-63B Rev 4, ISA-18.2, OWASP, IEC 62443. Roadmap restructured: Phase 11 (Platform Hardening — events API, HACCP export, password UI, alarm severity), Phase 12 (Bulk Import), Phase 13 (API keys — deferred), Phase 14 (Analytics). Rejected: TOTP 2FA, account lockout, device tags, quiet hours, dedicated Settings page — all over-engineering at current scale.
