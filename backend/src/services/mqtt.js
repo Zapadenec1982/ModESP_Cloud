@@ -251,7 +251,7 @@ function parseScalar(payload) {
 
 // ── Handlers ──────────────────────────────────────────────
 
-function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
+async function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   const value = parseScalar(rawPayload);
   const now   = Date.now();
 
@@ -283,7 +283,7 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   if (ALARM_KEYS.has(key)) {
     const prev = state[key];
     if (prev !== undefined && prev !== value) {
-      detectAlarm(tenantSlug, deviceId, key, value, state);
+      await detectAlarm(tenantSlug, deviceId, key, value, state);
     }
   }
 
@@ -429,7 +429,7 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
 const pendingAlarms = new Map();  // "deviceId:alarmCode" -> setTimeout handle
 const NUISANCE_DELAY = { door_alarm: 120000, pulldown_alarm: 300000 };  // 2min, 5min
 
-function detectAlarm(tenantSlug, deviceId, key, value, state) {
+async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
   const alarmCode  = key.replace('protection.', '');
   const severity   = alarmSeverity(alarmCode);
@@ -457,24 +457,32 @@ function detectAlarm(tenantSlug, deviceId, key, value, state) {
       logger.debug({ deviceId, alarmCode }, 'Nuisance alarm cancelled (transient)');
       return;
     }
-    // Alarm cleared
+    // Alarm cleared — await DB before emitting to avoid race condition
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
-    db.query(
-      `UPDATE alarms SET active = false, cleared_at = NOW()
-       WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
-      [tenantInfo.id, deviceId, alarmCode]
-    ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm'));
+    try {
+      await db.query(
+        `UPDATE alarms SET active = false, cleared_at = NOW()
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+        [tenantInfo.id, deviceId, alarmCode]
+      );
+    } catch (err) {
+      logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm');
+    }
     emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
   }
 }
 
-function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
+async function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
   logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
-  db.query(
-    `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
-     VALUES ($1, $2, $3, $4, true, NOW())`,
-    [tenantInfo.id, deviceId, alarmCode, severity]
-  ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm'));
+  try {
+    await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+       VALUES ($1, $2, $3, $4, true, NOW())`,
+      [tenantInfo.id, deviceId, alarmCode, severity]
+    );
+  } catch (err) {
+    logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm');
+  }
   emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
 }
 

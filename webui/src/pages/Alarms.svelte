@@ -177,7 +177,7 @@
                 </Badge>
               </span>
               <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
-              <span class="td text-muted">{timeAgo(alarm.resolved_at)}</span>
+              <span class="td text-muted">{alarm.cleared_at ? timeAgo(alarm.cleared_at) : '—'}</span>
             </button>
           {/each}
         </div>
