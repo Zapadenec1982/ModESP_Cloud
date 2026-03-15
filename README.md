@@ -28,6 +28,8 @@ ModESP Cloud transforms standalone ESP32 refrigeration controllers ([ModESP_v4](
 | **Per-device RBAC** | Admin / Technician / Viewer roles with per-device access control (M:N) |
 | **Auto-discovery** | Zero-touch ESP32 onboarding — pending → assign → auto-reconnect |
 | **Telegram Bot** | User auth, RBAC, bilingual (UA/EN), persistent keyboard, interactive device status |
+| **HACCP data export** | CSV + PDF reports for temperature logs, alarm history, device inventory — HACCP compliance ready |
+| **Event tracking** | Compressor cycles, defrost events, alarm transitions — overlay on telemetry charts |
 | **Audit logging** | Immutable append-only log of all mutations — who did what, when, with before/after changes |
 | **Internationalization** | Ukrainian & English (WebUI + Telegram Bot), light/dark theme |
 
@@ -46,7 +48,7 @@ Node.js Backend (port 3000)
 ├── MqttService       → subscribe to all topics, state aggregation, alarm detection
 ├── DbService         → PostgreSQL connection pool (30 connections)
 ├── WsService         → WebSocket real-time delta broadcasts
-├── ApiService        → Express REST API (53 mutation + query endpoints)
+├── ApiService        → Express REST API (60+ mutation + query endpoints)
 ├── PushService       → FCM + Telegram Bot + Web Push orchestrator
 ├── OtaService        → Fleet firmware deployment with rollback
 ├── AuditMiddleware   → Automatic mutation logging (fire-and-forget)
@@ -116,7 +118,7 @@ ModESP_Cloud/
 │   │   │   ├── webpush.js          # Web Push (VAPID)
 │   │   │   ├── ota.js              # OTA deployment scheduler
 │   │   │   └── auth.js             # JWT token lifecycle
-│   │   ├── routes/                  # REST API endpoints (11 routers)
+│   │   ├── routes/                  # REST API endpoints (13 routers)
 │   │   │   ├── auth.js             # login, refresh, logout, select/switch tenant
 │   │   │   ├── devices.js          # CRUD, commands, service records, MQTT credentials
 │   │   │   ├── telemetry.js        # Time-series queries + bucketed stats
@@ -127,6 +129,7 @@ ModESP_Cloud/
 │   │   │   ├── ota.js              # Deploy, rollout, jobs, pause/resume/cancel
 │   │   │   ├── fleet.js            # Fleet summary
 │   │   │   ├── notifications.js    # Push subscriber management
+│   │   │   ├── export.js           # HACCP data export (CSV + PDF)
 │   │   │   └── audit.js            # Audit log queries (superadmin)
 │   │   ├── middleware/
 │   │   │   ├── auth.js             # JWT verification, role checks, tenant extraction
@@ -169,7 +172,7 @@ ModESP_Cloud/
 │   ├── ARCHITECTURE.md             # System components, data flows, security model
 │   ├── MQTT_PROTOCOL.md            # v1 protocol, topics, message formats
 │   ├── DATABASE.md                 # Schema, partitioning, indexes
-│   ├── API_REFERENCE.md            # 53+ REST endpoints with examples
+│   ├── API_REFERENCE.md            # 60+ REST endpoints with examples
 │   ├── DEPLOYMENT.md               # VPS setup, migrations, cron jobs
 │   └── ROADMAP.md                  # Development phases & progress
 │
@@ -180,7 +183,7 @@ ModESP_Cloud/
 
 ## REST API
 
-53+ endpoints with JWT authorization, per-device RBAC, and Zod validation.
+60+ endpoints with JWT authorization, per-device RBAC, and Zod validation.
 
 | Group | Key Endpoints | Description |
 |-------|--------------|-------------|
@@ -194,6 +197,8 @@ ModESP_Cloud/
 | **Firmware** | `POST /firmware/upload`, `GET /firmware` | Upload/list/delete firmware binaries |
 | **OTA** | `POST /ota/deploy`, `/ota/rollout`, rollout lifecycle | Single + batch deployment with board validation |
 | **Discovery** | `GET /devices/pending`, `POST .../assign`, `POST /devices/register` | Zero-touch onboarding with bootstrap provisioning |
+| **Events** | `GET /devices/:id/events` | Compressor cycles, defrost events, alarm transitions |
+| **Export** | `GET .../export.csv`, `GET .../export.pdf` | HACCP CSV/PDF reports (telemetry, alarms, devices) |
 | **Notifications** | `GET/POST/DELETE /notifications/subscribers` | FCM + Telegram + Web Push subscriptions |
 | **Audit** | `GET /audit-log` | Immutable audit trail (superadmin, filterable) |
 
@@ -333,9 +338,10 @@ sudo systemctl restart modesp-backend
 | 8c | Telegram Bot Redesign (auth, RBAC, i18n, persistent keyboard) | ✅ Complete |
 | 9 | Audit Logging (immutable log, middleware, before/after changes) | ✅ Complete |
 | 10 | Test Infrastructure (Vitest, 130+ tests, 15 test suites) | ✅ Complete |
+| 11 | Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity) | ✅ Complete |
 | — | VPS Production Deployment | ✅ Production |
 
-**Next phases:** Energy Monitoring & Health Score, Fleet Benchmarking & Anomaly Detection, Webhooks & OpenAPI, PDF Reports & PWA.
+**Next phases:** Energy Monitoring & Health Score, Fleet Benchmarking & Anomaly Detection, Webhooks & OpenAPI, PWA.
 
 Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md) | [`docs/ROADMAP_NEXT.md`](docs/ROADMAP_NEXT.md)
 
@@ -345,10 +351,11 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md) | [`docs/ROADMAP_NEXT.md`](do
 
 | Document | Description |
 |----------|-------------|
+| [**`docs/FEATURES.md`**](docs/FEATURES.md) | **All platform capabilities at a glance** ([🇺🇦 Українською](docs/FEATURES_UA.md)) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System components, data flows, security model |
 | [`docs/MQTT_PROTOCOL.md`](docs/MQTT_PROTOCOL.md) | MQTT v1 protocol, topics, message formats |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | DB schema (15 tables), partitioning, indexes |
-| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 53+ REST endpoints with request/response examples |
+| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 60+ REST endpoints with request/response examples |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | VPS deployment guide, migrations, monitoring |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & progress |
 | [`docs/ROADMAP_NEXT.md`](docs/ROADMAP_NEXT.md) | Future roadmap (Energy, Anomaly Detection, SaaS) |
