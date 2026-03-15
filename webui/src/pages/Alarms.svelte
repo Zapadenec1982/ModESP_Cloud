@@ -124,12 +124,19 @@
     }
   }
 
+  let pollInterval
+
   onMount(() => {
     load()
     wsUnsub = on('alarm', () => load())
+    // Poll every 30s as fallback for missed WS events
+    pollInterval = setInterval(() => { if (!loading) load() }, 30000)
   })
 
-  onDestroy(() => wsUnsub?.())
+  onDestroy(() => {
+    wsUnsub?.()
+    clearInterval(pollInterval)
+  })
 </script>
 
 <div class="alarms-page">

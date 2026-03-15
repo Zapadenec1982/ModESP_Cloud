@@ -158,13 +158,19 @@
   }
 
   let wsUnsub
+  let pollInterval
 
   onMount(() => {
     load()
     wsUnsub = on('pending_device', () => load())
+    // Poll every 15s as fallback — pending devices are rare, WS may miss restarts
+    pollInterval = setInterval(load, 15000)
   })
 
-  onDestroy(() => wsUnsub?.())
+  onDestroy(() => {
+    wsUnsub?.()
+    clearInterval(pollInterval)
+  })
 </script>
 
 <div class="pending-page">
