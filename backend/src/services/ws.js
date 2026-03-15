@@ -288,22 +288,24 @@ function broadcast(deviceId, payload) {
  * Superadmins receive all events; others only receive events matching their tenantId.
  */
 function broadcastGlobal(payload) {
+  logger.info({ type: payload.type, globalCount: globalListeners.size }, 'broadcastGlobal');
   if (globalListeners.size === 0) return;
 
   const data = JSON.stringify(payload);
+  let sent = 0;
   for (const ws of globalListeners) {
     if (ws.readyState !== 1 || ws.bufferedAmount >= WS_BACKPRESSURE_BYTES) continue;
 
     // Tenant isolation: superadmin sees all, others only their tenant
     if (AUTH_ENABLED && ws._user && ws._user.role !== 'superadmin') {
-      // For alarm events, resolve tenant from slug; for simplicity, skip
-      // tenant filtering for pending_device (only admins/superadmins see that page)
-      // Pending devices are always tenant='pending', only superadmins see them
+      // Pending devices are only for superadmins
       if (payload.type === 'pending_device') continue;
     }
 
     ws.send(data);
+    sent++;
   }
+  logger.info({ type: payload.type, sent }, 'broadcastGlobal sent');
 }
 
 function sendJSON(ws, obj) {

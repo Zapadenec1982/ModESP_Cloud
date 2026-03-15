@@ -1116,4 +1116,5 @@ module.exports = {
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),
+  emit: emitter.emit.bind(emitter),
 };
