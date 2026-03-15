@@ -509,6 +509,9 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
 
     await mqttSvc.refreshRegistries();
 
+    // Notify WS clients that pending device was assigned
+    mqttSvc.emit('pending_device', { deviceId: mqttId, action: 'assigned' });
+
     res.json({
       data: {
         device_id: rows[0].id,

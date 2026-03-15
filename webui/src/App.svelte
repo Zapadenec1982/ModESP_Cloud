@@ -4,7 +4,7 @@
   import { wrap } from 'svelte-spa-router/wrap'
   import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
-  import { connect, disconnect, reconnect, on } from './lib/ws.js'
+  import { connect, disconnect, reconnect, on, subscribeGlobal } from './lib/ws.js'
   import { t } from './lib/i18n.js'
   import Sidebar from './components/layout/Sidebar.svelte'
   import MobileHeader from './components/layout/MobileHeader.svelte'
@@ -92,6 +92,7 @@
     }
     booting = false
     connect()
+    subscribeGlobal()
     // Small delay ensures access token is fully set in memory after restoreSession()
     // before firing API requests (prevents spurious 401 on first request)
     await refreshCounts()

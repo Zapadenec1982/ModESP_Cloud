@@ -598,11 +598,15 @@ function ensureDevice(tenantSlug, deviceId) {
      VALUES ($1, $2, $3, true, NOW())
      ON CONFLICT (mqtt_device_id) DO NOTHING`,
     [tenantInfo.id, deviceId, status]
-  ).then(() => {
+  ).then((res) => {
     // Set bootstrap credentials (mqtt_username + shared password hash)
     if (BOOTSTRAP_HASH) {
       mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
         .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
+    }
+    // Notify WS clients about new pending device
+    if (res.rowCount > 0 && status === 'pending') {
+      emitter.emit('pending_device', { deviceId, action: 'added' });
     }
   }).catch(err => {
     logger.error({ err, deviceId }, 'Failed to auto-discover device');

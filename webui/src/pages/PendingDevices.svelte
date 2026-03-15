@@ -1,6 +1,7 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { getPendingDevices, assignDevice, deletePendingDevice, getTenants } from '../lib/api.js'
+  import { on } from '../lib/ws.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
@@ -156,7 +157,14 @@
     }
   }
 
-  onMount(load)
+  let wsUnsub
+
+  onMount(() => {
+    load()
+    wsUnsub = on('pending_device', () => load())
+  })
+
+  onDestroy(() => wsUnsub?.())
 </script>
 
 <div class="pending-page">
