@@ -6,6 +6,7 @@ const crypto       = require('crypto');
 const path         = require('path');
 const fs           = require('fs');
 const db           = require('../services/db');
+const { authorize } = require('../middleware/auth');
 
 const router = Router();
 
@@ -31,8 +32,8 @@ const upload = multer({
   },
 });
 
-// ── POST /api/firmware/upload ─────────────────────────────
-router.post('/upload', upload.single('file'), async (req, res, next) => {
+// ── POST /api/firmware/upload ───────────────── (admin only)
+router.post('/upload', authorize('admin'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -157,8 +158,8 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ── DELETE /api/firmware/:id ──────────────────────────────
-router.delete('/:id', async (req, res, next) => {
+// ── DELETE /api/firmware/:id ────────────────── (admin only)
+router.delete('/:id', authorize('admin'), async (req, res, next) => {
   try {
     // Check no active OTA jobs reference this firmware
     const activeJobs = await db.query(

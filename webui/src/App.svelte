@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
   import { wrap } from 'svelte-spa-router/wrap'
-  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, sidebarCollapsed } from './lib/stores.js'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
   import { connect, disconnect, reconnect, on } from './lib/ws.js'
   import { t } from './lib/i18n.js'
@@ -35,13 +35,20 @@
     return sa
   }
 
+  // Technician+ route guard (firmware page)
+  function canWriteCheck() {
+    let cw = false
+    canWrite.subscribe(v => cw = v)()
+    return cw
+  }
+
   const routes = {
     '/':                Dashboard,
     '/device/:id':      DeviceDetail,
     '/alarms':          Alarms,
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/notifications':   Notifications,
-    '/firmware':        wrap({ component: Firmware, conditions: [isAdminCheck] }),
+    '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),

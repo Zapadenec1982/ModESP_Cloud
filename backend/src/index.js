@@ -296,8 +296,8 @@ if (AUTH_ENABLED) {
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
-  app.use('/api/firmware', authorize('admin'), require('./routes/firmware'));
-  app.use('/api/ota',      authorize('admin'), require('./routes/ota'));
+  app.use('/api/firmware', require('./routes/firmware'));
+  app.use('/api/ota',      require('./routes/ota'));
   app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
 } else {
   // Dev fallback: tenant from header
