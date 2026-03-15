@@ -14,6 +14,30 @@ mqttSvc.isConnected = () => true;
 mqttSvc.getDeviceState = () => null;
 mqttSvc.getDeviceMeta = () => null;
 mqttSvc.getDeviceRoutingSlug = () => 'test';
+mqttSvc.recordAssign = () => {};
+mqttSvc.getBootstrapHash = () => '$2b$12$stubbedHashValue';
+mqttSvc.requestFullState = () => {};
+mqttSvc.updateDeviceStateMap = () => {};
+
+// Stub mqtt-auth service
+const mqttAuth = require('../../src/services/mqtt-auth');
+mqttAuth.provisionDevice = async (_t, mqttId) => ({ username: `device_${mqttId}`, password: 'test-pass-123' });
+mqttAuth.rotatePassword = async (_t, mqttId) => ({ username: `device_${mqttId}`, password: 'rotated-pass-456' });
+mqttAuth.revokeCredentials = async () => {};
+
+// Stub OTA service
+const otaSvc = require('../../src/services/ota');
+otaSvc.deploySingle = async (tenantId, slug, fwId, devId) => ({
+  job_id: '00000000-0000-0000-0000-000000000099', device_id: devId,
+  firmware_version: '1.0.0', status: 'sent',
+});
+otaSvc.createRollout = async () => ({
+  rollout_id: '00000000-0000-0000-0000-000000000088', firmware_version: '1.0.0',
+  total_devices: 2, skipped_incompatible: 0, batch_size: 5, batch_interval_s: 300, status: 'running',
+});
+otaSvc.pauseRollout = async () => ({ status: 'paused' });
+otaSvc.resumeRollout = async () => ({ status: 'running' });
+otaSvc.cancelRollout = async () => ({ status: 'cancelled' });
 
 // Stub push service
 const pushSvc = require('../../src/services/push');
@@ -43,6 +67,10 @@ function createTestApp() {
   // Admin-only routes
   app.use('/api/tenants',  authorize('admin'), require('../../src/routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('../../src/routes/users'));
+
+  // Admin-only routes (continued)
+  app.use('/api/firmware', authorize('admin'), require('../../src/routes/firmware'));
+  app.use('/api/ota',      authorize('admin'), require('../../src/routes/ota'));
 
   // Superadmin-only
   app.use('/api/audit-log', requireSuperadmin, require('../../src/routes/audit'));
