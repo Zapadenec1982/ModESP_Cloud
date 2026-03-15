@@ -5,6 +5,8 @@ require('dotenv').config();
 const http     = require('http');
 const express  = require('express');
 const cors     = require('cors');
+const helmet   = require('helmet');
+const rateLimit = require('express-rate-limit');
 const pino     = require('pino');
 const path        = require('path');
 const db          = require('./services/db');
@@ -55,6 +57,28 @@ app.use(cors({
   credentials: true,
 }));
 
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // CSP handled by Nginx in production
+  crossOriginEmbedderPolicy: false, // Allow loading firmware binaries
+}));
+
+// Rate limiting — auth & registration endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 20,                    // 20 attempts per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
+});
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30,                    // 30 per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
+});
+
 // ── Health check (no auth / no tenant) ────────────────────
 app.get('/api/health', async (_req, res) => {
   const dbOk   = await db.healthy();
@@ -96,7 +120,7 @@ app.get('/api/vapid-public-key', (_req, res) => {
 const bcrypt = require('bcrypt');
 let _bootstrapHash = null; // lazy-computed, cached
 
-app.post('/api/devices/register', async (req, res) => {
+app.post('/api/devices/register', registerLimiter, async (req, res) => {
   const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
   if (!bootstrapKey) {
     return res.status(503).json({
@@ -263,8 +287,8 @@ app.use('/api', createAuditMiddleware(logger));
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
-  // Public auth routes (no JWT required)
-  app.use('/api/auth', require('./routes/auth'));
+  // Public auth routes (no JWT required, rate-limited)
+  app.use('/api/auth', authLimiter, require('./routes/auth'));
 
   // All other /api routes require JWT
   app.use('/api', authenticate);

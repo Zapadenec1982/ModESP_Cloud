@@ -250,7 +250,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
       mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
       mqttSent = true;
     } catch (err) {
-      console.warn(`Failed to send MQTT reset commands for ${deviceMqttId} (device may be offline):`, err.message);
+      req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
     }
 
     // ── Step 2: Update DB — move to SYSTEM tenant, restore bootstrap creds ──
@@ -369,7 +369,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
         mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
         mqttSent = true;
       } catch (err) {
-        console.warn(`Failed to send MQTT reset commands for ${deviceMqttId} (device may be offline):`, err.message);
+        req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
       }
 
       // ── Step 2: Update DB ──
@@ -1096,7 +1096,7 @@ router.post('/:id/reassign', async (req, res, next) => {
       mqttSent = true;
     } catch (mqttErr) {
       // MQTT send failed (device might be offline) — DB is already updated
-      console.error('MQTT reassign commands failed (device may be offline):', mqttErr.message);
+      req.log?.warn?.({ err: mqttErr, mqttId }, 'MQTT reassign commands failed (device may be offline)');
     }
 
     // Update in-memory state

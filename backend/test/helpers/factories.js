@@ -94,4 +94,26 @@ function authHeader(user, tenantId) {
   return { Authorization: `Bearer ${token}` };
 }
 
-module.exports = { createTenant, createUser, createDevice, grantDeviceAccess, authHeader };
+/**
+ * Create a firmware record in the DB.
+ */
+async function createFirmware(tenantId, overrides = {}) {
+  const version = overrides.version || `1.0.${randomHex(4)}`;
+  const filename = overrides.filename || `${tenantId}_${version}_test.bin`;
+
+  const { rows } = await db.query(
+    `INSERT INTO firmwares (tenant_id, version, filename, original_name, size_bytes, checksum, notes, board_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    [
+      tenantId, version, filename,
+      overrides.original_name || 'test.bin',
+      overrides.size_bytes || 1024,
+      overrides.checksum || `sha256:${randomHex(32)}`,
+      overrides.notes || null,
+      overrides.board_type || null,
+    ]
+  );
+  return rows[0];
+}
+
+module.exports = { createTenant, createUser, createDevice, createFirmware, grantDeviceAccess, authHeader };
