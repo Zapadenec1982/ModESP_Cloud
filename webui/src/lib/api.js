@@ -141,6 +141,47 @@ async function request(path, options = {}) {
 }
 
 /**
+ * Like request() but returns full JSON response (data + meta).
+ * Used for paginated endpoints that return { data, meta }.
+ */
+async function requestFull(path, options = {}) {
+  const url = `${BASE}${path}`;
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+  if (!accessToken && refreshToken && !options._noRetry) {
+    await tryRefresh();
+  }
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  let res = await fetch(url, { ...options, headers });
+
+  if (res.status === 401 && refreshToken && !options._noRetry) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+      res = await fetch(url, { ...options, headers, _noRetry: true });
+    } else {
+      clearAuth();
+      toast.warning('Session expired — please log in again');
+      navigate('/');
+      throw Object.assign(new Error('Session expired'), { status: 401 });
+    }
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+
+  return res.json();
+}
+
+/**
  * Raw POST without auth header (for unauthenticated endpoints like select-tenant).
  */
 async function requestRaw(path, options = {}) {
@@ -707,11 +748,12 @@ export function cancelRollout(id) {
 
 // ── Audit Log ────────────────────────────────────────────
 
-export function getAuditLog(params = {}) {
+export async function getAuditLog(params = {}) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== '') qs.set(k, v);
   }
   const query = qs.toString();
-  return request(`/audit-log${query ? '?' + query : ''}`);
+  // Need full response (data + meta) — use requestFull
+  return requestFull(`/audit-log${query ? '?' + query : ''}`);
 }
