@@ -309,6 +309,10 @@ app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
+app.use('/api/devices',  require('./routes/events'));     // /:id/events
+const { deviceRouter: exportDevices, alarmRouter: exportAlarms } = require('./routes/export');
+app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
+app.use('/api/alarms',   exportAlarms);                   // /export.csv
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
 

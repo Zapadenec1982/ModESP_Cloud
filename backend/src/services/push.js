@@ -137,7 +137,9 @@ async function handleAlarm(evt) {
     }
 
     // Path 2: User-based Telegram notifications (both raise and clear)
-    await dispatchToLinkedUsers(tenantId, evt.deviceId, deviceUuid, payload);
+    // Info-severity alarms → push only to admin/superadmin (ISA-18.2 noise reduction)
+    const roleFilter = evt.severity === 'info' ? ['admin', 'superadmin'] : null;
+    await dispatchToLinkedUsers(tenantId, evt.deviceId, deviceUuid, payload, { roleFilter });
 
   } catch (err) {
     logger.error({ err, evt }, 'Push handleAlarm error');
@@ -205,7 +207,7 @@ function handleDeviceStatus(evt) {
  * and have access to this device (admin=all, others=user_devices).
  * Also dispatches to Web Push subscriptions.
  */
-async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
+async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { roleFilter } = {}) {
   // Enrich payload with device UUID for deep links
   payload.deviceUuid = deviceUuid;
 
@@ -255,6 +257,9 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload) {
   }
 
   for (const user of users) {
+    // Role filter: e.g. info alarms → admin/superadmin only
+    if (roleFilter && !roleFilter.includes(user.role)) continue;
+
     // RBAC: admin/superadmin see all; others need user_devices entry
     if (user.role !== 'admin' && user.role !== 'superadmin') {
       if (!deviceUuid || !accessSet.has(user.id)) continue;

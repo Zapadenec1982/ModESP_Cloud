@@ -1,10 +1,11 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getAlarms } from '../lib/api.js'
+  import { getAlarms, exportAlarmsCsv } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { navigate } from '../lib/stores.js'
-  import { timeAgo, alarmLabel, alarmSeverity } from '../lib/format.js'
+  import { timeAgo, alarmLabel } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
+  import { toast } from '../lib/toast.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Badge from '../components/ui/Badge.svelte'
   import Icon from '../components/ui/Icon.svelte'
@@ -15,13 +16,20 @@
   let historyAlarms = []
   let loading = true
   let error = null
+  let exportingCsv = false
   let wsUnsub
+  let severityFilter = null  // null = all, 'critical', 'warning', 'info'
 
   async function load() {
     try {
+      const params = { active: true }
+      if (severityFilter) params.severity = severityFilter
+      const histParams = { limit: 50 }
+      if (severityFilter) histParams.severity = severityFilter
+
       const [activeRes, histRes] = await Promise.all([
-        getAlarms({ active: true }),
-        getAlarms({ limit: 50 }),
+        getAlarms(params),
+        getAlarms(histParams),
       ])
       activeAlarms = activeRes.data || activeRes || []
       historyAlarms = (histRes.data || histRes || []).filter(a => !a.active)
@@ -33,11 +41,29 @@
     }
   }
 
-  function severityVariant(code) {
-    const s = alarmSeverity(code)
-    if (s === 'critical') return 'danger'
-    if (s === 'warning') return 'warning'
+  function setSeverityFilter(sev) {
+    severityFilter = severityFilter === sev ? null : sev
+    load()
+  }
+
+  function severityVariant(severity) {
+    if (severity === 'critical') return 'danger'
+    if (severity === 'warning') return 'warning'
     return 'info'
+  }
+
+  async function handleExportCsv() {
+    exportingCsv = true
+    try {
+      const from = new Date(Date.now() - 90 * 86400000).toISOString()
+      const to = new Date().toISOString()
+      await exportAlarmsCsv(from, to, severityFilter)
+      toast.success($t('export.export_success'))
+    } catch (e) {
+      toast.error(e.message || $t('export.export_error'))
+    } finally {
+      exportingCsv = false
+    }
   }
 
   onMount(() => {
@@ -50,6 +76,28 @@
 
 <div class="alarms-page">
   <PageHeader title={$t('pages.alarms')} subtitle={$t('pages.alarms_sub')} />
+
+  <!-- Severity filter pills -->
+  <div class="filter-row">
+    <div class="severity-pills">
+      <button class:active={severityFilter === null} on:click={() => { severityFilter = null; load() }}>
+        {$t('common.all')}
+      </button>
+      <button class="pill-critical" class:active={severityFilter === 'critical'} on:click={() => setSeverityFilter('critical')}>
+        {$t('alarm.critical')}
+      </button>
+      <button class="pill-warning" class:active={severityFilter === 'warning'} on:click={() => setSeverityFilter('warning')}>
+        {$t('alarm.warning')}
+      </button>
+      <button class="pill-info" class:active={severityFilter === 'info'} on:click={() => setSeverityFilter('info')}>
+        {$t('alarm.info')}
+      </button>
+    </div>
+    <button class="btn-export-csv" on:click={handleExportCsv} disabled={exportingCsv}>
+      <Icon name="download" size={14} />
+      {exportingCsv ? $t('export.exporting') : $t('export.export_csv')}
+    </button>
+  </div>
 
   {#if loading}
     <Skeleton height="120px" />
@@ -81,8 +129,8 @@
               aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
             >
               <div class="alarm-severity">
-                <Badge variant={severityVariant(alarm.alarm_code)} pulse>
-                  {alarmSeverity(alarm.alarm_code).toUpperCase()}
+                <Badge variant={severityVariant(alarm.severity)} pulse>
+                  {(alarm.severity || 'warning').toUpperCase()}
                 </Badge>
               </div>
               <div class="alarm-info">
@@ -124,8 +172,8 @@
               <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
               <span class="td">{alarmLabel(alarm.alarm_code)}</span>
               <span class="td">
-                <Badge variant={severityVariant(alarm.alarm_code)} small>
-                  {alarmSeverity(alarm.alarm_code)}
+                <Badge variant={severityVariant(alarm.severity)} small>
+                  {alarm.severity || 'warning'}
                 </Badge>
               </span>
               <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
@@ -143,6 +191,84 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+
+  .filter-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  .btn-export-csv {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+  }
+
+  .btn-export-csv:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .btn-export-csv:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .severity-pills {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .severity-pills button {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.2s;
+    text-transform: capitalize;
+  }
+
+  .severity-pills button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .severity-pills button.active {
+    background: var(--accent-blue);
+    color: #fff;
+    border-color: var(--accent-blue);
+  }
+
+  .severity-pills .pill-critical.active {
+    background: var(--accent-red, #ef4444);
+    border-color: var(--accent-red, #ef4444);
+  }
+
+  .severity-pills .pill-warning.active {
+    background: var(--accent-amber, #f59e0b);
+    border-color: var(--accent-amber, #f59e0b);
+    color: #000;
+  }
+
+  .severity-pills .pill-info.active {
+    background: var(--accent-blue, #3b82f6);
+    border-color: var(--accent-blue, #3b82f6);
   }
 
   .section {

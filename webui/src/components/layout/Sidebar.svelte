@@ -8,6 +8,9 @@
   import Icon from '../ui/Icon.svelte'
   import ConnectionStatus from './ConnectionStatus.svelte'
   import SettingsMenu from './SettingsMenu.svelte'
+  import ChangePasswordModal from './ChangePasswordModal.svelte'
+
+  let showPasswordModal = false
 
   export let alarmCount = 0
   export let pendingCount = 0
@@ -167,6 +170,10 @@
         <Icon name="user" size={16} />
         {#if !$sidebarCollapsed}
           <span class="user-email truncate">{$authUser.email}</span>
+          <button class="user-action-btn" on:click={() => showPasswordModal = true}
+            title={$t('password.change_password')}>
+            <Icon name="lock" size={14} />
+          </button>
           <button class="logout-btn" on:click={handleLogout} title="Sign Out">
             <Icon name="log-out" size={16} />
           </button>
@@ -175,6 +182,8 @@
     {/if}
   </div>
 </aside>
+
+<ChangePasswordModal bind:show={showPasswordModal} />
 
 <style>
   .backdrop {
@@ -360,6 +369,19 @@
   }
   .logout-btn:hover {
     color: var(--accent-red);
+  }
+
+  .user-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+  }
+  .user-action-btn:hover {
+    color: var(--accent-blue);
   }
 
   /* Tenant switcher */

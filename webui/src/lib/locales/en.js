@@ -255,6 +255,33 @@ export default {
     info: 'info',
   },
 
+  // ── Events ──
+  event: {
+    history: 'Event Log',
+    col_time: 'Time',
+    col_type: 'Type',
+    type_compressor_on: 'Compressor ON',
+    type_compressor_off: 'Compressor OFF',
+    type_defrost_start: 'Defrost Start',
+    type_defrost_end: 'Defrost End',
+    type_device_online: 'Device Online',
+    type_device_offline: 'Device Offline',
+  },
+
+  // ── Password ──
+  password: {
+    change_password: 'Change Password',
+    current_password: 'Current Password',
+    new_password: 'New Password',
+    confirm_password: 'Confirm Password',
+    min_length: 'Minimum 15 characters',
+    passwords_mismatch: 'Passwords do not match',
+    password_breached: 'This password was found in {0} data breaches. Choose a different one.',
+    wrong_current: 'Current password is incorrect',
+    password_changed: 'Password changed successfully',
+    use_anyway: 'Use Anyway',
+  },
+
   // ── Time (for timeAgo) ──
   time: {
     just_now: 'just now',
@@ -473,6 +500,21 @@ export default {
     telegram_link_expires: 'Code valid for 15 minutes',
     telegram_link_generated: 'Code generated',
     telegram_unlinked: 'Telegram unlinked',
+  },
+
+  // ── Export ──
+  export: {
+    csv: 'CSV',
+    pdf: 'PDF',
+    export_csv: 'Export CSV',
+    export_pdf: 'HACCP Report (PDF)',
+    exporting: 'Exporting...',
+    export_success: 'Export downloaded',
+    export_error: 'Export failed',
+    export_devices: 'Export Devices',
+    export_alarms: 'Export Alarms',
+    export_telemetry: 'Export Telemetry',
+    haccp_report: 'HACCP Report',
   },
 
   // ── Audit Log ──

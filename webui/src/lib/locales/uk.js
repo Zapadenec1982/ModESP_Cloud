@@ -255,6 +255,33 @@ export default {
     info: 'інфо',
   },
 
+  // ── Events ──
+  event: {
+    history: 'Журнал подій',
+    col_time: 'Час',
+    col_type: 'Тип',
+    type_compressor_on: 'Компресор увімкнено',
+    type_compressor_off: 'Компресор вимкнено',
+    type_defrost_start: 'Початок відтайки',
+    type_defrost_end: 'Кінець відтайки',
+    type_device_online: 'Пристрій онлайн',
+    type_device_offline: 'Пристрій офлайн',
+  },
+
+  // ── Password ──
+  password: {
+    change_password: 'Змінити пароль',
+    current_password: 'Поточний пароль',
+    new_password: 'Новий пароль',
+    confirm_password: 'Підтвердження пароля',
+    min_length: 'Мінімум 15 символів',
+    passwords_mismatch: 'Паролі не збігаються',
+    password_breached: 'Цей пароль знайдено у {0} витоках даних. Оберіть інший.',
+    wrong_current: 'Поточний пароль невірний',
+    password_changed: 'Пароль успішно змінено',
+    use_anyway: 'Використати все одно',
+  },
+
   // ── Time (for timeAgo) ──
   time: {
     just_now: 'щойно',
@@ -473,6 +500,21 @@ export default {
     telegram_link_expires: 'Код дійсний 15 хвилин',
     telegram_link_generated: 'Код згенеровано',
     telegram_unlinked: 'Telegram відв\'язано',
+  },
+
+  // ── Експорт ──
+  export: {
+    csv: 'CSV',
+    pdf: 'PDF',
+    export_csv: 'Експорт CSV',
+    export_pdf: 'Звіт HACCP (PDF)',
+    exporting: 'Експорт...',
+    export_success: 'Експорт завантажено',
+    export_error: 'Помилка експорту',
+    export_devices: 'Експорт пристроїв',
+    export_alarms: 'Експорт тривог',
+    export_telemetry: 'Експорт телеметрії',
+    haccp_report: 'Звіт HACCP',
   },
 
   // ── Журнал аудиту ──

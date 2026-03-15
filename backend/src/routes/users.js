@@ -12,7 +12,7 @@ const router = Router();
 
 const createUserSchema = z.object({
   email:     z.string().email(),
-  password:  z.string().min(8),
+  password:  z.string().min(15),
   role:      z.enum(['admin', 'technician', 'viewer']).default('viewer'),
   tenant_id: z.string().uuid().optional(),   // superadmin only — create in another tenant
 });
@@ -26,7 +26,7 @@ const updateUserSchema = z.object({
 
 const updateProfileSchema = z.object({
   email:        z.string().email().optional(),
-  password:     z.string().min(8).optional(),
+  password:     z.string().min(15).optional(),
   old_password: z.string().optional(),
 });
 

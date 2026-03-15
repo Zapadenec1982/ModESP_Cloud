@@ -497,12 +497,13 @@ export function getTelemetryStats(deviceId, { hours, from, to, channels, bucket 
 
 // ── Alarms ───────────────────────────────────────────────
 
-export function getAlarms({ active, from, to, limit } = {}) {
+export function getAlarms({ active, from, to, limit, severity } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   if (limit) params.set('limit', limit);
+  if (severity) params.set('severity', severity);
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);
 }
@@ -515,6 +516,18 @@ export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   if (limit) params.set('limit', limit);
   const qs = params.toString();
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
+}
+
+// ── Events ──────────────────────────────────────────────
+
+export function getDeviceEvents(deviceId, { event_type, from, to, limit } = {}) {
+  const params = new URLSearchParams();
+  if (event_type) params.set('event_type', event_type);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (limit) params.set('limit', limit);
+  const qs = params.toString();
+  return request(`/devices/${deviceId}/events${qs ? '?' + qs : ''}`);
 }
 
 export function getAlarmStats({ from, to } = {}) {
@@ -578,6 +591,13 @@ export function updateUser(id, data) {
   return request(`/users/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  });
+}
+
+export function changePassword(oldPassword, newPassword) {
+  return request('/users/me', {
+    method: 'PUT',
+    body: JSON.stringify({ old_password: oldPassword, password: newPassword }),
   });
 }
 
@@ -756,4 +776,52 @@ export async function getAuditLog(params = {}) {
   const query = qs.toString();
   // Need full response (data + meta) — use requestFull
   return requestFull(`/audit-log${query ? '?' + query : ''}`);
+}
+
+// ── Data Export (CSV / PDF) ──────────────────────────────
+
+async function downloadFile(path, filename) {
+  const headers = {};
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `Export failed: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function exportTelemetryCsv(deviceId, from, to) {
+  const qs = new URLSearchParams({ from, to }).toString();
+  const fname = `telemetry_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.csv`;
+  return downloadFile(`/devices/${deviceId}/telemetry/export.csv?${qs}`, fname);
+}
+
+export function exportTelemetryPdf(deviceId, from, to, bucket = '1h') {
+  const qs = new URLSearchParams({ from, to, bucket }).toString();
+  const fname = `haccp_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/devices/${deviceId}/telemetry/export.pdf?${qs}`, fname);
+}
+
+export function exportAlarmsCsv(from, to, severity) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (severity) params.set('severity', severity);
+  const qs = params.toString();
+  const fname = `alarms_${(from || '').slice(0, 10)}_${(to || '').slice(0, 10)}.csv`;
+  return downloadFile(`/alarms/export.csv${qs ? '?' + qs : ''}`, fname);
+}
+
+export function exportDevicesCsv() {
+  const fname = `devices_${new Date().toISOString().slice(0, 10)}.csv`;
+  return downloadFile('/devices/export.csv', fname);
 }

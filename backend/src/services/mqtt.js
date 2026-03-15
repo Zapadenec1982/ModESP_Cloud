@@ -141,6 +141,10 @@ async function shutdown() {
   for (const t of timers) clearInterval(t);
   timers = [];
 
+  // Clear pending nuisance alarm timers
+  for (const timer of pendingAlarms.values()) clearTimeout(timer);
+  pendingAlarms.clear();
+
   // Flush remaining buffered events before closing
   if (eventBuffer.length > 0) {
     logger.info({ count: eventBuffer.length }, 'Flushing event buffer on shutdown');
@@ -421,22 +425,38 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
 
 // ── Alarm detection ───────────────────────────────────────
 
+// Nuisance alarm delay (ISA-18.2): suppress transient alarms
+const pendingAlarms = new Map();  // "deviceId:alarmCode" -> setTimeout handle
+const NUISANCE_DELAY = { door_alarm: 120000, pulldown_alarm: 300000 };  // 2min, 5min
+
 function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
   const alarmCode  = key.replace('protection.', '');
-
-  const severity = alarmSeverity(alarmCode);
+  const severity   = alarmSeverity(alarmCode);
+  const pendingKey = `${deviceId}:${alarmCode}`;
+  const delay      = NUISANCE_DELAY[alarmCode];
 
   if (value === true) {
-    // Alarm raised
-    logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
-    db.query(
-      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
-       VALUES ($1, $2, $3, $4, true, NOW())`,
-      [tenantInfo.id, deviceId, alarmCode, severity]
-    ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm'));
-    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+    if (delay) {
+      // Delayed alarm — wait before confirming (transient filter)
+      if (pendingAlarms.has(pendingKey)) return;  // Already pending
+      logger.debug({ deviceId, alarmCode, delay }, 'Nuisance delay started');
+      const timer = setTimeout(() => {
+        pendingAlarms.delete(pendingKey);
+        raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity);
+      }, delay);
+      pendingAlarms.set(pendingKey, timer);
+    } else {
+      raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity);
+    }
   } else if (value === false) {
+    // If pending (not yet raised) → cancel (transient, never recorded)
+    if (pendingAlarms.has(pendingKey)) {
+      clearTimeout(pendingAlarms.get(pendingKey));
+      pendingAlarms.delete(pendingKey);
+      logger.debug({ deviceId, alarmCode }, 'Nuisance alarm cancelled (transient)');
+      return;
+    }
     // Alarm cleared
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
     db.query(
@@ -448,10 +468,23 @@ function detectAlarm(tenantSlug, deviceId, key, value, state) {
   }
 }
 
+function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
+  logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
+  db.query(
+    `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+     VALUES ($1, $2, $3, $4, true, NOW())`,
+    [tenantInfo.id, deviceId, alarmCode, severity]
+  ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm'));
+  emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+}
+
 function alarmSeverity(code) {
-  // Critical alarms: sensor failures, lockout-related
+  // Critical: sensor failures, temperature violations (immediate action needed)
   if (code === 'sensor1_alarm' || code === 'sensor2_alarm') return 'critical';
   if (code === 'high_temp_alarm' || code === 'low_temp_alarm') return 'critical';
+  // Info: statistical/informational (no immediate action, ISA-18.2 nuisance reduction)
+  if (code === 'rate_alarm' || code === 'short_cycle_alarm' || code === 'rapid_cycle_alarm') return 'info';
+  // Warning: everything else (door, pulldown, continuous_run)
   return 'warning';
 }
 
