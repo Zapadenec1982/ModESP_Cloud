@@ -1,5 +1,5 @@
 <script>
-  import { login, selectTenant } from '../lib/api.js'
+  import { login, selectTenant, resetPassword } from '../lib/api.js'
   import { navigate } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
 
@@ -8,11 +8,16 @@
   let error = ''
   let loading = false
 
-  // Tenant selection step
-  let step = 'credentials'  // 'credentials' | 'tenant_select'
+  // Steps: 'credentials' | 'tenant_select' | 'reset_password'
+  let step = 'credentials'
   let pendingToken = null
   let tenants = []
   let selectedTenantId = null
+
+  // Reset password fields
+  let resetCode = ''
+  let newPassword = ''
+  let resetSuccess = false
 
   async function handleSubmit() {
     error = ''
@@ -53,11 +58,37 @@
     }
   }
 
+  async function handleResetPassword() {
+    error = ''
+    loading = true
+    try {
+      await resetPassword(email, resetCode, newPassword)
+      resetSuccess = true
+      // Auto-return to credentials after 3s
+      setTimeout(() => backToCredentials(), 3000)
+    } catch (e) {
+      error = e.message || 'Password reset failed'
+    } finally {
+      loading = false
+    }
+  }
+
+  function showResetForm() {
+    step = 'reset_password'
+    error = ''
+    resetCode = ''
+    newPassword = ''
+    resetSuccess = false
+  }
+
   function backToCredentials() {
     step = 'credentials'
     pendingToken = null
     tenants = []
     selectedTenantId = null
+    resetCode = ''
+    newPassword = ''
+    resetSuccess = false
     error = ''
   }
 </script>
@@ -86,7 +117,53 @@
       <button type="submit" class="btn-login" disabled={loading}>
         {loading ? $t('login.signing_in') : $t('login.sign_in')}
       </button>
+
+      <button type="button" class="btn-forgot" on:click={showResetForm}>
+        {$t('login.forgot_password')}
+      </button>
     </form>
+
+  {:else if step === 'reset_password'}
+    <!-- Password reset step -->
+    <form class="login-form" on:submit|preventDefault={handleResetPassword}>
+      <div class="login-brand">M</div>
+      <h1 class="login-title">{$t('login.reset_title')}</h1>
+      <p class="login-subtitle">{$t('login.reset_subtitle')}</p>
+
+      {#if resetSuccess}
+        <div class="success">{$t('login.reset_success')}</div>
+      {:else}
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+
+        <label class="field">
+          <span>{$t('login.email')}</span>
+          <input type="email" bind:value={email} placeholder="admin@example.com" required autocomplete="email" />
+        </label>
+
+        <label class="field">
+          <span>{$t('login.reset_code')}</span>
+          <input type="text" bind:value={resetCode} placeholder="0a1b2c3d4e5f6789" required
+                 maxlength="16" autocomplete="one-time-code" class="mono-input" />
+        </label>
+
+        <label class="field">
+          <span>{$t('login.new_password')}</span>
+          <input type="password" bind:value={newPassword} placeholder="••••••••" required
+                 minlength="8" autocomplete="new-password" />
+        </label>
+
+        <button type="submit" class="btn-login" disabled={loading || resetCode.length !== 16 || newPassword.length < 8}>
+          {loading ? $t('login.resetting') : $t('login.reset_submit')}
+        </button>
+      {/if}
+
+      <button type="button" class="btn-back" on:click={backToCredentials}>
+        ← {$t('common.back')}
+      </button>
+    </form>
+
   {:else}
     <!-- Tenant selection step -->
     <div class="login-form">
@@ -188,6 +265,17 @@
     text-align: center;
   }
 
+  .success {
+    background: rgba(63, 185, 80, 0.1);
+    color: var(--accent-green, #3fb950);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-3);
+    width: 100%;
+    text-align: center;
+  }
+
   .field {
     display: block;
     width: 100%;
@@ -224,6 +312,11 @@
     box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
   }
 
+  .mono-input {
+    font-family: var(--font-mono, monospace);
+    letter-spacing: 0.05em;
+  }
+
   .btn-login {
     width: 100%;
     padding: var(--space-3);
@@ -246,6 +339,21 @@
   .btn-login:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .btn-forgot {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    margin-top: var(--space-3);
+    padding: var(--space-1) var(--space-2);
+  }
+
+  .btn-forgot:hover {
+    color: var(--accent-blue);
   }
 
   /* Tenant selection */

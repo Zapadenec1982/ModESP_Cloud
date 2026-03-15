@@ -55,6 +55,9 @@ function createTestApp() {
 
   app.use(express.json({ limit: '100kb' }));
 
+  // Firmware download (signed URLs, no auth — before audit/auth)
+  app.get('/api/firmware/dl', require('../../src/routes/firmware-download'));
+
   // Audit middleware (before auth — captures login/logout too)
   app.use('/api', createAuditMiddleware(silentLogger));
 

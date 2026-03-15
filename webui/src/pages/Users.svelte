@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink, generatePasswordReset } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -260,6 +260,40 @@
     if (e.key === 'Escape') closeTelegramModal()
   }
 
+  // ── Password reset modal ──
+  let showResetModal = false
+  let resetCode = ''
+  let resetExpires = ''
+  let resetUser = null
+
+  async function generateReset(user) {
+    try {
+      const result = await generatePasswordReset(user.id)
+      resetCode = result.reset_code
+      resetExpires = result.expires_at
+      resetUser = user
+      showResetModal = true
+      toast.success($t('users.reset_password_generated'))
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  function closeResetModal() {
+    showResetModal = false
+    resetCode = ''
+    resetExpires = ''
+    resetUser = null
+  }
+
+  function handleResetBackdropClick(e) {
+    if (e.target === e.currentTarget) closeResetModal()
+  }
+
+  function handleResetKey(e) {
+    if (e.key === 'Escape') closeResetModal()
+  }
+
   // ── Manage tenants modal (superadmin) ──
   let userTenants = []  // current memberships for modal user
 
@@ -452,6 +486,12 @@
                 {#if $isSuperAdmin && user.role !== 'superadmin'}
                   <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.manage_tenants')} {user.email}">
                     <Icon name="grid" size={13} />
+                  </Button>
+                {/if}
+                <!-- Password reset (not for superadmin rows) -->
+                {#if user.role !== 'superadmin'}
+                  <Button variant="secondary" size="sm" on:click={() => generateReset(user)} aria-label="{$t('users.reset_password_title')} {user.email}">
+                    <Icon name="key" size={13} />
                   </Button>
                 {/if}
                 <!-- Deactivate/Reactivate (not for superadmin rows) -->
@@ -711,6 +751,35 @@
         <p class="field-hint">{$t('users.telegram_link_expires')}</p>
         <div class="modal-actions">
           <Button variant="secondary" on:click={closeTelegramModal}>{$t('common.close')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Password Reset Modal -->
+{#if showResetModal}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleResetBackdropClick} on:keydown={handleResetKey} role="dialog" aria-modal="true" aria-labelledby="reset-modal-title" tabindex="-1">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="reset-modal-title">{$t('users.reset_password_title')}</h3>
+          <span class="modal-subtitle">{resetUser?.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeResetModal} aria-label="Close dialog">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <span class="field-label">{$t('users.reset_password_code')}</span>
+          <div class="telegram-code">{resetCode}</div>
+        </div>
+        <p class="field-hint">{$t('users.reset_password_instructions')}</p>
+        <p class="field-hint">{$t('users.reset_password_expires')}</p>
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeResetModal}>{$t('common.close')}</Button>
         </div>
       </div>
     </div>

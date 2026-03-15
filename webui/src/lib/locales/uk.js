@@ -98,6 +98,14 @@ export default {
     password: 'Пароль',
     sign_in: 'Увійти',
     signing_in: 'Вхід...',
+    forgot_password: 'Забули пароль?',
+    reset_title: 'Скидання пароля',
+    reset_subtitle: 'Введіть код від адміністратора',
+    reset_code: 'Код скидання',
+    new_password: 'Новий пароль',
+    reset_submit: 'Змінити пароль',
+    reset_success: 'Пароль змінено. Увійдіть з новим паролем.',
+    resetting: 'Зміна...',
   },
 
   // ── Auth (multi-tenant) ──
@@ -468,6 +476,11 @@ export default {
     telegram_link_expires: 'Код дійсний 15 хвилин',
     telegram_link_generated: 'Код згенеровано',
     telegram_unlinked: 'Telegram відв\'язано',
+    reset_password_title: 'Скидання пароля',
+    reset_password_code: 'Код для скидання',
+    reset_password_instructions: 'Передайте цей код користувачу. Він зможе скинути пароль на сторінці входу.',
+    reset_password_expires: 'Код дійсний 30 хвилин',
+    reset_password_generated: 'Код скидання згенеровано',
   },
 
   // ── Журнал аудиту ──

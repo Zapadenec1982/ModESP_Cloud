@@ -98,6 +98,14 @@ export default {
     password: 'Password',
     sign_in: 'Sign In',
     signing_in: 'Signing in...',
+    forgot_password: 'Forgot password?',
+    reset_title: 'Reset Password',
+    reset_subtitle: 'Enter the code from your administrator',
+    reset_code: 'Reset code',
+    new_password: 'New password',
+    reset_submit: 'Change password',
+    reset_success: 'Password changed. Sign in with your new password.',
+    resetting: 'Resetting...',
   },
 
   // ── Auth (multi-tenant) ──
@@ -468,6 +476,11 @@ export default {
     telegram_link_expires: 'Code valid for 15 minutes',
     telegram_link_generated: 'Code generated',
     telegram_unlinked: 'Telegram unlinked',
+    reset_password_title: 'Reset Password',
+    reset_password_code: 'Reset code',
+    reset_password_instructions: 'Give this code to the user. They can reset their password on the login page.',
+    reset_password_expires: 'Code valid for 30 minutes',
+    reset_password_generated: 'Reset code generated',
   },
 
   // ── Audit Log ──

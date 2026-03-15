@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Ensure telemetry partitions exist for the current month + 3 months ahead.
+ * Ensure telemetry partitions exist for the current month + 6 months ahead.
  * Uses the create_telemetry_partition(year, month) function from schema.sql.
  * Safe to run repeatedly (idempotent — uses CREATE TABLE IF NOT EXISTS).
  *
@@ -30,7 +30,7 @@ async function main() {
     const now = new Date();
     const created = [];
 
-    for (let offset = 0; offset <= 3; offset++) {
+    for (let offset = 0; offset <= 6; offset++) {
       const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
       const year  = d.getFullYear();
       const month = d.getMonth() + 1;

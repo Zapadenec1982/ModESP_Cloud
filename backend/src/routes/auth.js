@@ -418,4 +418,75 @@ router.post('/logout', async (req, res) => {
   }
 });
 
+// ── Password reset (public — user submits code + new password) ──────
+
+const { timingSafeEqual } = require('crypto');
+
+const resetPasswordSchema = z.object({
+  email:        z.string().email(),
+  reset_code:   z.string().length(16),
+  new_password: z.string().min(8),
+});
+
+router.post('/reset-password', async (req, res) => {
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: parsed.error.issues[0].message,
+      status: 400,
+    });
+  }
+
+  const { email, reset_code, new_password } = parsed.data;
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id, password_reset_code, password_reset_expires
+       FROM users WHERE email = $1 AND active = true`,
+      [email]
+    );
+
+    if (!rows.length || !rows[0].password_reset_code) {
+      return res.status(400).json({
+        error: 'invalid_code', message: 'Invalid or expired reset code', status: 400,
+      });
+    }
+
+    const user = rows[0];
+
+    // Timing-safe comparison
+    const codeBuf     = Buffer.from(user.password_reset_code, 'utf8');
+    const providedBuf = Buffer.from(reset_code, 'utf8');
+    if (codeBuf.length !== providedBuf.length || !timingSafeEqual(codeBuf, providedBuf)) {
+      return res.status(400).json({
+        error: 'invalid_code', message: 'Invalid or expired reset code', status: 400,
+      });
+    }
+
+    // Check expiry
+    if (new Date(user.password_reset_expires) < new Date()) {
+      return res.status(400).json({
+        error: 'code_expired', message: 'Reset code has expired', status: 400,
+      });
+    }
+
+    // Hash new password, clear reset fields, revoke all refresh tokens
+    const hash = await authSvc.hashPassword(new_password);
+    await db.query(
+      `UPDATE users SET password_hash = $1, password_reset_code = NULL, password_reset_expires = NULL
+       WHERE id = $2`,
+      [hash, user.id]
+    );
+    await db.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [user.id]);
+
+    req.auditContext = { entityId: user.id, action: 'auth.password_reset' };
+
+    res.json({ data: { message: 'Password has been reset' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Password reset failed') || console.error('Password reset failed:', err);
+    res.status(500).json({ error: 'internal_error', message: 'Password reset failed', status: 500 });
+  }
+});
+
 module.exports = router;

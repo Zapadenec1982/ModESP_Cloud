@@ -811,4 +811,47 @@ router.delete('/me/push-subscription', async (req, res) => {
   }
 });
 
+// ── Password reset (admin generates code for user) ────────
+
+router.post('/:id/password-reset', async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const isSuperAdmin = req.user.role === 'superadmin';
+
+    // Verify target user exists (scoped to tenant for admin, any for superadmin)
+    const checkQ = isSuperAdmin
+      ? 'SELECT id, email FROM users WHERE id = $1 AND active = true'
+      : `SELECT u.id, u.email FROM users u
+         JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $2
+         WHERE u.id = $1 AND u.active = true`;
+    const checkParams = isSuperAdmin ? [userId] : [userId, req.tenantId];
+    const { rows } = await db.query(checkQ, checkParams);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    }
+
+    const code    = crypto.randomBytes(8).toString('hex'); // 16 hex chars
+    const expires = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+
+    await db.query(
+      'UPDATE users SET password_reset_code = $1, password_reset_expires = $2 WHERE id = $3',
+      [code, expires, userId]
+    );
+
+    req.auditContext = { entityId: userId, action: 'user.password_reset_generate' };
+
+    res.json({
+      data: {
+        reset_code:  code,
+        expires_at:  expires.toISOString(),
+        email:       rows[0].email,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Generate password reset code failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to generate reset code', status: 500 });
+  }
+});
+
 module.exports = router;

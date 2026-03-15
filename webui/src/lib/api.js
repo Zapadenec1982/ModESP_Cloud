@@ -273,6 +273,17 @@ export async function logout() {
   clearAuth();
 }
 
+export async function resetPassword(email, resetCode, newPassword) {
+  const res = await fetch(`${BASE}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, reset_code: resetCode, new_password: newPassword }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.message || 'Password reset failed');
+  return json.data;
+}
+
 function clearAuth() {
   clearTimeout(refreshTimer);
   setTokens(null, null);
@@ -588,6 +599,12 @@ export function generateMyTelegramLink() {
 
 export function unlinkMyTelegram() {
   return request('/users/me/telegram-link', { method: 'DELETE' });
+}
+
+// ── Password reset (admin) ──────────────────────────────
+
+export function generatePasswordReset(userId) {
+  return request(`/users/${userId}/password-reset`, { method: 'POST' });
 }
 
 // ── Tenants (superadmin) ─────────────────────────────────

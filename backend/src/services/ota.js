@@ -1,11 +1,12 @@
 'use strict';
 
-const db      = require('./db');
-const mqttSvc = require('./mqtt');
+const db          = require('./db');
+const mqttSvc     = require('./mqtt');
+const firmwareUrl = require('./firmware-url');
 
 const OTA_TIMEOUT_MS    = parseInt(process.env.OTA_TIMEOUT_MS, 10) || 600000; // 10 min
 const CHECK_INTERVAL_MS = 30000; // 30 sec
-const FIRMWARE_BASE_URL = process.env.FIRMWARE_BASE_URL || 'http://localhost:3000/firmware';
+const FIRMWARE_ORIGIN   = process.env.FIRMWARE_BASE_URL || 'http://localhost:3000';
 
 let logger   = null;
 let checker  = null;                        // setInterval handle
@@ -35,7 +36,7 @@ function shutdown() {
 // ── Send OTA to a single device ──────────────────────────
 
 async function sendOtaToDevice(tenantSlug, deviceId, firmware) {
-  const url = `${FIRMWARE_BASE_URL}/${firmware.filename}`;
+  const url = FIRMWARE_ORIGIN + firmwareUrl.generateSignedUrl(firmware.filename);
   const payload = {
     url,
     version:  firmware.version,

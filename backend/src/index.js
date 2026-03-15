@@ -59,8 +59,21 @@ app.use(cors({
 
 // Security headers
 app.use(helmet({
-  contentSecurityPolicy: false, // CSP handled by Nginx in production
-  crossOriginEmbedderPolicy: false, // Allow loading firmware binaries
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:    ["'self'"],
+      scriptSrc:     ["'self'"],
+      styleSrc:      ["'self'", "'unsafe-inline'"], // Svelte inline styles
+      imgSrc:        ["'self'", "data:"],
+      connectSrc:    ["'self'", "wss:", "ws:"],     // WebSocket
+      fontSrc:       ["'self'"],
+      objectSrc:     ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri:       ["'self'"],
+      formAction:    ["'self'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
 }));
 
 // Rate limiting — auth & registration endpoints
@@ -277,10 +290,8 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
   }
 });
 
-// ── Firmware binary download (no auth — ESP32 downloads directly) ───
-const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
-  || path.join(__dirname, '../firmware');
-app.use('/firmware', express.static(firmwareDir, { dotfiles: 'deny', index: false }));
+// ── Firmware binary download (signed URLs — no JWT, ESP32 downloads directly) ──
+app.get('/api/firmware/dl', require('./routes/firmware-download'));
 
 // ── Audit middleware (before auth — captures login/logout too) ─────
 app.use('/api', createAuditMiddleware(logger));

@@ -1,0 +1,10 @@
+[Unit]
+Description=ModESP Cloud PostgreSQL backup
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=modesp
+Group=modesp
+ExecStart=/opt/modesp-cloud/infra/scripts/backup-postgres.sh
+EnvironmentFile=-/opt/modesp-cloud/infra/backup.env
