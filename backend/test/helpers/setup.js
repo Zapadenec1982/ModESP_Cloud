@@ -30,6 +30,8 @@ async function cleanDatabase() {
   await db.query(`
     TRUNCATE TABLE
       audit_log,
+      notification_log,
+      notification_subscribers,
       push_subscriptions,
       events,
       alarms,

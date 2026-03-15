@@ -704,3 +704,14 @@ export function resumeRollout(id) {
 export function cancelRollout(id) {
   return request(`/ota/rollouts/${id}/cancel`, { method: 'POST' });
 }
+
+// ── Audit Log ────────────────────────────────────────────
+
+export function getAuditLog(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== '') qs.set(k, v);
+  }
+  const query = qs.toString();
+  return request(`/audit-log${query ? '?' + query : ''}`);
+}

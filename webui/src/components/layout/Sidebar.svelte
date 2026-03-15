@@ -23,6 +23,7 @@
     { section: $t('nav.sections.admin'), admin: true },
     { path: '/tenants',       icon: 'layers',   label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
+    { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), superadmin: true },
   ]
 
   function isActive(itemPath, currentPath) {
@@ -50,6 +51,7 @@
   }
 
   $: isAdmin = !$authEnabled || $authUser?.role === 'admin' || $authUser?.role === 'superadmin'
+  $: isSuperAdmin = $authEnabled && $authUser?.role === 'superadmin'
 
   // Tenant switcher
   let tenantDropdownOpen = false
@@ -94,14 +96,14 @@
   <nav class="nav">
     {#each navItems as item}
       {#if item.section}
-        {#if !item.admin || isAdmin}
+        {#if (!item.admin || isAdmin) && (!item.superadmin || isSuperAdmin)}
           {#if !$sidebarCollapsed}
             <div class="section-label">{item.section}</div>
           {:else}
             <div class="section-divider" />
           {/if}
         {/if}
-      {:else if !item.admin || isAdmin}
+      {:else if (!item.admin || isAdmin) && (!item.superadmin || isSuperAdmin)}
         <button
           class="nav-item"
           class:active={isActive(item.path, $location)}

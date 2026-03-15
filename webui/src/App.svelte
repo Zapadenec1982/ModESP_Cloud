@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
   import { wrap } from 'svelte-spa-router/wrap'
-  import { authEnabled, authUser, isAuthenticated, isAdmin, sidebarCollapsed } from './lib/stores.js'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
   import { connect, disconnect, reconnect, on } from './lib/ws.js'
   import { t } from './lib/i18n.js'
@@ -20,12 +20,19 @@
   import Firmware from './pages/Firmware.svelte'
   import Alarms from './pages/Alarms.svelte'
   import Tenants from './pages/Tenants.svelte'
+  import AuditLog from './pages/AuditLog.svelte'
 
   // Admin-only route guard: redirect non-admin to /
   function isAdminCheck() {
     let admin = false
     isAdmin.subscribe(v => admin = v)()
     return admin
+  }
+
+  function isSuperAdminCheck() {
+    let sa = false
+    isSuperAdmin.subscribe(v => sa = v)()
+    return sa
   }
 
   const routes = {
@@ -37,6 +44,7 @@
     '/firmware':        wrap({ component: Firmware, conditions: [isAdminCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
+    '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
   }
 
   let booting = true
@@ -108,6 +116,7 @@
     '/firmware': 'pages.firmware',
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',
+    '/audit-log': 'pages.audit_log',
   }
 
   function handleRouteLoaded(e) {

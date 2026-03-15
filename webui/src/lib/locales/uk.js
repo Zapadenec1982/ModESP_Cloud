@@ -11,6 +11,7 @@ export default {
     firmware: 'Прошивка',
     tenants: 'Тенанти',
     users: 'Користувачі',
+    audit_log: 'Журнал аудиту',
     sections: {
       monitoring: 'МОНІТОРИНГ',
       management: 'КЕРУВАННЯ',
@@ -34,6 +35,8 @@ export default {
     tenants_sub: 'Керування організаціями та їх планами',
     users: 'Користувачі',
     users_sub: 'Керування акаунтами та ролями',
+    audit_log: 'Журнал аудиту',
+    audit_log_sub: 'Системна активність та події безпеки',
     device: 'Пристрій',
   },
 
@@ -465,5 +468,28 @@ export default {
     telegram_link_expires: 'Код дійсний 15 хвилин',
     telegram_link_generated: 'Код згенеровано',
     telegram_unlinked: 'Telegram відв\'язано',
+  },
+
+  // ── Журнал аудиту ──
+  audit: {
+    title: 'Журнал аудиту',
+    entries: 'Записи',
+    no_entries: 'Немає записів аудиту',
+    no_entries_hint: 'Записи з\'являться тут, коли користувачі виконують дії',
+    col_time: 'Час',
+    col_user: 'Користувач',
+    col_action: 'Дія',
+    col_entity: 'Об\'єкт',
+    col_method: 'Метод',
+    col_endpoint: 'Endpoint',
+    col_status: 'Статус',
+    col_ip: 'IP',
+    col_duration: 'Тривалість',
+    filter_entity_type: 'Тип об\'єкта',
+    filter_action: 'Дія',
+    filter_all: 'Всі',
+    showing: 'Показано {0}–{1} з {2}',
+    prev: 'Назад',
+    next: 'Далі',
   },
 };

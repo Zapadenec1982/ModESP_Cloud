@@ -15,6 +15,10 @@ mqttSvc.getDeviceState = () => null;
 mqttSvc.getDeviceMeta = () => null;
 mqttSvc.getDeviceRoutingSlug = () => 'test';
 
+// Stub push service
+const pushSvc = require('../../src/services/push');
+pushSvc.testSend = async () => ({ ok: true, message: 'test stub' });
+
 const express = require('express');
 const pino = require('pino');
 const { authenticate, authorize, requireSuperadmin } = require('../../src/middleware/auth');
