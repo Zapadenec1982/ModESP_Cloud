@@ -11,6 +11,7 @@ export default {
     firmware: 'Firmware',
     tenants: 'Tenants',
     users: 'Users',
+    audit_log: 'Audit Log',
     sections: {
       monitoring: 'MONITORING',
       management: 'MANAGEMENT',
@@ -34,6 +35,8 @@ export default {
     tenants_sub: 'Manage organizations and their plans',
     users: 'Users',
     users_sub: 'Manage platform accounts and roles',
+    audit_log: 'Audit Log',
+    audit_log_sub: 'System-wide activity and security events',
     device: 'Device',
   },
 
@@ -465,5 +468,28 @@ export default {
     telegram_link_expires: 'Code valid for 15 minutes',
     telegram_link_generated: 'Code generated',
     telegram_unlinked: 'Telegram unlinked',
+  },
+
+  // ── Audit Log ──
+  audit: {
+    title: 'Audit Log',
+    entries: 'Entries',
+    no_entries: 'No audit entries',
+    no_entries_hint: 'Audit entries will appear here as users perform actions',
+    col_time: 'Time',
+    col_user: 'User',
+    col_action: 'Action',
+    col_entity: 'Entity',
+    col_method: 'Method',
+    col_endpoint: 'Endpoint',
+    col_status: 'Status',
+    col_ip: 'IP',
+    col_duration: 'Duration',
+    filter_entity_type: 'Entity type',
+    filter_action: 'Action',
+    filter_all: 'All',
+    showing: 'Showing {0}–{1} of {2}',
+    prev: 'Previous',
+    next: 'Next',
   },
 };
