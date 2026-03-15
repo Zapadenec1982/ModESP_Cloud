@@ -54,7 +54,14 @@ Ubuntu 24.04
 │   │   │       ├── 005_device_model_comment.sql
 │   │   │       ├── 006_device_rbac.sql
 │   │   │       ├── 007_firmware_board_type.sql
-│   │   │       └── 008_mqtt_auth.sql
+│   │   │       ├── 008_mqtt_auth.sql
+│   │   │       ├── 009_superadmin_role.sql
+│   │   │       ├── 010_user_tenants.sql
+│   │   │       ├── 011_mqtt_bootstrap.sql
+│   │   │       ├── 012_telegram_linking.sql
+│   │   │       ├── 013_refresh_token_tenant.sql
+│   │   │       ├── 014_push_subscriptions.sql
+│   │   │       └── 015_audit_log.sql
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration

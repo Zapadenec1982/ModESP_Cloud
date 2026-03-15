@@ -242,8 +242,38 @@ modesp/v1/acme/{device}/... (нормальна робота)
 
 ---
 
+## Audit Logging
+
+Всі мутації (POST/PUT/PATCH/DELETE) автоматично записуються в `audit_log` через middleware.
+
+**Принцип:** Fire-and-forget async INSERT — помилка логування не блокує відповідь.
+
+**Що записується:**
+- Хто: user_id, email, role, IP, User-Agent
+- Що: action (auto-derived: entity_type.method), endpoint, method, status_code
+- Коли: created_at, duration_ms
+- Деталі: entity_id, changes (before/after JSONB) — збагачується через `req.auditContext`
+
+**Immutability:** Trigger `trg_audit_log_immutable` забороняє UPDATE і DELETE на таблиці.
+
+**Пропускаються:** GET, OPTIONS, HEAD, auth.refresh (шум).
+
+```javascript
+// Збагачення з route handler:
+req.auditContext = {
+  entityId: device.id,
+  changes: {
+    before: { name: 'Old Name', location: 'Old Location' },
+    after:  { name: 'New Name', location: 'New Location' }
+  }
+}
+```
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Базова архітектура.
 - 2026-03-07 — Оновлено. Cloud adapter pattern, state aggregation, server-side telemetry sampling, auto-discovery flow, command translation.
 - 2026-03-08 — Оновлено. Phase 7: per-device RBAC (ролі, middleware), scalability оптимізації (batch writes, dedup, retention, backpressure), OTA board compatibility.
+- 2026-03-15 — Оновлено. Audit Logging middleware (auto-capture mutations, before/after changes, immutable table).

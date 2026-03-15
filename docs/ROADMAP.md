@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅**
+**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅, Audit Logging ✅, 130+ Tests ✅**
 
 ---
 
@@ -287,7 +287,34 @@
 
 ---
 
-### Фаза 9a: Bulk Device Import
+### Фаза 9: Audit Logging ✅
+**Ціль:** Compliance-ready аудит всіх мутацій для безпеки та прозорості.
+
+- [x] Міграція 015: `audit_log` таблиця (BIGSERIAL, immutability trigger, 4 індекси)
+- [x] Middleware `audit.js`: авто-перехоплення POST/PUT/PATCH/DELETE (fire-and-forget INSERT)
+- [x] Auto-derive `action` + `entity_type` з req.baseUrl + req.method
+- [x] Збагачення через `req.auditContext` (entityId, before/after changes) — 15 enrichment points
+- [x] Route `GET /api/audit-log` (superadmin only, filterable, paginated)
+- [x] WebUI: AuditLog.svelte (фільтри, пагінація, before/after diff)
+- [x] i18n: audit keys (uk+en)
+
+**Результат:** Superadmin бачить хто що зробив, коли, з якими змінами.
+
+---
+
+### Фаза 10: Test Infrastructure ✅
+**Ціль:** Повноцінна тестова інфраструктура + критичні security-тести.
+
+- [x] Vitest 3.2 + Supertest + Docker Compose test profile (PostgreSQL 5433, tmpfs)
+- [x] Test helpers: app.js, factories.js, migration runner
+- [x] 15 test suites, 130+ integration тестів (auth, RBAC, tenant isolation, CRUD, audit)
+- [x] Legacy 20 unit тестів збережено
+
+**Результат:** `npm test` → 130+ тестів за 15 секунд на реальній PostgreSQL.
+
+---
+
+### Фаза 11a: Bulk Device Import
 **Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
 
 - [ ] Міграція 013: `import_batches` таблиця (трекінг імпортів)
@@ -305,7 +332,7 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 
 ---
 
-### Фаза 9b: REST API + OpenAPI (ERP Integration)
+### Фаза 11b: REST API + OpenAPI (ERP Integration)
 **Ціль:** Зовнішні системи (1C, SAP, CRM) можуть автоматично реєструвати пристрої, отримувати статус, підписуватись на події.
 
 - [ ] Міграція 014: `api_keys` таблиця, `api_rate_limits`
@@ -322,7 +349,7 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 
 ---
 
-### Фаза 10: Advanced Analytics (майбутнє)
+### Фаза 12: Advanced Analytics (майбутнє)
 - [ ] ML моделі для предиктивного обслуговування
 - [ ] Виявлення аномалій (порівняння з нормою по флоту)
 - [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
