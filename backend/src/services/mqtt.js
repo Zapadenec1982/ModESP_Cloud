@@ -284,6 +284,20 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
     const prev = state[key];
     if (prev !== undefined && prev !== value) {
       await detectAlarm(tenantSlug, deviceId, key, value, state);
+    } else if (prev === undefined && value === false) {
+      // After backend restart, stateMap is empty. If device reports alarm=false
+      // but DB still has active=true, reconcile by clearing stale alarms.
+      const tenantInfo = resolveTenant(tenantSlug);
+      const alarmCode = key.replace('protection.', '');
+      const { rowCount } = await db.query(
+        `UPDATE alarms SET active = false, cleared_at = NOW()
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+        [tenantInfo.id, deviceId, alarmCode]
+      ).catch(err => { logger.error({ err, deviceId, alarmCode }, 'Failed to reconcile alarm'); return { rowCount: 0 }; });
+      if (rowCount > 0) {
+        logger.info({ deviceId, alarmCode }, 'Reconciled stale alarm after restart');
+        emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
+      }
     }
   }
 
