@@ -40,6 +40,25 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── PostgreSQL (test — RAM-backed, profile: test) ─────
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:16-alpine
+    container_name: modesp-postgres-test
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: modesp_cloud_test
+      POSTGRES_USER: modesp_cloud
+      POSTGRES_PASSWORD: test_password
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modesp_cloud"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   postgres_data:
   mosquitto_data:

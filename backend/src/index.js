@@ -16,7 +16,8 @@ const fcmSvc      = require('./services/fcm');
 const webpushSvc  = require('./services/webpush');
 const otaSvc      = require('./services/ota');
 const tenantMw    = require('./middleware/tenant');
-const { authenticate, authorize } = require('./middleware/auth');
+const { authenticate, authorize, requireSuperadmin } = require('./middleware/auth');
+const createAuditMiddleware = require('./middleware/audit');
 
 const { timingSafeEqual } = require('crypto');
 
@@ -257,6 +258,9 @@ const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
   || path.join(__dirname, '../firmware');
 app.use('/firmware', express.static(firmwareDir, { dotfiles: 'deny', index: false }));
 
+// ── Audit middleware (before auth — captures login/logout too) ─────
+app.use('/api', createAuditMiddleware(logger));
+
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
   // Public auth routes (no JWT required)
@@ -270,6 +274,7 @@ if (AUTH_ENABLED) {
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
   app.use('/api/firmware', authorize('admin'), require('./routes/firmware'));
   app.use('/api/ota',      authorize('admin'), require('./routes/ota'));
+  app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
 } else {
   // Dev fallback: tenant from header
   app.use('/api', tenantMw);
