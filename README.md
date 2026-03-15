@@ -357,7 +357,7 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 | [`docs/DATABASE.md`](docs/DATABASE.md) | DB schema (15 tables), partitioning, indexes |
 | [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 60+ REST endpoints with request/response examples |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | VPS deployment guide, migrations, monitoring |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & future roadmap |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & future roadmap ([🇺🇦 Українською](docs/ROADMAP_UA.md)) |
 
 ---
 
