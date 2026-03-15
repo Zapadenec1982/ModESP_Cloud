@@ -3,7 +3,15 @@
 const db = require('../services/db');
 
 const SKIP_METHODS = new Set(['GET', 'OPTIONS', 'HEAD']);
-const SKIP_AUTH_PATHS = new Set(['/refresh', '/select-tenant', '/switch-tenant']);
+// Noisy auth endpoints that should not be audited
+const SKIP_PATHS = new Set([
+  '/api/auth/refresh',
+  '/api/auth/select-tenant',
+  '/api/auth/switch-tenant',
+  '/auth/refresh',
+  '/auth/select-tenant',
+  '/auth/switch-tenant',
+]);
 
 /**
  * Auto-audit middleware for mutation endpoints.
@@ -14,8 +22,8 @@ function createAuditMiddleware(logger) {
     if (SKIP_METHODS.has(req.method)) return next();
 
     // Skip noisy auth paths but audit login/logout
-    const subPath = req.path;
-    if (req.baseUrl === '/api/auth' && SKIP_AUTH_PATHS.has(subPath)) return next();
+    const fullPath = (req.baseUrl || '') + (req.path || '');
+    if (SKIP_PATHS.has(fullPath)) return next();
 
     const startTime = Date.now();
 
