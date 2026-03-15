@@ -2,9 +2,9 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — 10 phases complete, ESP32 connected, MQTT+TLS, OTA, Multi-Tenant, RBAC, Telegram Bot, Audit Logging, 130+ Tests**
+**Production deployed ✅ — 11 phases complete, ESP32 connected, MQTT+TLS, OTA, Multi-Tenant, RBAC, Telegram Bot, Audit Logging, HACCP Export, 130+ Tests**
 
-**Next: Phase 11 — Platform Hardening & Compliance (Events API, HACCP Export, Password UI, Alarm Severity)**
+**Next: Phase 12 — Bulk Device Import**
 
 ---
 
@@ -316,54 +316,39 @@
 
 ---
 
-### Фаза 11: Platform Hardening & Compliance
+### Фаза 11: Platform Hardening & Compliance ✅
 **Ціль:** Закрити реальні гепи виявлені ревізією (2026-03-15). Пріоритизовано за ROI на основі аналізу конкурентів (Danfoss AK-SM, Dixell XWEB, Carel BOSS), стандартів (HACCP, NIST SP 800-63B Rev 4, ISA-18.2, OWASP) та реального масштабу платформи.
 
-#### 11a: Events API & Device Activity Log
-**Обґрунтування:** Дані events вже пишуться в БД (~150/день/пристрій: compressor on/off, defrost, online/offline), але немає жодного endpoint'у для читання. Частота циклів компресора — головний діагностичний показник.
+#### 11a: Events API & Chart Overlay ✅
+- [x] `GET /api/devices/:id/events` — query з `from`, `to`, `event_type`, `limit` фільтрами
+- [x] WebUI: events overlay на TelemetryChart (dashed vertical lines) + expandable event log table
+- [x] i18n: events ключі (uk+en)
 
-- [ ] `GET /api/devices/:id/events` — query з `from`, `to`, `type`, `limit` фільтрами
-- [ ] WebUI: Events tab в DeviceDetail (таблиця з фільтрами, хронологія подій)
-- [ ] i18n: events ключі (uk+en)
+#### 11b: HACCP Data Export (CSV + PDF) ✅
+- [x] `GET /api/devices/:id/telemetry/export.csv` — CSV телеметрії (BOM для Excel, csv-stringify RFC 4180)
+- [x] `GET /api/devices/export.csv` — CSV інвентаризація пристроїв
+- [x] `GET /api/alarms/export.csv` — CSV export алармів (90 днів, severity фільтр)
+- [x] `GET /api/devices/:id/telemetry/export.pdf` — HACCP PDF (pdfmake, Roboto Cyrillic, summary+alarms+temperature log)
+- [x] Rate limiting: 10 exports/min/user
+- [x] WebUI: кнопки CSV/PDF на TelemetryChart, Export CSV на Alarms
+- [x] npm: `pdfmake` + `csv-stringify`
+- [x] i18n: export ключі (uk+en)
 
-**Результат:** Технік бачить історію роботи обладнання — цикли компресора, дефрости, перепідключення.
+#### 11c: Password Change UI + NIST Password Policy ✅
+- [x] WebUI: ChangePasswordModal (old/new/confirm, sidebar lock icon)
+- [x] Backend: мінімум пароля 8→15 символів (Zod schemas)
+- [x] Client-side: HaveIBeenPwned k-anonymity check (Web Crypto SHA-1, fail-open, "Use Anyway" button)
+- [x] i18n: password ключі (uk+en)
 
-#### 11b: HACCP Data Export (CSV + PDF)
-**Обґрунтування:** HACCP обов'язковий в Україні з 20.09.2019 (Держпродспоживслужба). Форма 498-10/о вимагає журнал реєстрації температурного режиму. Всі конкуренти (Danfoss, Dixell, Carel) мають export. Без цього платформа не є повноцінним рішенням для холодильного обладнання.
+#### 11d: Alarm Severity Classification ✅
+- [x] Backend mqtt.js: 3-tier severity (critical: sensor/temp, warning: door/defrost/pulldown, info: rate/short_cycle/rapid_cycle)
+- [x] Backend mqtt.js: nuisance alarm delay (door_alarm 2min, pulldown_alarm 5min) via pendingAlarms Map
+- [x] Backend push.js: roleFilter — info severity → push тільки admin/superadmin
+- [x] API: `?severity=critical,warning` filter на GET /alarms
+- [x] WebUI Alarms: severity filter pills (All/Critical/Warning/Info) + color-coded badges
+- [x] SQL migration: existing alarms updated (rate/short_cycle/rapid_cycle → info)
 
-- [ ] `GET /api/telemetry/:deviceId/export?from=&to=&format=csv` — CSV download температурних даних
-- [ ] `GET /api/devices/export?format=csv` — CSV інвентаризація пристроїв
-- [ ] `GET /api/alarms/export?from=&to=&format=csv` — CSV export алармів
-- [ ] `GET /api/telemetry/:deviceId/export?format=pdf` — PDF compliance report (HACCP температурний лог)
-- [ ] PDF: заголовок (організація, пристрій, діапазон дат), таблиця (час, температура), min/max/avg summary
-- [ ] WebUI: кнопки "Export CSV" / "Export PDF" на TelemetryChart, Alarms, Dashboard
-- [ ] npm: `pdfkit` або `puppeteer` для генерації PDF
-- [ ] i18n: export ключі (uk+en)
-
-**Результат:** Адмін натискає "Export" → отримує файл для інспектора Держпродспоживслужби або внутрішнього аудиту.
-
-#### 11c: Password Change UI + NIST-aligned Password Policy
-**Обґрунтування:** Backend PUT /users/me вже є, але UI відсутній. NIST SP 800-63B Rev 4 (2025): мінімум 15 символів, НЕ вимагати complexity rules, перевіряти через breach databases.
-
-- [ ] WebUI: "Change Password" модалка з sidebar меню (old/new/confirm, НЕ окрема сторінка)
-- [ ] Backend: збільшити мінімум пароля до 15 символів (NIST-aligned)
-- [ ] Backend: HaveIBeenPwned k-anonymity API check при створенні/зміні пароля
-- [ ] Backend: НЕ додавати complexity rules (NIST явно забороняє)
-- [ ] i18n: password change ключі (uk+en)
-
-**Результат:** Юзер може змінити пароль через UI. Слабкі/скомпрометовані паролі відхиляються.
-
-#### 11d: Alarm Severity Classification
-**Обґрунтування:** ISA-18.2 визначає alarm fatigue як >10 алармів за 10 хв. 2/3 операторів BMS ігнорують сповіщення. Не всі аларми рівні: high_temp = CRITICAL (продукт псується), door_alarm = INFO (нормальна операція). Конкуренти (Danfoss, Copeland) мають Alarm Action Matrix.
-
-- [ ] Backend mqtt.js: severity рівні на ALARM_KEYS (critical / warning / info)
-- [ ] Backend push.js: severity-aware dispatch (critical = завжди, warning = configurable, info = тільки in-app)
-- [ ] Backend push.js: time-delay для nuisance алармів (door_alarm 3хв, pulldown 5хв після дефросту)
-- [ ] DB migration: `alarm_severity` поле або lookup table
-- [ ] WebUI Alarms: severity badge (колір/іконка)
-- [ ] API: severity filter на GET /alarms
-
-**Результат:** Техніки отримують лише важливі сповіщення. Критичні аларми (температура) — завжди, операційні (двері) — з затримкою.
+**Результат:** HACCP compliance, NIST-aligned паролі, alarm fatigue reduction, events visibility.
 
 ---
 
