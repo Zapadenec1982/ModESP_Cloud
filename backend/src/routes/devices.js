@@ -310,7 +310,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     }
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, status FROM devices WHERE ${whereClause}`,
+      `SELECT id, mqtt_device_id, name, status FROM devices WHERE ${whereClause}`,
       params
     );
 
@@ -325,6 +325,9 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     const deviceUuid = rows[0].id;
     const deviceMqttId = rows[0].mqtt_device_id;
     const deviceStatus = rows[0].status;
+
+    // Audit: preserve device identity before deletion
+    req.auditContext = { entityId: deviceUuid, changes: { before: { name: rows[0].name, mqtt_id: deviceMqttId } } };
 
     // Clear all history data regardless of status
     await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
@@ -719,6 +722,13 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
     const { id } = req.params;
     const { where, params: whereParams } = buildDeviceWhere(id, req);
 
+    // Fetch current state for audit before/after
+    const beforeRes = await db.query(
+      `SELECT id, name, location, serial_number, model, comment FROM devices WHERE ${where}`,
+      whereParams
+    );
+    const beforeDevice = beforeRes.rows[0];
+
     // Build dynamic SET clause
     const fields = parsed.data;
     const keys = Object.keys(fields);
@@ -744,6 +754,16 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
         message: `Device ${id} not found`,
         status: 404,
       });
+    }
+
+    // Audit: before/after for changed fields only
+    if (beforeDevice) {
+      const before = {}, after = {};
+      for (const k of keys) {
+        if (beforeDevice[k] !== undefined) before[k] = beforeDevice[k];
+        after[k] = rows[0][k];
+      }
+      req.auditContext = { entityId: rows[0].id, changes: { before, after } };
     }
 
     res.json({ data: rows[0] });
@@ -798,6 +818,9 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
     const tenantSlug = await resolveRoutingSlug(mqttId, rows[0].tenant_id);
 
     mqttSvc.sendCommand(tenantSlug, mqttId, key, value);
+
+    // Audit: which command was sent
+    req.auditContext = { entityId: mqttId, changes: { key, value: String(value) } };
 
     res.json({
       data: { device_id: mqttId, key, value, sent: true },

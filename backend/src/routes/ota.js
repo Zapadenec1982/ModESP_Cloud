@@ -29,6 +29,9 @@ router.post('/deploy', async (req, res, next) => {
       req.tenantId, tRes.rows[0].slug, firmware_id, device_id, req.userId
     );
 
+    // Audit: OTA deploy details
+    req.auditContext = { changes: { firmware_id, device_id } };
+
     res.status(201).json({ data: result });
   } catch (err) {
     if (err.status) {
@@ -65,6 +68,9 @@ router.post('/rollout', async (req, res, next) => {
       failThresholdPct: fail_threshold_pct,
       userId:           req.userId,
     });
+
+    // Audit: rollout details
+    req.auditContext = { entityId: result.rollout_id || result.id, changes: { firmware_id, target_count: device_ids?.length } };
 
     res.status(201).json({ data: result });
   } catch (err) {

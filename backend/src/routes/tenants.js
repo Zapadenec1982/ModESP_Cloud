@@ -90,6 +90,9 @@ router.post('/', requireSuperadmin, async (req, res, next) => {
       [name, slug, plan]
     );
 
+    // Audit: new tenant details
+    req.auditContext = { entityId: rows[0].id, changes: { after: { name, slug, plan } } };
+
     // Refresh MQTT tenant registry
     await mqttSvc.refreshRegistries();
 
@@ -192,6 +195,10 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
       }
     }
 
+    // Fetch current state for audit
+    const beforeRes = await db.query('SELECT name, plan, active FROM tenants WHERE id = $1', [id]);
+    const beforeTenant = beforeRes.rows[0];
+
     // Build dynamic SET clause
     const setClauses = [];
     const values = [];
@@ -217,6 +224,13 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
         message: 'Tenant not found',
         status: 404,
       });
+    }
+
+    // Audit: before/after
+    if (beforeTenant) {
+      const after = {};
+      for (const k of Object.keys(updates)) after[k] = rows[0][k];
+      req.auditContext = { entityId: id, changes: { before: beforeTenant, after } };
     }
 
     // Refresh MQTT tenant registry
@@ -289,6 +303,9 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
         status: 404,
       });
     }
+
+    // Audit: preserve deleted tenant identity
+    req.auditContext = { entityId: id, changes: { before: { name: result.name, slug: result.slug } } };
 
     // Refresh MQTT tenant registry
     await mqttSvc.refreshRegistries();

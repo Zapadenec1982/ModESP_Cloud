@@ -243,6 +243,10 @@ router.post('/', async (req, res) => {
        ON CONFLICT DO NOTHING`,
       [rows[0].id, targetTenantId]
     );
+
+    // Audit: who was created
+    req.auditContext = { entityId: rows[0].id, changes: { after: { email, role } } };
+
     res.status(201).json({ data: rows[0] });
   } catch (err) {
     if (err.code === '23505') { // unique violation
@@ -275,8 +279,8 @@ router.put('/:id', async (req, res) => {
   try {
     // ── Role hierarchy check: fetch target user ──
     const targetQ = isSuperAdmin
-      ? 'SELECT id, role FROM users WHERE id = $1'
-      : 'SELECT id, role FROM users WHERE id = $1 AND tenant_id = $2';
+      ? 'SELECT id, email, role FROM users WHERE id = $1'
+      : 'SELECT id, email, role FROM users WHERE id = $1 AND tenant_id = $2';
     const targetParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
     const { rows: targetRows } = await db.query(targetQ, targetParams);
 
@@ -285,6 +289,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const targetUser = targetRows[0];
+    const beforeState = { email: targetUser.email, role: targetUser.role };
 
     // Admin cannot modify superadmin
     if (targetUser.role === 'superadmin' && !isSuperAdmin) {
@@ -337,6 +342,10 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
     }
 
+    // Audit: before/after
+    const afterState = { email: rows[0].email, role: rows[0].role };
+    req.auditContext = { entityId: req.params.id, changes: { before: beforeState, after: afterState } };
+
     res.json({ data: rows[0] });
   } catch (err) {
     if (err.code === '23505') {
@@ -368,8 +377,8 @@ router.delete('/:id', async (req, res) => {
 
     // ── Role hierarchy check ──
     const checkQ = isSuperAdmin
-      ? 'SELECT role FROM users WHERE id = $1'
-      : 'SELECT role FROM users WHERE id = $1 AND tenant_id = $2';
+      ? 'SELECT email, role FROM users WHERE id = $1'
+      : 'SELECT email, role FROM users WHERE id = $1 AND tenant_id = $2';
     const checkParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
     const { rows: checkRows } = await db.query(checkQ, checkParams);
 
@@ -402,6 +411,9 @@ router.delete('/:id', async (req, res) => {
       'UPDATE refresh_tokens SET revoked = true WHERE user_id = $1',
       [req.params.id]
     );
+
+    // Audit: preserve deleted user's identity
+    req.auditContext = { entityId: req.params.id, changes: { before: { email: checkRows[0].email, role: checkRows[0].role } } };
 
     res.json({ data: rows[0] });
   } catch (err) {
@@ -506,6 +518,9 @@ router.post('/:id/tenants', async (req, res) => {
          WHERE ut.user_id = $1 ORDER BY t.name`,
       [req.params.id]
     );
+    // Audit: which tenant was added
+    req.auditContext = { entityId: req.params.id, changes: { tenant_id } };
+
     res.status(201).json({ data: rows });
   } catch (err) {
     req.log?.error?.({ err }, 'Add user tenant failed');
@@ -672,6 +687,9 @@ router.put('/:id/devices', async (req, res) => {
       }
     });
 
+    // Audit: how many devices were set
+    req.auditContext = { entityId: userId, changes: { count: device_ids.length } };
+
     res.json({ data: { message: 'Device access updated', count: device_ids.length } });
   } catch (err) {
     req.log?.error?.({ err }, 'Bulk update user devices failed');
@@ -707,6 +725,9 @@ router.post('/:id/devices', async (req, res) => {
        VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING`,
       [req.params.id, parsed.data.device_id, grantedBy]
     );
+    // Audit: which device was granted
+    req.auditContext = { entityId: req.params.id, changes: { device_id: parsed.data.device_id } };
+
     res.status(201).json({ data: { message: 'Device access granted' } });
   } catch (err) {
     req.log?.error?.({ err }, 'Grant device access failed');

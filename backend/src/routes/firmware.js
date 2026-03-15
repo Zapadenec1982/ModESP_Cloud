@@ -95,6 +95,9 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       ]
     );
 
+    // Audit: firmware upload details
+    req.auditContext = { entityId: result.rows[0].id, changes: { version: version.trim(), filename: req.file.originalname, size: req.file.size } };
+
     res.status(201).json({ data: result.rows[0] });
   } catch (err) {
     // Multer errors
@@ -174,7 +177,7 @@ router.delete('/:id', async (req, res, next) => {
 
     // Get firmware record
     const fw = await db.query(
-      'SELECT id, filename FROM firmwares WHERE tenant_id = $1 AND id = $2',
+      'SELECT id, version, filename FROM firmwares WHERE tenant_id = $1 AND id = $2',
       [req.tenantId, req.params.id]
     );
     if (fw.rows.length === 0) {
@@ -198,6 +201,9 @@ router.delete('/:id', async (req, res, next) => {
       'DELETE FROM firmwares WHERE tenant_id = $1 AND id = $2',
       [req.tenantId, req.params.id]
     );
+
+    // Audit: preserve firmware version
+    req.auditContext = { entityId: req.params.id, changes: { before: { version: fw.rows[0].version } } };
 
     res.json({ data: { deleted: true } });
   } catch (err) {
