@@ -2,7 +2,7 @@
 
 ## Поточний стан
 
-**Production deployed ✅ — 11 фаз завершено, 15 міграцій БД, ESP32 підключений через MQTT+TLS**
+**Production deployed ✅ — 11 фаз завершено, ESP32 підключений через MQTT+TLS**
 
 Завершено: Cloud Foundation, REST API, WebSocket, WebUI, Push (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ тестів), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity).
 
@@ -131,12 +131,8 @@ Compliance-ready аудит всіх мутацій.
 - [ ] `POST /api/devices/import` — CSV upload, per-row: знайти pending → assign + MQTT creds
 - [ ] `GET /api/devices/pending/export` — експорт pending списку в CSV (заповнити в Excel → re-upload)
 - [ ] `GET /api/devices/import/template` — порожній CSV шаблон з заголовками
-- [ ] npm: `csv-parse` для парсингу CSV
 - [ ] WebUI: `ImportModal.svelte` — drag-and-drop, preview, результат (assigned/skipped/errors)
 - [ ] WebUI: кнопка "Import CSV" на PendingDevices
-- [ ] i18n: import ключі (uk+en)
-
-CSV колонки: mqtt_device_id (обов'язковий), name, serial_number, location, model, comment — ті ж поля що при ручному assign.
 
 **Результат:** Адмін скачує pending список → заповнює метадані в Excel → завантажує назад → 500 пристроїв активовано за хвилину.
 
@@ -144,26 +140,19 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 
 ### Фаза 13: Energy Monitoring + Health Score
 **Ціль:** Перетворити сирі дані компресора на бізнес-метрики (kWh, ₴, health score).
-**Залежність від firmware:** SCT-013 current sensor → нові state keys. Без firmware — estimated kWh = duty × rated_power.
 **Тривалість:** 2-3 тижні
 
 #### Backend
-- [ ] Міграція: `devices.rated_power_w`, `devices.energy_rate` (₴/kWh), `devices.health_score` (0-100)
-- [ ] Нові telemetry channels: `power_watts`, `energy_kwh` (nullable, тільки з firmware)
-- [ ] MQTT handler: нові state keys (`equipment.power_watts`, `equipment.compressor_current`)
-- [ ] REST API: `GET /devices/:id/energy?from=&to=` → kWh, вартість, avg power
+- [ ] Нові telemetry channels: power_watts, energy_kwh
+- [ ] REST API: `GET /devices/:id/energy` → kWh, вартість, avg power
 - [ ] REST API: `GET /fleet/energy` → total kWh, top consumers, cost
-- [ ] Health Score calculator (cron, щогодини):
-  - alarm_frequency × 5, duty_deviation × 0.3, defrost_timeouts × 10, sensor_error × 20, offline_hours × 2
-  - Score = CLAMP(0, 100)
+- [ ] Health Score calculator (cron, щогодини): alarm frequency, duty deviation, sensor errors, offline hours → score 0-100
 - [ ] REST API: `GET /devices/:id/health`, `GET /fleet/health`
-- [ ] WebSocket: health_score change broadcasts
 
 #### WebUI
-- [ ] DeviceDetail: Energy tab (kWh chart, cost KPI, power gauge)
+- [ ] DeviceDetail: Energy tab (kWh chart, cost KPI)
 - [ ] DeviceDetail: Health Score badge (green/yellow/red)
-- [ ] Dashboard: fleet energy summary, DeviceCard health badge, sort by health
-- [ ] i18n: energy.*, health.* keys (uk+en)
+- [ ] Dashboard: fleet energy summary, sort by health score
 
 **Результат:** Клієнт бачить скільки коштує енергія на кожен холодильник і який потребує уваги.
 
@@ -173,17 +162,11 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 **Ціль:** Порівняння однотипного обладнання, автоматичне виявлення аномалій.
 **Тривалість:** 2-3 тижні
 
-#### Backend
-- [ ] Fleet baseline service (cron, щоденно): avg ± 2σ по model + tenant для duty_cycle, alarm_freq, temp_deviation
-- [ ] Anomaly detector (cron, щогодини): Z-score > 2.0 → anomaly event + notification
-- [ ] REST API: `GET /fleet/benchmarks?model=`, `GET /devices/:id/anomalies`, `GET /fleet/anomalies`
-- [ ] Push: anomaly detected → notification (debounce 1h)
-
-#### WebUI
-- [ ] Fleet Analytics page (нова): bar chart duty cycle, scatter health vs energy, outliers table
+- [ ] Fleet baseline service: avg ± 2σ по model для duty_cycle, alarm_freq, temp_deviation
+- [ ] Anomaly detector: Z-score > 2.0 → anomaly event + notification
+- [ ] REST API: benchmarks, anomalies (per-device + fleet-wide)
+- [ ] Fleet Analytics page (нова): duty cycle chart, outliers table
 - [ ] DeviceDetail: Anomalies tab
-- [ ] Dashboard: anomaly count badge
-- [ ] i18n: analytics.*, anomaly.* keys (uk+en)
 
 **Результат:** "Холодильник #7 працює на 40% більше ніж середній Model X — перевірте ущільнення дверей."
 
@@ -193,20 +176,13 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 **Ціль:** Зовнішні інтеграції — CMMS, ERP, автоматизація.
 **Тривалість:** 1.5-2 тижні
 
-#### Backend
-- [ ] Webhook dispatcher:
-  - Events: `alarm.triggered`, `alarm.cleared`, `device.offline`, `device.online`, `anomaly.detected`, `health.critical`, `ota.completed`
-  - HMAC-SHA256 signature, retry (3 attempts, exponential backoff), circuit breaker
-- [ ] REST API: CRUD `/webhooks`, test delivery, delivery log
-- [ ] API Keys: `api_keys` table, API key auth middleware (machine-to-machine)
+- [ ] Webhook dispatcher: alarm/device/anomaly events, HMAC-SHA256 signature, retry + circuit breaker
+- [ ] REST API: CRUD webhooks, test delivery, delivery log
+- [ ] API Keys: machine-to-machine auth (alternative to JWT)
 - [ ] OpenAPI 3.0 spec → `/api/docs`
+- [ ] WebUI: Webhooks page, API Keys page
 
-#### WebUI
-- [ ] Webhooks page: table, create/edit/test, delivery log
-- [ ] API Keys page (admin): create, revoke, usage stats
-- [ ] i18n: webhooks.*, api_keys.* keys (uk+en)
-
-**Результат:** Alarm → webhook → 1С/CMMS створює наряд на ремонт. Автоматично.
+**Результат:** Alarm → webhook → CMMS створює наряд на ремонт. Автоматично.
 
 ---
 
@@ -214,17 +190,11 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 **Ціль:** Друковані звіти для клієнтів, mobile experience.
 **Тривалість:** 2-3 тижні
 
-> Примітка: базовий HACCP export (CSV + PDF) вже реалізований у Phase 11b. Ця фаза розширює до scheduled reports, email delivery, fleet reports.
+> Базовий HACCP export (CSV + PDF) вже реалізований у Phase 11b. Ця фаза розширює до scheduled reports і email delivery.
 
-#### Reports
-- [ ] Report types: Device Health Report, Fleet Overview, Energy Report
-- [ ] Scheduled reports: `scheduled_reports` table, cron weekly/monthly → email attachment
-- [ ] Email service (nodemailer, SMTP)
-
-#### PWA
-- [ ] `manifest.json`, Service Worker (workbox)
-- [ ] Offline view: cached last device states
-- [ ] Install prompt, responsive audit (375px), touch optimizations
+- [ ] Нові типи звітів: Device Health Report, Fleet Overview, Energy Report
+- [ ] Scheduled reports: weekly/monthly generation → email attachment
+- [ ] PWA: manifest.json, Service Worker, offline device states, install prompt
 
 **Результат:** Клієнт отримує PDF звіт щотижня на email. Технік встановлює PWA на телефон.
 
@@ -232,16 +202,10 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 
 ### Фаза 17: Maintenance Recommendations
 **Ціль:** Автоматичні рекомендації з обслуговування на основі даних.
-**Залежність від firmware:** edge analytics keys (опціонально — базові правила працюють без firmware).
 **Тривалість:** 1.5-2 тижні
 
-- [ ] Rules engine (configurable):
-  - defrost.consecutive_timeouts > 3 → "Перевірте нагрівач відтайки"
-  - COP indicator trend +20% за 7d → "Очистіть конденсатор"
-  - compressor_hours > 10000 → "Планове ТО компресора"
-  - duty_deviation > 30% від baseline → "Перевірте герметичність камери"
-  - health_score < 30 протягом 48h → "Потрібен виїзд техніка"
-- [ ] REST API: `GET /devices/:id/recommendations`, `POST .../dismiss`
+- [ ] Rules engine: defrost timeouts → "перевірте нагрівач", duty deviation → "перевірте герметичність", compressor hours → "планове ТО"
+- [ ] REST API: recommendations per device, dismiss action
 - [ ] Push + Webhook events для critical recommendations
 - [ ] WebUI: Recommendations tab, dashboard badge
 
@@ -253,21 +217,19 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 **Ціль:** SaaS бізнес-модель — клієнти реєструються і платять самостійно.
 **Тривалість:** 4-6 тижнів
 
-- [ ] Self-registration: `POST /auth/register` → user + tenant + default plan + email verification
-- [ ] Plan enforcement middleware: max_devices, max_users, feature gates
-- [ ] Billing integration (LiqPay for UA, Stripe for international)
-- [ ] Usage metering: device count, telemetry volume, API calls per tenant
-- [ ] WebUI: Registration page, Billing page, plan comparison, invoice history
+- [ ] Self-registration з email verification
+- [ ] Plan enforcement: max devices, max users, feature gates
+- [ ] Billing integration (LiqPay / Stripe)
+- [ ] Usage metering: devices, telemetry volume, API calls
+- [ ] WebUI: Registration, Billing, plan comparison, invoices
 
-#### Плани
-
-| Plan | Devices | Users | Features | Price |
-|------|---------|-------|----------|-------|
-| Free | 3 | 2 | Monitoring, push | $0 |
+| Plan | Devices | Users | Можливості | Ціна |
+|------|---------|-------|------------|------|
+| Free | 3 | 2 | Моніторинг, push | $0 |
 | Pro | 50 | 10 | + Energy, Health Score, Reports, Webhooks | ~$49/міс |
 | Enterprise | ∞ | ∞ | + Anomaly, Recommendations, API Keys, SLA | Custom |
 
-**Результат:** Клієнт реєструється на modesp.com.ua → додає пристрої → платить щомісяця.
+**Результат:** Клієнт реєструється → додає пристрої → платить щомісяця.
 
 ---
 
@@ -297,7 +259,7 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 |----------|--------|---------------------|
 | Глибина edge-інтеграції | 48 state + 60 command keys, direct control | Axiom (read-only) |
 | Fleet OTA з rollback | Board-type валідація, batch rollout, auto-pause | Monnit (basic OTA) |
-| Zero-touch auto-discovery | Pending → assign → _set_tenant → auto-reconnect | Ніхто |
+| Zero-touch auto-discovery | Pending → assign → auto-reconnect | Ніхто |
 | Per-device RBAC | user_devices M:N, не тільки per-site | Ніхто (всі per-site) |
 | M:N multi-tenant users | Технік обслуговує кількох клієнтів | Ніхто |
 | Self-hosted | Повний контроль даних, ~$20/міс на VPS | Monnit Enterprise (дорого) |
@@ -309,67 +271,20 @@ CSV колонки: mqtt_device_id (обов'язковий), name, serial_numbe
 |--------|------------|------|
 | Енергомоніторинг (kWh) | Axiom, KLATU, SmartSense | Phase 13 |
 | Equipment Health Score | SmartSense, KLATU | Phase 13 |
-| Anomaly detection | Axiom (digital twin), KLATU (8 патентів) | Phase 14 |
+| Anomaly detection | Axiom, KLATU | Phase 14 |
 | Fleet benchmarking | Axiom, SmartSense | Phase 14 |
-| Webhooks / API integrations | Monnit, Tive, SmartSense | Phase 15 |
-| Scheduled reports + email | Monnit, SmartSense, KLATU | Phase 16 |
-| Mobile PWA | SmartSense, Monnit (native) | Phase 16 |
+| Webhooks / API | Monnit, Tive, SmartSense | Phase 15 |
+| Scheduled reports | Monnit, SmartSense | Phase 16 |
+| Mobile PWA | SmartSense, Monnit | Phase 16 |
 | Maintenance recommendations | KLATU, SmartSense | Phase 17 |
 | SaaS self-service | Всі хмарні конкуренти | Phase 18 |
 
 ---
 
-## Залежності Cloud ↔ Firmware
-
-| Cloud Phase | Firmware Dependency | Обов'язково? |
-|-------------|-------------------|--------------|
-| Phase 13 (Energy) | SCT-013 current sensor | ⚠️ Для kWh. Без firmware — estimated kWh = duty × rated_power |
-| Phase 13 (Health) | Немає | ❌ Всі дані вже є |
-| Phase 14 (Anomaly) | Edge analytics keys | ❌ Cloud рахує самостійно |
-| Phase 15 (Webhooks) | Немає | ❌ |
-| Phase 16 (Reports) | Немає | ❌ |
-| Phase 17 (Recommendations) | Adaptive defrost, COP indicator | 🟡 Базові правила працюють без firmware |
-| Phase 18 (Billing) | Немає | ❌ |
-
----
-
-## Метрики успіху
-
-| Метрика | Поточне | Ціль Q3 2026 | Ціль Q4 2026 |
-|---------|---------|--------------|--------------|
-| Підключених пристроїв | 1 | 20+ | 100+ |
-| Тенантів | 1 | 5+ | 15+ |
-| Health Score coverage | — | 100% | 100% |
-| Anomaly detection | — | Statistical (Z-score) | + recommendations |
-| Energy monitoring | — | Estimated kWh | Real kWh (SCT-013) |
-| Webhooks | — | 7 event types | + CMMS templates |
-| Reports | HACCP CSV/PDF | + 3 report types | + scheduled email |
-| PWA | — | Так | + offline mode |
-| Paying tenants | 0 | 0 (pilot) | 3-5 |
-
----
-
-## Ревізія та аналіз конкурентів (2026-03-15)
-
-### Що досліджено
-Порівняння з AWS IoT, Azure IoT Hub, ThingsBoard, Blynk, Losant, Danfoss AK-SM 800, Dixell XWEB, Carel BOSS, Axiom Cloud, KLATU Networks, SmartSense, Monnit, Controlant, ELPRO, Tive, Cooltrax, ComplianceMate.
-
-Стандарти: HACCP (Україна, з 2019), NIST SP 800-63B Rev 4, ISA-18.2 (alarm management), OWASP, IEC 62443.
-
-### Що відхилено як over-engineering для поточного масштабу
-- **TOTP 2FA** — конкуренти не мають (Dixell: Admin/Admin), IEC 62443 SL 1-2 не вимагає
-- **Account lockout** — OWASP: lockout = DoS вектор, rate limiting достатній
-- **Device tags/groups** — при <100 пристроях location+model покривають 80-90% потреб
-- **Quiet hours** — неприйнятно для холодильного обладнання, HACCP вимагає 24/7
-- **Per-alarm-type UI** — severity classification ефективніший ніж 48 чекбоксів
-
----
-
 ## Changelog
 
-- 2026-03-15 — Ревізія: об'єднано ROADMAP.md + ROADMAP_NEXT.md, перенумеровано фази 12-18, видалено дублювання, оновлено стан (11 фаз, 15 міграцій). PDF Reports частково реалізовано в Phase 11b (HACCP Export).
+- 2026-03-15 — Ревізія: об'єднано ROADMAP + ROADMAP_NEXT, перенумеровано фази 12-18, прибрано внутрішні деталі (firmware залежності, бізнес-метрики, відхилені рішення).
 - 2026-03-15 — Phase 11 завершено: Events API, HACCP Export (CSV+PDF), Password Change (NIST), Alarm Severity (ISA-18.2).
-- 2026-03-15 — Full platform audit & competitor research. Roadmap restructured based on ROI analysis.
 - 2026-03-15 — Documentation: README rewritten for portfolio, FEATURES.md (EN+UA) created.
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign + UX (auth, RBAC, i18n, persistent keyboard).
 - 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback, stuck device auto-detection.
