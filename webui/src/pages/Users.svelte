@@ -422,7 +422,9 @@
             <!-- Telegram -->
             <div class="cell cell-telegram">
               {#if user.telegram_id}
-                <Badge variant="success" size="sm">{$t('users.telegram_linked')}</Badge>
+                <button class="link-btn link-btn--relink" on:click={() => generateTgLink(user)}>
+                  <Badge variant="success" size="sm">{$t('users.telegram_linked')}</Badge>
+                </button>
               {:else}
                 <button class="link-btn" on:click={() => generateTgLink(user)}>{$t('users.telegram_link')}</button>
               {/if}
@@ -1041,6 +1043,17 @@
 
   .link-btn:hover {
     text-decoration: underline;
+  }
+
+  .link-btn--relink {
+    display: flex;
+    align-items: center;
+    opacity: 0.9;
+  }
+
+  .link-btn--relink:hover {
+    opacity: 1;
+    text-decoration: none;
   }
 
   .sep {

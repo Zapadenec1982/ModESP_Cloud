@@ -14,7 +14,6 @@
   import Dashboard from './pages/Dashboard.svelte'
   import DeviceDetail from './pages/DeviceDetail.svelte'
   import PendingDevices from './pages/PendingDevices.svelte'
-  import Notifications from './pages/Notifications.svelte'
   import Login from './pages/Login.svelte'
   import Users from './pages/Users.svelte'
   import Firmware from './pages/Firmware.svelte'
@@ -47,7 +46,6 @@
     '/device/:id':      DeviceDetail,
     '/alarms':          Alarms,
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
-    '/notifications':   Notifications,
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
@@ -120,7 +118,6 @@
     '/': 'pages.dashboard',
     '/alarms': 'pages.alarms',
     '/pending': 'pages.pending',
-    '/notifications': 'pages.notifications',
     '/firmware': 'pages.firmware',
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',

@@ -177,23 +177,24 @@ function onConnect() {
   logger.info('Subscribed to MQTT topics');
 }
 
-function onMessage(topic, payload) {
+function onMessage(topic, payload, packet) {
   try {
     const msg = payload.toString().trim();
     const parsed = parseTopic(topic);
     if (!parsed) return;
 
     const { tenantSlug, deviceId, subtopic, stateKey } = parsed;
+    const isRetained = packet && packet.retain;
 
     switch (subtopic) {
       case 'state':
-        if (stateKey) handleStateKey(tenantSlug, deviceId, stateKey, msg);
+        if (stateKey) handleStateKey(tenantSlug, deviceId, stateKey, msg, isRetained);
         break;
       case 'status':
-        handleStatus(tenantSlug, deviceId, msg);
+        handleStatus(tenantSlug, deviceId, msg, isRetained);
         break;
       case 'heartbeat':
-        handleHeartbeat(tenantSlug, deviceId, msg);
+        handleHeartbeat(tenantSlug, deviceId, msg, isRetained);
         break;
       default:
         // cmd and unknown — ignore on cloud side
@@ -251,9 +252,12 @@ function parseScalar(payload) {
 
 // ── Handlers ──────────────────────────────────────────────
 
-async function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
+async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained) {
   const value = parseScalar(rawPayload);
   const now   = Date.now();
+
+  // Skip retained messages for unknown devices (prevents phantom devices after deletion)
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   // Ensure stateMap entry exists
   let state = stateMap.get(deviceId);
@@ -325,15 +329,19 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   emitter.emit('state_delta', { tenantSlug, deviceId, changes: { [key]: value } });
 
   // Ensure device exists in registry (auto-discovery for unknown devices)
-  ensureDevice(tenantSlug, deviceId);
+  // Skip for retained messages — prevents re-creating deleted devices on restart
+  if (!isRetained) ensureDevice(tenantSlug, deviceId);
 
   // Detect stuck devices (active in DB but publishing as pending)
   checkStuckDevice(tenantSlug, deviceId);
 }
 
-function handleStatus(tenantSlug, deviceId, payload) {
+function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   const online = (payload === 'online');
   const now    = Date.now();
+
+  // Skip retained messages for unknown devices
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -376,8 +384,8 @@ function handleStatus(tenantSlug, deviceId, payload) {
     insertEvent(tenantInfo.id, deviceId, 'device_offline');
   }
 
-  // Auto-discovery
-  ensureDevice(tenantSlug, deviceId);
+  // Auto-discovery — skip for retained messages
+  if (!isRetained) ensureDevice(tenantSlug, deviceId);
 
   // Detect stuck devices (active in DB but publishing as pending)
   checkStuckDevice(tenantSlug, deviceId);
@@ -391,8 +399,11 @@ function handleStatus(tenantSlug, deviceId, payload) {
   logger.info({ tenantSlug, deviceId, online }, 'Device status');
 }
 
-function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
+function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
   const now = Date.now();
+
+  // Skip retained messages for unknown devices
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -565,8 +576,19 @@ const discoveryCount = new Map(); // tenantSlug → { count, resetAt }
 const DISCOVERY_LIMIT = 20;       // new devices per tenant per minute
 const DISCOVERY_WINDOW_MS = 60000;
 
+/** Recently deleted devices — blocks re-creation from retained MQTT messages */
+const deletedDevices = new Map(); // deviceId → deleteTimestamp
+const DELETED_BLOCK_MS = 5 * 60_000; // 5 minutes
+
 function ensureDevice(tenantSlug, deviceId) {
   if (deviceRegistry.has(deviceId)) return;
+
+  // Block re-creation of recently deleted devices (retained MQTT messages)
+  const deletedAt = deletedDevices.get(deviceId);
+  if (deletedAt) {
+    if (Date.now() - deletedAt < DELETED_BLOCK_MS) return;
+    deletedDevices.delete(deviceId); // expired — allow re-discovery
+  }
 
   // Rate-limit discoveries per tenant slug
   const now = Date.now();
@@ -1070,12 +1092,25 @@ function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
 
 /**
  * Remove a device from in-memory stateMap and deviceRegistry.
+ * Blocks auto-discovery re-creation for 5 minutes (retained MQTT messages).
+ * Clears retained MQTT messages for the device's known topic prefix.
  * Called after device is deleted from DB.
  * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
  */
 function removeDeviceState(deviceId) {
+  // Read tenant slug before clearing state (needed for retained message cleanup)
+  const state = stateMap.get(deviceId);
+  const tenantSlug = state?._tenantSlug || null;
+
   stateMap.delete(deviceId);
   deviceRegistry.delete(deviceId);
+  deletedDevices.set(deviceId, Date.now());
+
+  // Clear retained MQTT messages for both pending and tenant topics
+  clearPendingRetained(deviceId);
+  if (tenantSlug && tenantSlug !== 'pending') {
+    clearRetainedForTenant(tenantSlug, deviceId);
+  }
 }
 
 /**
@@ -1100,6 +1135,27 @@ function clearPendingRetained(deviceId) {
   client.publish(`${prefix}/state/protection.compressor_blocked`, '', { retain: true, qos: 0 });
 
   logger.info({ deviceId }, 'Cleared retained pending MQTT messages');
+}
+
+/**
+ * Clear retained MQTT messages for a device under a specific tenant slug.
+ * Same approach as clearPendingRetained but for tenant-scoped topics.
+ */
+function clearRetainedForTenant(tenantSlug, deviceId) {
+  if (!client || !connected) return;
+  const prefix = `modesp/v1/${tenantSlug}/${deviceId}`;
+
+  client.publish(`${prefix}/status`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/heartbeat`, '', { retain: true, qos: 0 });
+
+  for (const key of ALARM_KEYS) {
+    client.publish(`${prefix}/state/${key}`, '', { retain: true, qos: 0 });
+  }
+  client.publish(`${prefix}/state/protection.alarm_active`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.alarm_code`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.compressor_blocked`, '', { retain: true, qos: 0 });
+
+  logger.info({ tenantSlug, deviceId }, 'Cleared retained tenant MQTT messages');
 }
 
 // ── Exports ───────────────────────────────────────────────

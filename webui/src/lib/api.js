@@ -404,6 +404,30 @@ export function deletePendingDevice(mqttId) {
   return request(`/devices/pending/${mqttId}`, { method: 'DELETE' });
 }
 
+export async function batchRegisterDevices(file, tenantId) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (tenantId) formData.append('tenant_id', tenantId)
+
+  const headers = {}
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+
+  const res = await fetch(`${BASE}/devices/pending/batch`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    if (body.errors) {
+      const msgs = body.errors.slice(0, 5).map(e => `Row ${e.row}: ${e.message}`).join('; ')
+      throw new Error(msgs + (body.errors.length > 5 ? ` (+${body.errors.length - 5} more)` : ''))
+    }
+    throw new Error(body.message || `HTTP ${res.status}`)
+  }
+  return (await res.json()).data
+}
+
 export function deleteDevice(id) {
   return request(`/devices/${id}`, { method: 'DELETE' });
 }

@@ -5,7 +5,6 @@
   export let online = 0
   export let total = 0
   export let alarms = 0
-  export let avgTemp = null
 
   $: offlineCount = total - online
 </script>
@@ -20,6 +19,17 @@
       <span class="stat-label">{$t('dashboard.fleet_online')}</span>
     </div>
     <div class="stat-accent online" />
+  </div>
+
+  <div class="stat" class:offline-active={offlineCount > 0}>
+    <div class="stat-icon" class:offline={offlineCount > 0}>
+      <Icon name="wifi-off" size={18} />
+    </div>
+    <div class="stat-content">
+      <span class="stat-value" class:offline-text={offlineCount > 0}>{offlineCount}</span>
+      <span class="stat-label">{$t('dashboard.fleet_offline')}</span>
+    </div>
+    <div class="stat-accent" class:offline={offlineCount > 0} />
   </div>
 
   <div class="stat">
@@ -42,20 +52,6 @@
       <span class="stat-label">{$t('dashboard.fleet_alarms')}</span>
     </div>
     <div class="stat-accent" class:alarm={alarms > 0} />
-  </div>
-
-  <div class="stat">
-    <div class="stat-icon temp">
-      <Icon name="thermometer" size={18} />
-    </div>
-    <div class="stat-content">
-      <span class="stat-value temp-val">
-        {avgTemp != null ? Number(avgTemp).toFixed(1) : '--'}
-        <span class="stat-unit">°C</span>
-      </span>
-      <span class="stat-label">{$t('dashboard.fleet_avg_temp')}</span>
-    </div>
-    <div class="stat-accent temp" />
   </div>
 </div>
 
@@ -96,7 +92,10 @@
     box-shadow: var(--shadow-glow-red);
   }
 
-  /* Subtle gradient accent bar at bottom */
+  .stat.offline-active {
+    border-color: rgba(251, 191, 36, 0.3);
+  }
+
   .stat-accent {
     position: absolute;
     bottom: 0;
@@ -110,10 +109,10 @@
 
   .stat:hover .stat-accent { opacity: 0.8; }
 
-  .stat-accent.online { background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan)); }
-  .stat-accent.total { background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); }
-  .stat-accent.alarm { background: linear-gradient(90deg, var(--accent-red), var(--accent-orange)); opacity: 0.8; }
-  .stat-accent.temp { background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue)); }
+  .stat-accent.online  { background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan)); }
+  .stat-accent.total   { background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); }
+  .stat-accent.alarm   { background: linear-gradient(90deg, var(--accent-red), var(--accent-orange)); opacity: 0.8; }
+  .stat-accent.offline { background: linear-gradient(90deg, var(--accent-amber, #fbbf24), var(--accent-orange)); opacity: 0.7; }
 
   .stat-icon {
     width: 38px;
@@ -128,10 +127,10 @@
     transition: color var(--transition-fast);
   }
 
-  .stat-icon.online { color: var(--accent-green); background: rgba(52, 211, 153, 0.1); }
-  .stat-icon.total  { color: var(--accent-blue);  background: rgba(74, 158, 255, 0.1); }
-  .stat-icon.temp   { color: var(--accent-cyan);  background: rgba(34, 211, 238, 0.1); }
-  .stat-icon.alarm  { color: var(--accent-red);   background: rgba(239, 68, 68, 0.12); }
+  .stat-icon.online  { color: var(--accent-green); background: rgba(52, 211, 153, 0.1); }
+  .stat-icon.total   { color: var(--accent-blue);  background: rgba(74, 158, 255, 0.1); }
+  .stat-icon.alarm   { color: var(--accent-red);   background: rgba(239, 68, 68, 0.12); }
+  .stat-icon.offline { color: var(--accent-amber, #fbbf24); background: rgba(251, 191, 36, 0.1); }
 
   .stat-content {
     display: flex;
@@ -153,10 +152,8 @@
     color: var(--accent-red);
   }
 
-  .stat-unit {
-    font-size: var(--text-sm);
-    font-weight: 400;
-    color: var(--text-muted);
+  .stat-value.offline-text {
+    color: var(--accent-amber, #fbbf24);
   }
 
   .stat-label {

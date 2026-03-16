@@ -1,7 +1,11 @@
 'use strict';
 
 const { Router } = require('express');
+const path       = require('path');
 const { z }      = require('zod');
+const multer     = require('multer');
+const { parse: parseCsv } = require('csv-parse/sync');
+const bcrypt     = require('bcrypt');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const mqttAuth   = require('../services/mqtt-auth');
@@ -120,7 +124,8 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, firmware_version, online, last_seen, created_at
+      `SELECT id, mqtt_device_id, firmware_version, online, last_seen, created_at,
+              name, serial_number, location, model
        FROM devices
        WHERE tenant_id = $1 AND status = 'pending'
        ORDER BY created_at DESC`,
@@ -180,6 +185,9 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
     // Clean up in-memory state + refresh registries immediately
     mqttSvc.removeDeviceState(deviceMqttId);
     await mqttSvc.refreshRegistries();
+
+    // Notify WS global listeners (Pending Devices page)
+    mqttSvc.emit('pending_device', { deviceId: deviceMqttId, action: 'removed' });
 
     res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
   } catch (err) {
@@ -254,7 +262,6 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     }
 
     // ── Step 2: Update DB — move to SYSTEM tenant, restore bootstrap creds ──
-    const bcrypt = require('bcrypt');
     const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
 
     await db.transaction(async (client) => {
@@ -290,8 +297,8 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 
 // ── DELETE /api/devices/:id ───────────────────────────────
 // Delete a device (admin: own tenant, superadmin: any).
-// Active/disabled devices → soft reset to pending (keeps go-auth credentials).
-// Pending devices → hard delete (device can reconnect via go-auth bootstrap fallback).
+// Always hard-deletes. If the device reconnects, auto-discovery will re-create it as pending.
+// Sends MQTT reset commands first so the device reverts to bootstrap credentials.
 router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -310,7 +317,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     }
 
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, name, status FROM devices WHERE ${whereClause}`,
+      `SELECT id, mqtt_device_id, name, status, tenant_id FROM devices WHERE ${whereClause}`,
       params
     );
 
@@ -329,71 +336,39 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     // Audit: preserve device identity before deletion
     req.auditContext = { entityId: deviceUuid, changes: { before: { name: rows[0].name, mqtt_id: deviceMqttId } } };
 
-    // Clear all history data regardless of status
+    // For active devices, send MQTT reset commands so device reverts to bootstrap credentials
+    if (deviceStatus !== 'pending') {
+      const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
+      if (bootstrapKey) {
+        try {
+          const tenantRes = await db.query(
+            `SELECT slug FROM tenants WHERE id = $1`,
+            [rows[0].tenant_id]
+          );
+          const tenantSlug = tenantRes.rows[0]?.slug || 'pending';
+          mqttSvc.sendJsonCommand(tenantSlug, deviceMqttId, '_set_mqtt_creds', {
+            user: `device_${deviceMqttId}`,
+            pass: bootstrapKey,
+          });
+          mqttSvc.sendCommand(tenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
+        } catch (err) {
+          req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
+        }
+      }
+    }
+
+    // Hard delete: clear all related data + device record
     await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
     await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
 
-    if (deviceStatus === 'pending') {
-      // Pending → hard delete (go-auth bootstrap fallback will let device reconnect)
-      await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
-      mqttSvc.removeDeviceState(deviceMqttId);
-      await mqttSvc.refreshRegistries();
+    mqttSvc.removeDeviceState(deviceMqttId);
+    await mqttSvc.refreshRegistries();
 
-      res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
-    } else {
-      // Active/disabled → soft reset to pending with bootstrap credentials
-      const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
-      const bootstrapHash = mqttSvc.getBootstrapHash();
-      if (!bootstrapHash || !bootstrapKey) {
-        // Fallback: hard delete if bootstrap not configured
-        await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
-        mqttSvc.removeDeviceState(deviceMqttId);
-        await mqttSvc.refreshRegistries();
-        return res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
-      }
-
-      // ── Step 1: Send MQTT commands BEFORE changing DB credentials ──
-      // Resolve tenant slug for MQTT topic routing
-      const tenantRes = await db.query(
-        `SELECT slug FROM tenants WHERE id = (SELECT tenant_id FROM devices WHERE id = $1)`,
-        [deviceUuid]
-      );
-      const oldTenantSlug = tenantRes.rows[0]?.slug || 'pending';
-
-      let mqttSent = false;
-      try {
-        mqttSvc.sendJsonCommand(oldTenantSlug, deviceMqttId, '_set_mqtt_creds', {
-          user: `device_${deviceMqttId}`,
-          pass: bootstrapKey,
-        });
-        mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
-        mqttSent = true;
-      } catch (err) {
-        req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
-      }
-
-      // ── Step 2: Update DB ──
-      await db.query(
-        `UPDATE devices
-         SET tenant_id = $1, status = 'pending',
-             mqtt_username = $2, mqtt_password_hash = $3,
-             name = NULL, location = NULL, serial_number = NULL,
-             model = NULL, comment = NULL, manufactured_at = NULL,
-             firmware_version = NULL, last_state = NULL, online = false
-         WHERE id = $4`,
-        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, bootstrapHash, deviceUuid]
-      );
-
-      mqttSvc.removeDeviceState(deviceMqttId);
-      await mqttSvc.refreshRegistries();
-
-      res.json({
-        data: { reset: true, deleted_history: true, mqtt_device_id: deviceMqttId, new_status: 'pending', mqtt_sent: mqttSent },
-      });
-    }
+    res.json({ data: { deleted: true, mqtt_device_id: deviceMqttId } });
   } catch (err) {
     next(err);
   }
@@ -488,7 +463,7 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     }
 
     // Now update DB: move device to tenant, set status active, store hashed password
-    const hash = await require('bcrypt').hash(newPassword, 12);
+    const hash = await bcrypt.hash(newPassword, 12);
     await db.query(
       `UPDATE devices
        SET tenant_id = $1, status = 'active',
@@ -529,6 +504,298 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
         mqtt_commands_sent: sentCreds && sentTenant,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/devices/pending/batch ───────────────────────
+// Batch registration via CSV file upload.
+// Assigns pending devices immediately; pre-registers unknown ones.
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 64 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== '.csv') return cb(new Error('Only .csv files are accepted'));
+    cb(null, true);
+  },
+});
+
+// Header aliases: export format → internal name
+const CSV_HEADER_ALIASES = {
+  'device id':   'mqtt_device_id',
+  'device_id':   'mqtt_device_id',
+  'serial':      'serial_number',
+};
+
+const CSV_FIELDS = {
+  mqtt_device_id: { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
+  name:           { required: true,  maxLen: 100 },
+  serial_number:  { required: false, maxLen: 100 },
+  location:       { required: false, maxLen: 200 },
+  model:          { required: false, maxLen: 100 },
+  comment:        { required: false, maxLen: 500 },
+};
+
+const MAX_BATCH_ROWS = 200;
+
+function parseCsvBuffer(buffer) {
+  // Strip UTF-8 BOM if present (export adds BOM for Excel Cyrillic compat)
+  let text = buffer.toString('utf-8');
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+  const records = parseCsv(text, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+    relax_column_count: true,
+  });
+
+  // Normalize headers via aliases
+  return records.map((row, i) => {
+    const normalized = { _line: i + 2 };  // +2: 1-indexed + header row
+    for (const [key, val] of Object.entries(row)) {
+      const normKey = CSV_HEADER_ALIASES[key.toLowerCase()] || key.toLowerCase().replace(/\s+/g, '_');
+      normalized[normKey] = val;
+    }
+    return normalized;
+  });
+}
+
+function validateCsvRows(rows) {
+  const errors = [];
+  const seenIds = new Set();
+
+  // Check required headers from first row
+  if (rows.length > 0) {
+    const firstRow = rows[0];
+    for (const [field, rule] of Object.entries(CSV_FIELDS)) {
+      if (rule.required && !(field in firstRow)) {
+        errors.push({ row: 1, field, message: `Missing required column: ${field}` });
+      }
+    }
+    if (errors.length > 0) return errors;
+  }
+
+  for (const row of rows) {
+    const line = row._line;
+    for (const [field, rule] of Object.entries(CSV_FIELDS)) {
+      const val = (row[field] || '').trim();
+      if (rule.required && !val) {
+        errors.push({ row: line, field, message: `${field} is required` });
+        continue;
+      }
+      if (val && rule.pattern && !rule.pattern.test(val)) {
+        errors.push({ row: line, field, message: `${field} has invalid format` });
+      }
+      if (val && rule.maxLen && val.length > rule.maxLen) {
+        errors.push({ row: line, field, message: `${field} exceeds ${rule.maxLen} chars` });
+      }
+    }
+
+    // Duplicate check within CSV
+    const devId = (row.mqtt_device_id || '').trim().toUpperCase();
+    if (devId) {
+      if (seenIds.has(devId)) {
+        errors.push({ row: line, field: 'mqtt_device_id', message: `Duplicate device ID: ${devId}` });
+      }
+      seenIds.add(devId);
+    }
+  }
+
+  return errors;
+}
+
+router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'no_file', message: 'CSV file is required', status: 400 });
+    }
+
+    // Parse CSV
+    let rows;
+    try {
+      rows = parseCsvBuffer(req.file.buffer);
+    } catch (e) {
+      return res.status(400).json({ error: 'parse_error', message: `CSV parse error: ${e.message}`, status: 400 });
+    }
+
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'empty_file', message: 'CSV has no data rows', status: 400 });
+    }
+
+    if (rows.length > MAX_BATCH_ROWS) {
+      return res.status(400).json({
+        error: 'too_many_rows',
+        message: `CSV has ${rows.length} rows, maximum is ${MAX_BATCH_ROWS}`,
+        status: 400,
+      });
+    }
+
+    // Phase 1: Validate all rows
+    const validationErrors = validateCsvRows(rows);
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'CSV validation failed',
+        errors: validationErrors,
+        status: 400,
+      });
+    }
+
+    // Determine target tenant
+    const isSA = req.user && req.user.role === 'superadmin';
+    const tenantIdFromBody = req.body?.tenant_id;
+    const targetTenantId = (isSA && tenantIdFromBody) ? tenantIdFromBody : req.tenantId;
+
+    // Verify tenant exists
+    const tenantRes = await db.query(`SELECT slug FROM tenants WHERE id = $1`, [targetTenantId]);
+    if (tenantRes.rows.length === 0) {
+      return res.status(400).json({ error: 'invalid_tenant', message: 'Tenant not found', status: 400 });
+    }
+    const tenantSlug = tenantRes.rows[0].slug;
+
+    // Phase 2: Process rows sequentially
+    const results = [];
+    const summary = { total: rows.length, assigned: 0, pre_registered: 0, skipped: 0 };
+
+    // First pass: check device status in DB and generate passwords for pending ones
+    for (const row of rows) {
+      const mqttId = row.mqtt_device_id.trim().toUpperCase();
+      row._mqttId = mqttId;
+
+      const { rows: devRows } = await db.query(
+        `SELECT id, status, tenant_id FROM devices WHERE mqtt_device_id = $1`,
+        [mqttId]
+      );
+
+      if (devRows.length > 0 && devRows[0].status === 'pending' && devRows[0].tenant_id === db.SYSTEM_TENANT_ID) {
+        row._action = 'assign';
+        row._dbId = devRows[0].id;
+        row._password = mqttAuth.generatePassword();
+      } else if (devRows.length > 0) {
+        row._action = 'skip';
+        row._skipReason = 'Device already active';
+      } else {
+        row._action = 'pre_register';
+      }
+    }
+
+    // Hash passwords in parallel batches of 8
+    const toAssign = rows.filter(r => r._action === 'assign');
+    const HASH_BATCH = 8;
+    for (let i = 0; i < toAssign.length; i += HASH_BATCH) {
+      const batch = toAssign.slice(i, i + HASH_BATCH);
+      await Promise.all(batch.map(r =>
+        bcrypt.hash(r._password, 12).then(h => { r._hash = h; })
+      ));
+    }
+
+    // Process each row
+    for (const row of rows) {
+      const mqttId = row._mqttId;
+      const name = (row.name || '').trim();
+      const location = (row.location || '').trim() || null;
+      const model = (row.model || '').trim() || null;
+      const serialNumber = (row.serial_number || '').trim() || null;
+      const comment = (row.comment || '').trim() || null;
+
+      if (row._action === 'skip') {
+        summary.skipped++;
+        results.push({
+          row: row._line, mqtt_device_id: mqttId, name,
+          status: 'skipped', error: row._skipReason,
+        });
+        continue;
+      }
+
+      if (row._action === 'assign') {
+        // Same logic as single assign
+        const newUsername = `device_${mqttId}`;
+        const newPassword = row._password;
+        const hash = row._hash;
+
+        // Send MQTT commands
+        let sentCreds = false, sentTenant = false;
+        try {
+          mqttSvc.sendJsonCommand('pending', mqttId, '_set_mqtt_creds', {
+            user: newUsername, pass: newPassword,
+          });
+          sentCreds = true;
+        } catch (_) { /* MQTT may be unavailable */ }
+        try {
+          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+          sentTenant = true;
+        } catch (_) { /* MQTT may be unavailable */ }
+
+        // Update DB
+        await db.query(
+          `UPDATE devices
+           SET tenant_id = $1, status = 'active',
+               mqtt_username = $2, mqtt_password_hash = $3,
+               name = COALESCE($4, name), location = COALESCE($5, location),
+               model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
+               comment = COALESCE($8, comment)
+           WHERE id = $9`,
+          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, row._dbId]
+        );
+
+        mqttSvc.recordAssign(mqttId);
+        mqttSvc.clearPendingRetained(mqttId);
+
+        summary.assigned++;
+        results.push({
+          row: row._line, mqtt_device_id: mqttId, name,
+          status: 'assigned',
+          credentials: {
+            username: newUsername,
+            password: newPassword,
+            mqtt_host: process.env.MQTT_PUBLIC_HOST || req.hostname,
+            mqtt_port: 8883,
+            sent_via_mqtt: sentCreds,
+          },
+        });
+        continue;
+      }
+
+      if (row._action === 'pre_register') {
+        // Pre-register in SYSTEM tenant
+        const { rowCount } = await db.query(
+          `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment)
+           VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7)
+           ON CONFLICT (mqtt_device_id) DO NOTHING`,
+          [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment]
+        );
+
+        if (rowCount === 0) {
+          // Race condition: device appeared between validation and processing
+          summary.skipped++;
+          results.push({
+            row: row._line, mqtt_device_id: mqttId, name,
+            status: 'skipped', error: 'Device appeared during processing',
+          });
+        } else {
+          summary.pre_registered++;
+          results.push({
+            row: row._line, mqtt_device_id: mqttId, name,
+            status: 'pre_registered',
+          });
+        }
+        continue;
+      }
+    }
+
+    // Refresh registries once after all assignments
+    if (summary.assigned > 0) {
+      await mqttSvc.refreshRegistries();
+      mqttSvc.emit('pending_device', { action: 'batch_assigned', count: summary.assigned });
+    }
+    if (summary.pre_registered > 0) {
+      mqttSvc.emit('pending_device', { action: 'batch_pre_registered', count: summary.pre_registered });
+    }
+
+    res.json({ data: { summary, results } });
   } catch (err) {
     next(err);
   }
