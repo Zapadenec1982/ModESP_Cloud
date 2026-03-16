@@ -757,6 +757,10 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
             sent_via_mqtt: sentCreds,
           },
         });
+
+        // Delay between devices to let each one process MQTT commands
+        // and reconnect before sending commands to the next device
+        await new Promise(resolve => setTimeout(resolve, 300));
         continue;
       }
 
