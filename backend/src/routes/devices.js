@@ -378,12 +378,13 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
 // Assign a pending device to the current tenant.
 // Body: { name: string, location?: string }
 const assignDeviceSchema = z.object({
-  name:          z.string().min(1, 'Device name is required').max(100),
-  location:      z.string().max(200).optional(),
-  model:         z.string().max(100).optional(),
-  serial_number: z.string().max(100).optional(),
-  comment:       z.string().max(500).optional(),
-  tenant_id:     z.string().uuid().optional(),
+  name:            z.string().min(1, 'Device name is required').max(100),
+  location:        z.string().max(200).optional(),
+  model:           z.string().max(100).optional(),
+  serial_number:   z.string().max(100).optional(),
+  comment:         z.string().max(500).optional(),
+  manufactured_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format').optional(),
+  tenant_id:       z.string().uuid().optional(),
 });
 
 router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res, next) => {
@@ -397,7 +398,7 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
         status: 400,
       });
     }
-    const { name, location, model, serial_number, comment, tenant_id } = parsed.data;
+    const { name, location, model, serial_number, comment, manufactured_at, tenant_id } = parsed.data;
 
     // Superadmin can assign to any tenant; regular admin assigns to own tenant
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
@@ -470,10 +471,10 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
            mqtt_username = $2, mqtt_password_hash = $3,
            name = COALESCE($4, name), location = COALESCE($5, location),
            model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
-           comment = COALESCE($8, comment)
-       WHERE id = $9`,
+           comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at)
+       WHERE id = $10`,
       [targetTenantId, newUsername, hash, name || null, location || null,
-       model || null, serial_number || null, comment || null, rows[0].id]
+       model || null, serial_number || null, comment || null, manufactured_at || null, rows[0].id]
     );
 
     // Record assign timestamp for stuck-device detection grace period

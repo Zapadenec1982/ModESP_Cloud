@@ -24,6 +24,7 @@
   let assignLocation = ''
   let assignModel = ''
   let assignSerial = ''
+  let assignManufactured = ''
   let assignTenantId = ''
   let assigning = false
 
@@ -79,6 +80,7 @@
     assignLocation = ''
     assignModel = ''
     assignSerial = ''
+    assignManufactured = ''
     assignTenantId = ''
 
     // Load tenants for superadmin dropdown
@@ -119,6 +121,7 @@
         location: assignLocation || undefined,
         model: assignModel || undefined,
         serial_number: assignSerial || undefined,
+        manufactured_at: assignManufactured || undefined,
       }
       // Superadmin can assign to a specific tenant
       if ($isSuperAdmin && assignTenantId) {
@@ -405,6 +408,11 @@
         <label class="field">
           <span>{$t('device.serial_number')}</span>
           <input type="text" bind:value={assignSerial} placeholder={$t('pending.serial_placeholder')} />
+        </label>
+
+        <label class="field">
+          <span>{$t('device.manufactured_at')}</span>
+          <input type="date" bind:value={assignManufactured} placeholder={$t('device.manufactured_placeholder')} />
         </label>
       </div>
 

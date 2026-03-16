@@ -393,10 +393,10 @@ export function getPendingDevices() {
   return request('/devices/pending');
 }
 
-export function assignDevice(mqttId, { name, location, model, serial_number, comment, tenant_id } = {}) {
+export function assignDevice(mqttId, { name, location, model, serial_number, comment, manufactured_at, tenant_id } = {}) {
   return request(`/devices/pending/${mqttId}/assign`, {
     method: 'POST',
-    body: JSON.stringify({ name, location, model, serial_number, comment, tenant_id }),
+    body: JSON.stringify({ name, location, model, serial_number, comment, manufactured_at, tenant_id }),
   });
 }
 
