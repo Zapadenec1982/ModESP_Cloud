@@ -1369,15 +1369,36 @@ router.post('/:id/reassign', async (req, res, next) => {
     const oldSlug = device.old_slug;
     const mqttId = device.mqtt_device_id;
 
-    // Transaction: move device + clear RBAC
-    await db.transaction(async (client) => {
-      // Move device to new tenant
-      await client.query(
-        `UPDATE devices SET tenant_id = $1, status = 'active' WHERE id = $2`,
-        [newTenantId, device.id]
-      );
+    // 1. Generate new credentials BEFORE changing DB
+    //    (device is still online with old creds — we must send MQTT commands first)
+    const username = `device_${mqttId}`;
+    const password = mqttAuth.generatePassword();
+    const hash = await bcrypt.hash(password, 10);
 
-      // Clear per-device RBAC (old tenant users lose access)
+    // 2. Send MQTT commands while device is still connected with old credentials
+    let mqttSent = false;
+    try {
+      const routingSlug = mqttSvc.getDeviceRoutingSlug(mqttId, oldSlug);
+      req.log?.info?.({ mqttId, routingSlug, newSlug }, 'Reassign: sending MQTT commands before DB update');
+      mqttSvc.sendJsonCommand(routingSlug, mqttId, '_set_mqtt_creds', {
+        user: username,
+        pass: password,
+      });
+      mqttSvc.sendCommand(routingSlug, mqttId, '_set_tenant', newSlug, { qos: 1 });
+      mqttSent = true;
+      req.log?.info?.({ mqttId, routingSlug, newSlug, mqttSent }, 'Reassign: MQTT commands sent');
+    } catch (mqttErr) {
+      req.log?.warn?.({ err: mqttErr, mqttId }, 'Reassign: MQTT commands failed (device may be offline)');
+    }
+
+    // 3. Update DB: move tenant + rotate credentials in one transaction
+    await db.transaction(async (client) => {
+      await client.query(
+        `UPDATE devices SET tenant_id = $1, status = 'active',
+                mqtt_username = $2, mqtt_password_hash = $3
+         WHERE id = $4`,
+        [newTenantId, username, hash, device.id]
+      );
       await client.query(
         `DELETE FROM user_devices WHERE device_id = $1`,
         [device.id]
@@ -1386,29 +1407,6 @@ router.post('/:id/reassign', async (req, res, next) => {
 
     // Record assign timestamp for stuck-device detection grace period
     mqttSvc.recordAssign(mqttId);
-
-    // Rotate MQTT credentials for new tenant (outside transaction — best-effort)
-    let creds = null;
-    let mqttSent = false;
-    try {
-      req.log?.info?.({ mqttId, oldSlug, newSlug }, 'Reassign: provisioning new credentials');
-      creds = await mqttAuth.provisionDevice(newTenantId, mqttId);
-
-      // Send credentials + tenant via MQTT using OLD slug (device still connected there)
-      const routingSlug = mqttSvc.getDeviceRoutingSlug(mqttId, oldSlug);
-      req.log?.info?.({ mqttId, routingSlug, newSlug }, 'Reassign: sending MQTT commands');
-      mqttSvc.sendJsonCommand(routingSlug, mqttId, '_set_mqtt_creds', {
-        user: creds.username,
-        pass: creds.password,
-      });
-      // QoS 1 for reliability — critical configuration command
-      mqttSvc.sendCommand(routingSlug, mqttId, '_set_tenant', newSlug, { qos: 1 });
-      mqttSent = true;
-      req.log?.info?.({ mqttId, routingSlug, newSlug, mqttSent }, 'Reassign: MQTT commands sent');
-    } catch (mqttErr) {
-      // MQTT send failed (device might be offline) — DB is already updated
-      req.log?.warn?.({ err: mqttErr, mqttId }, 'Reassign: MQTT commands failed (device may be offline)');
-    }
 
     // Update in-memory state
     mqttSvc.updateDeviceStateMap(mqttId, newTenantId, newSlug);
@@ -1421,7 +1419,7 @@ router.post('/:id/reassign', async (req, res, next) => {
         old_tenant: oldSlug,
         new_tenant: newSlug,
         mqtt_commands_sent: mqttSent,
-        credentials_rotated: !!creds,
+        credentials_rotated: true,
       },
     });
   } catch (err) {
