@@ -540,7 +540,7 @@ const CSV_FIELDS = {
   location:         { required: false, maxLen: 200 },
   model:            { required: false, maxLen: 100 },
   comment:          { required: false, maxLen: 500 },
-  manufactured_at:  { required: false, pattern: /^\d{4}-\d{2}-\d{2}$/, maxLen: 10 },
+  manufactured_at:  { required: false, pattern: /^(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})$/, maxLen: 10 },
 };
 
 const MAX_BATCH_ROWS = 200;
@@ -705,7 +705,12 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
       const model = (row.model || '').trim() || null;
       const serialNumber = (row.serial_number || '').trim() || null;
       const comment = (row.comment || '').trim() || null;
-      const manufacturedAt = (row.manufactured_at || '').trim() || null;
+      let manufacturedAt = (row.manufactured_at || '').trim() || null;
+      // Convert DD-MM-YYYY → YYYY-MM-DD for PostgreSQL
+      if (manufacturedAt && /^\d{2}-\d{2}-\d{4}$/.test(manufacturedAt)) {
+        const [dd, mm, yyyy] = manufacturedAt.split('-');
+        manufacturedAt = `${yyyy}-${mm}-${dd}`;
+      }
 
       if (row._action === 'skip') {
         summary.skipped++;

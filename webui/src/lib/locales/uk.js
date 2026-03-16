@@ -340,7 +340,7 @@ export default {
     batch_download_creds: 'Завантажити облікові дані',
     batch_download_creds_hint: 'Паролі показуються лише один раз. Завантажте перед закриттям.',
     batch_no_file: 'Оберіть CSV файл',
-    batch_csv_format: 'mqtt_device_id, name (обов\'язкові), serial_number, location, model, comment, manufactured_at (РРРР-ММ-ДД)',
+    batch_csv_format: 'mqtt_device_id, name (обов\'язкові), serial_number, location, model, comment, manufactured_at (ДД-ММ-РРРР)',
     batch_validation_failed: 'Помилки валідації. Виправте CSV та спробуйте знову.',
     batch_row: 'Рядок',
     batch_success: 'Пакетна реєстрація завершена',
