@@ -69,7 +69,7 @@ export function groupByCategory(meta) {
  */
 export function paramLabel(key) {
   const tr = get(t)
-  const i18nKey = `device.param_labels.${key}`
+  const i18nKey = `device.param_labels.${key.replace('.', '_')}`
   const result = tr(i18nKey)
   if (result !== i18nKey) return result
   // Fallback: title-case the suffix
