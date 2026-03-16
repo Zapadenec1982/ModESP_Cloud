@@ -1,10 +1,5 @@
 {
   "meta": [
-    {"key": "equipment.filter_coeff", "type": "int", "writable": true, "persist": true, "min": 0, "max": 10, "step": 1, "default": 4},
-    {"key": "equipment.ntc_beta", "type": "int", "writable": true, "persist": true, "min": 2000, "max": 5000, "step": 1, "default": 3950},
-    {"key": "equipment.ntc_r_series", "type": "int", "writable": true, "persist": true, "min": 1000, "max": 100000, "step": 100, "default": 10000},
-    {"key": "equipment.ntc_r_nominal", "type": "int", "writable": true, "persist": true, "min": 1000, "max": 100000, "step": 100, "default": 10000},
-    {"key": "equipment.ds18b20_offset", "type": "float", "writable": true, "persist": true, "min": -5, "max": 5, "step": 0.1, "default": 0},
     {"key": "protection.compressor_hours", "type": "float", "writable": true, "persist": true, "min": 0, "max": 999999, "step": 0.1, "default": 0},
     {"key": "protection.high_limit", "type": "float", "writable": true, "persist": true, "min": -50, "max": 99, "step": 0.5, "default": 12},
     {"key": "protection.low_limit", "type": "float", "writable": true, "persist": true, "min": -99, "max": 50, "step": 0.5, "default": -35},
@@ -53,14 +48,7 @@
     {"key": "defrost.fad_temp", "type": "float", "writable": true, "persist": true, "min": -40, "max": 10, "step": 0.5, "default": -5},
     {"key": "defrost.stabilize_time", "type": "int", "writable": true, "persist": true, "min": 0, "max": 10, "step": 1, "default": 1},
     {"key": "defrost.valve_delay", "type": "int", "writable": true, "persist": true, "min": 1, "max": 30, "step": 1, "default": 3},
-    {"key": "defrost.equalize_time", "type": "int", "writable": true, "persist": true, "min": 0, "max": 10, "step": 1, "default": 2},
-    {"key": "datalogger.enabled", "type": "bool", "writable": true, "persist": true, "min": 0, "max": 0, "step": 1, "default": 1},
-    {"key": "datalogger.retention_hours", "type": "int", "writable": true, "persist": true, "min": 12, "max": 168, "step": 12, "default": 48},
-    {"key": "datalogger.sample_interval", "type": "int", "writable": true, "persist": true, "min": 30, "max": 300, "step": 30, "default": 60},
-    {"key": "datalogger.log_evap", "type": "bool", "writable": true, "persist": true, "min": 0, "max": 0, "step": 1, "default": 0},
-    {"key": "datalogger.log_cond", "type": "bool", "writable": true, "persist": true, "min": 0, "max": 0, "step": 1, "default": 0},
-    {"key": "datalogger.log_setpoint", "type": "bool", "writable": true, "persist": true, "min": 0, "max": 0, "step": 1, "default": 0},
-    {"key": "datalogger.log_humidity", "type": "bool", "writable": true, "persist": true, "min": 0, "max": 0, "step": 1, "default": 0}
+    {"key": "defrost.equalize_time", "type": "int", "writable": true, "persist": true, "min": 0, "max": 10, "step": 1, "default": 2}
   ],
   "publishKeys": [
     "equipment.air_temp",

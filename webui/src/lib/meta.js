@@ -31,8 +31,12 @@ export async function loadMeta() {
   }
 }
 
+/** Preferred display order for parameter categories */
+const CATEGORY_ORDER = ['thermostat', 'defrost', 'protection']
+
 /**
  * Group parameters by category (first part of the key).
+ * Returns groups in CATEGORY_ORDER; unlisted categories are appended at the end.
  * @param {Array} meta
  * @returns {Map<string, Array>}
  */
@@ -44,15 +48,31 @@ export function groupByCategory(meta) {
     if (!groups.has(cat)) groups.set(cat, [])
     groups.get(cat).push(param)
   }
-  return groups
+  // Re-order according to CATEGORY_ORDER
+  const ordered = new Map()
+  for (const cat of CATEGORY_ORDER) {
+    if (groups.has(cat)) {
+      ordered.set(cat, groups.get(cat))
+      groups.delete(cat)
+    }
+  }
+  // Append remaining categories
+  for (const [cat, params] of groups) {
+    ordered.set(cat, params)
+  }
+  return ordered
 }
 
 /**
- * Human-readable label for a parameter key.
- * "thermostat.setpoint" → "Setpoint"
- * "protection.high_alarm_delay" → "High Alarm Delay"
+ * Human-readable label for a parameter key with i18n support.
+ * Looks up device.param_labels.<full_key> first, falls back to title-cased suffix.
  */
 export function paramLabel(key) {
+  const tr = get(t)
+  const i18nKey = `device.param_labels.${key}`
+  const result = tr(i18nKey)
+  if (result !== i18nKey) return result
+  // Fallback: title-case the suffix
   const parts = key.split('.')
   const name = parts[parts.length - 1]
   return name
