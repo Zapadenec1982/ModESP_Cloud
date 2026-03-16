@@ -340,7 +340,7 @@ export default {
     batch_download_creds: 'Download Credentials',
     batch_download_creds_hint: 'Passwords are shown only once. Download before closing.',
     batch_no_file: 'Please select a CSV file',
-    batch_csv_format: 'mqtt_device_id, name (required), serial_number, location, model, comment',
+    batch_csv_format: 'mqtt_device_id, name (required), serial_number, location, model, comment, manufactured_at (YYYY-MM-DD)',
     batch_validation_failed: 'Validation errors. Fix the CSV and try again.',
     batch_row: 'Row',
     batch_success: 'Batch registration completed',

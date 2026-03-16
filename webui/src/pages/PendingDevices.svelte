@@ -245,7 +245,7 @@
   }
 
   function downloadTemplate() {
-    const template = 'mqtt_device_id,name,serial_number,location,model,comment\n'
+    const template = 'mqtt_device_id,name,serial_number,location,model,comment,manufactured_at\n'
     const blob = new Blob([template], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

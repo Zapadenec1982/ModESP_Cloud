@@ -525,18 +525,22 @@ const csvUpload = multer({
 
 // Header aliases: export format → internal name
 const CSV_HEADER_ALIASES = {
-  'device id':   'mqtt_device_id',
-  'device_id':   'mqtt_device_id',
-  'serial':      'serial_number',
+  'device id':       'mqtt_device_id',
+  'device_id':       'mqtt_device_id',
+  'serial':          'serial_number',
+  'manufactured':    'manufactured_at',
+  'manufacture date':'manufactured_at',
+  'manufactured at': 'manufactured_at',
 };
 
 const CSV_FIELDS = {
-  mqtt_device_id: { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
-  name:           { required: true,  maxLen: 100 },
-  serial_number:  { required: false, maxLen: 100 },
-  location:       { required: false, maxLen: 200 },
-  model:          { required: false, maxLen: 100 },
-  comment:        { required: false, maxLen: 500 },
+  mqtt_device_id:   { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
+  name:             { required: true,  maxLen: 100 },
+  serial_number:    { required: false, maxLen: 100 },
+  location:         { required: false, maxLen: 200 },
+  model:            { required: false, maxLen: 100 },
+  comment:          { required: false, maxLen: 500 },
+  manufactured_at:  { required: false, pattern: /^\d{4}-\d{2}-\d{2}$/, maxLen: 10 },
 };
 
 const MAX_BATCH_ROWS = 200;
@@ -701,6 +705,7 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
       const model = (row.model || '').trim() || null;
       const serialNumber = (row.serial_number || '').trim() || null;
       const comment = (row.comment || '').trim() || null;
+      const manufacturedAt = (row.manufactured_at || '').trim() || null;
 
       if (row._action === 'skip') {
         summary.skipped++;
@@ -737,9 +742,9 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
                mqtt_username = $2, mqtt_password_hash = $3,
                name = COALESCE($4, name), location = COALESCE($5, location),
                model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
-               comment = COALESCE($8, comment)
-           WHERE id = $9`,
-          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, row._dbId]
+               comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at)
+           WHERE id = $10`,
+          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, manufacturedAt, row._dbId]
         );
 
         mqttSvc.recordAssign(mqttId);
@@ -767,10 +772,10 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
       if (row._action === 'pre_register') {
         // Pre-register in SYSTEM tenant
         const { rowCount } = await db.query(
-          `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment)
-           VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7)
+          `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at)
+           VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
            ON CONFLICT (mqtt_device_id) DO NOTHING`,
-          [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment]
+          [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment, manufacturedAt]
         );
 
         if (rowCount === 0) {
