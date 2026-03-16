@@ -578,7 +578,7 @@ const DISCOVERY_WINDOW_MS = 60000;
 
 /** Recently deleted devices — blocks re-creation from retained MQTT messages */
 const deletedDevices = new Map(); // deviceId → deleteTimestamp
-const DELETED_BLOCK_MS = 5 * 60_000; // 5 minutes
+const DELETED_BLOCK_MS = 30_000; // 30 seconds (enough for retained messages to pass)
 
 function ensureDevice(tenantSlug, deviceId) {
   if (deviceRegistry.has(deviceId)) return;
