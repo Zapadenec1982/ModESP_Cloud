@@ -12,6 +12,7 @@ const mqttAuth   = require('../services/mqtt-auth');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const stateMeta  = require('../config/state_meta.json');
+const logger     = require('../services/logger');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
