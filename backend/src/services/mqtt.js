@@ -463,8 +463,17 @@ const BACKFILL_RATE_LIMIT = 100;    // max messages per minute per device
 const MIN_EPOCH = 1700000000;       // ~2023-11-14, filter out uptime-based timestamps
 const MAX_BACKFILL_AGE = 90 * 86400; // 90 days
 
+function resolveBackfillTenant(tenantSlug, deviceId) {
+  // Prefer real tenant from stateMap (device may publish via 'pending' topic)
+  const state = stateMap.get(deviceId);
+  if (state && state._tenantId && state._tenantId !== db.SYSTEM_TENANT_ID) {
+    return { id: state._tenantId, active: true };
+  }
+  return resolveTenant(tenantSlug);
+}
+
 function handleBackfill(tenantSlug, deviceId, rawPayload) {
-  const tenantInfo = resolveTenant(tenantSlug);
+  const tenantInfo = resolveBackfillTenant(tenantSlug, deviceId);
   if (!tenantInfo) return;
 
   let batch;
@@ -524,7 +533,7 @@ const BACKFILL_EVENT_NAMES = {
 };
 
 function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
-  const tenantInfo = resolveTenant(tenantSlug);
+  const tenantInfo = resolveBackfillTenant(tenantSlug, deviceId);
   if (!tenantInfo) return;
 
   let batch;
