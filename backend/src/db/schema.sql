@@ -219,5 +219,12 @@ BEGIN
      FOR VALUES FROM (%L) TO (%L)',
     partition_name, start_date, end_date
   );
+
+  -- Unique index for ON CONFLICT DO NOTHING (backfill dedup)
+  EXECUTE format(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_%I_unique
+     ON %I (tenant_id, device_id, channel, time)',
+    partition_name, partition_name
+  );
 END;
 $$ LANGUAGE plpgsql;

@@ -518,7 +518,8 @@ function handleBackfill(tenantSlug, deviceId, rawPayload) {
 
   db.query(
     `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
-     VALUES ${placeholders}`,
+     VALUES ${placeholders}
+     ON CONFLICT DO NOTHING`,
     values
   ).catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
 
@@ -567,7 +568,8 @@ function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
       return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5})`;
     }).join(',');
     db.query(
-      `INSERT INTO telemetry (time,tenant_id,device_id,channel,value) VALUES ${ph}`,
+      `INSERT INTO telemetry (time,tenant_id,device_id,channel,value) VALUES ${ph}
+       ON CONFLICT DO NOTHING`,
       values
     ).catch(err => logger.error({ err, deviceId }, 'Backfill events telemetry insert failed'));
   }
