@@ -8,6 +8,9 @@
   import Icon from '../ui/Icon.svelte'
   import ConnectionStatus from './ConnectionStatus.svelte'
   import SettingsMenu from './SettingsMenu.svelte'
+  import ChangePasswordModal from './ChangePasswordModal.svelte'
+
+  let showPasswordModal = false
 
   export let alarmCount = 0
   export let pendingCount = 0
@@ -17,11 +20,10 @@
     { path: '/',              icon: 'grid',     label: $t('nav.dashboard') },
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
     { section: $t('nav.sections.management') },
-    { path: '/pending',       icon: 'wifi',     label: $t('nav.pending'),  badge: () => pendingCount },
-    { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
-    { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware'), admin: true },
+    { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
+    { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware') },
     { section: $t('nav.sections.admin'), admin: true },
-    { path: '/tenants',       icon: 'layers',   label: $t('nav.tenants'),  admin: true },
+    { path: '/tenants',       icon: 'building', label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
     { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), superadmin: true },
   ]
@@ -167,6 +169,10 @@
         <Icon name="user" size={16} />
         {#if !$sidebarCollapsed}
           <span class="user-email truncate">{$authUser.email}</span>
+          <button class="user-action-btn" on:click={() => showPasswordModal = true}
+            title={$t('password.change_password')}>
+            <Icon name="lock" size={14} />
+          </button>
           <button class="logout-btn" on:click={handleLogout} title="Sign Out">
             <Icon name="log-out" size={16} />
           </button>
@@ -175,6 +181,8 @@
     {/if}
   </div>
 </aside>
+
+<ChangePasswordModal bind:show={showPasswordModal} />
 
 <style>
   .backdrop {
@@ -360,6 +368,19 @@
   }
   .logout-btn:hover {
     color: var(--accent-red);
+  }
+
+  .user-action-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+  }
+  .user-action-btn:hover {
+    color: var(--accent-blue);
   }
 
   /* Tenant switcher */

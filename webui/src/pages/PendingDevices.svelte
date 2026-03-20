@@ -1,7 +1,8 @@
 <script>
-  import { onMount } from 'svelte'
-  import { getPendingDevices, assignDevice, deletePendingDevice, getTenants } from '../lib/api.js'
-  import { isSuperAdmin } from '../lib/stores.js'
+  import { onMount, onDestroy } from 'svelte'
+  import { getPendingDevices, assignDevice, deletePendingDevice, batchRegisterDevices, getTenants } from '../lib/api.js'
+  import { on } from '../lib/ws.js'
+  import { isSuperAdmin, navigate } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -23,6 +24,7 @@
   let assignLocation = ''
   let assignModel = ''
   let assignSerial = ''
+  let assignManufactured = ''
   let assignTenantId = ''
   let assigning = false
 
@@ -36,6 +38,15 @@
 
   // Credentials result after assign
   let credsResult = null
+
+  // Batch registration state
+  let batchModalOpen = false
+  let batchFile = null
+  let batchFileName = ''
+  let batchUploading = false
+  let batchResults = null
+  let batchTenantId = ''
+  let fileInput
 
   function closeCredsModal() {
     credsResult = null
@@ -69,6 +80,7 @@
     assignLocation = ''
     assignModel = ''
     assignSerial = ''
+    assignManufactured = ''
     assignTenantId = ''
 
     // Load tenants for superadmin dropdown
@@ -109,6 +121,7 @@
         location: assignLocation || undefined,
         model: assignModel || undefined,
         serial_number: assignSerial || undefined,
+        manufactured_at: assignManufactured || undefined,
       }
       // Superadmin can assign to a specific tenant
       if ($isSuperAdmin && assignTenantId) {
@@ -149,6 +162,10 @@
       toast.success($t('pending.device_deleted', deletingDevice.mqtt_device_id))
       deletingDevice = null
       await load()
+      // Navigate to dashboard if no pending devices left
+      if (devices.length === 0) {
+        navigate('/')
+      }
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -156,11 +173,130 @@
     }
   }
 
-  onMount(load)
+  // ── Batch registration functions ──
+  function openBatchModal() {
+    batchModalOpen = true
+    batchFile = null
+    batchFileName = ''
+    batchResults = null
+    if ($isSuperAdmin && !tenantsLoaded) {
+      getTenants().then(all => {
+        tenantsList = all.filter(t =>
+          t.id !== '00000000-0000-0000-0000-000000000000' && t.active
+        )
+        tenantsLoaded = true
+        if (tenantsList.length > 0) batchTenantId = tenantsList[0].id
+      }).catch(() => {})
+    } else if ($isSuperAdmin && tenantsList.length > 0 && !batchTenantId) {
+      batchTenantId = tenantsList[0].id
+    }
+  }
+
+  function closeBatchModal() {
+    batchModalOpen = false
+    batchFile = null
+    batchFileName = ''
+    if (batchResults) {
+      load()  // Refresh list after batch
+    }
+    batchResults = null
+  }
+
+  function handleBatchKey(e) {
+    if (e.key === 'Escape') closeBatchModal()
+  }
+
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0]
+    if (file) {
+      batchFile = file
+      batchFileName = file.name
+    }
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    const file = e.dataTransfer?.files?.[0]
+    if (file && file.name.toLowerCase().endsWith('.csv')) {
+      batchFile = file
+      batchFileName = file.name
+    }
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault()
+  }
+
+  async function submitBatch() {
+    if (!batchFile) {
+      toast.warning($t('pending.batch_no_file'))
+      return
+    }
+    batchUploading = true
+    try {
+      const tenantId = ($isSuperAdmin && batchTenantId) ? batchTenantId : undefined
+      batchResults = await batchRegisterDevices(batchFile, tenantId)
+      toast.success($t('pending.batch_success'))
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      batchUploading = false
+    }
+  }
+
+  function downloadTemplate() {
+    const template = 'mqtt_device_id,name,serial_number,location,model,comment,manufactured_at\n'
+    const blob = new Blob([template], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'batch_register_template.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function downloadCredentialsCsv() {
+    if (!batchResults?.results) return
+    const assigned = batchResults.results.filter(r => r.status === 'assigned' && r.credentials)
+    if (!assigned.length) return
+    const BOM = '\uFEFF'
+    let csv = BOM + 'mqtt_device_id,name,username,password\n'
+    for (const r of assigned) {
+      const name = r.name?.includes(',') ? `"${r.name}"` : (r.name || '')
+      csv += `${r.mqtt_device_id},${name},${r.credentials.username},${r.credentials.password}\n`
+    }
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `credentials_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  let wsUnsub
+  let pollInterval
+
+  onMount(() => {
+    load()
+    wsUnsub = on('pending_device', () => load())
+    // Poll every 15s as fallback — pending devices are rare, WS may miss restarts
+    pollInterval = setInterval(load, 15000)
+  })
+
+  onDestroy(() => {
+    wsUnsub?.()
+    clearInterval(pollInterval)
+  })
 </script>
 
 <div class="pending-page">
   <PageHeader title={$t('pages.pending')} subtitle={$t('pages.pending_sub')}>
+    <Button variant="secondary" icon="upload" on:click={openBatchModal}>{$t('pending.batch_register')}</Button>
     <Button variant="secondary" icon="refresh" on:click={load}>{$t('common.refresh')}</Button>
   </PageHeader>
 
@@ -185,6 +321,9 @@
           <div class="device-info">
             <StatusDot status={dev.online ? 'online' : 'offline'} />
             <span class="device-id">{dev.mqtt_device_id}</span>
+            {#if dev.name}
+              <span class="device-name-hint">{dev.name}</span>
+            {/if}
             {#if dev.firmware_version}
               <Badge variant="neutral" size="sm">FW: {dev.firmware_version}</Badge>
             {/if}
@@ -193,6 +332,12 @@
             </Badge>
           </div>
           <div class="device-meta">
+            {#if dev.location}
+              <span class="meta-item">
+                <Icon name="map-pin" size={12} />
+                {dev.location}
+              </span>
+            {/if}
             <span class="meta-item">
               <Icon name="clock" size={12} />
               {timeAgo(dev.last_seen)}
@@ -263,6 +408,11 @@
         <label class="field">
           <span>{$t('device.serial_number')}</span>
           <input type="text" bind:value={assignSerial} placeholder={$t('pending.serial_placeholder')} />
+        </label>
+
+        <label class="field">
+          <span>{$t('device.manufactured_at')}</span>
+          <input type="date" bind:value={assignManufactured} placeholder={$t('device.manufactured_placeholder')} />
         </label>
       </div>
 
@@ -352,6 +502,112 @@
         <Button variant="secondary" on:click={closeDelete} disabled={deleting}>{$t('common.cancel')}</Button>
         <Button variant="danger" on:click={confirmDelete} loading={deleting}>{$t('pending.delete_device')}</Button>
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Batch Registration Modal -->
+{#if batchModalOpen}
+  <input type="file" accept=".csv" class="hidden-file" bind:this={fileInput} on:change={handleFileSelect} />
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={closeBatchModal} on:keydown={handleBatchKey} role="dialog" aria-modal="true" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal batch-modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
+      <div class="modal-header">
+        <h3>{batchResults ? $t('pending.batch_results_title') : $t('pending.batch_upload_title')}</h3>
+        <button class="close-btn" on:click={closeBatchModal} aria-label="Close">
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+
+      {#if batchResults}
+        <!-- Results view -->
+        <div class="modal-body">
+          <div class="batch-summary">
+            {#if batchResults.summary.assigned > 0}
+              <Badge variant="success" size="sm">{batchResults.summary.assigned} {$t('pending.batch_assigned')}</Badge>
+            {/if}
+            {#if batchResults.summary.pre_registered > 0}
+              <Badge variant="info" size="sm">{batchResults.summary.pre_registered} {$t('pending.batch_pre_registered')}</Badge>
+            {/if}
+            {#if batchResults.summary.skipped > 0}
+              <Badge variant="neutral" size="sm">{batchResults.summary.skipped} {$t('pending.batch_skipped')}</Badge>
+            {/if}
+          </div>
+
+          <div class="batch-results-table">
+            {#each batchResults.results as r (r.row)}
+              <div class="batch-result-row" class:result-assigned={r.status === 'assigned'} class:result-pre={r.status === 'pre_registered'} class:result-skip={r.status === 'skipped'}>
+                <span class="result-id font-mono">{r.mqtt_device_id}</span>
+                <span class="result-name">{r.name || ''}</span>
+                <Badge variant={r.status === 'assigned' ? 'success' : r.status === 'pre_registered' ? 'info' : 'neutral'} size="sm">
+                  {$t(`pending.batch_${r.status === 'pre_registered' ? 'pre_registered' : r.status}`)}
+                </Badge>
+                {#if r.error}
+                  <span class="result-error">{r.error}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+
+          {#if batchResults.summary.assigned > 0}
+            <div class="creds-warning">
+              <Icon name="alert-triangle" size={16} />
+              <span>{$t('pending.batch_download_creds_hint')}</span>
+            </div>
+          {/if}
+        </div>
+
+        <div class="modal-actions">
+          {#if batchResults.summary.assigned > 0}
+            <Button variant="secondary" icon="download" on:click={downloadCredentialsCsv}>
+              {$t('pending.batch_download_creds')}
+            </Button>
+          {/if}
+          <Button variant="primary" on:click={closeBatchModal}>{$t('common.close')}</Button>
+        </div>
+      {:else}
+        <!-- Upload view -->
+        <div class="modal-body">
+          <!-- svelte-ignore a11y-no-static-element-interactions -->
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
+          <div class="drop-zone" on:drop={handleDrop} on:dragover={handleDragOver} on:click={() => fileInput?.click()}>
+            {#if batchFile}
+              <Icon name="check-circle" size={24} />
+              <span class="drop-filename">{batchFileName}</span>
+            {:else}
+              <Icon name="upload" size={24} />
+              <span>{$t('pending.batch_select_file')}</span>
+            {/if}
+          </div>
+
+          <div class="batch-format-hint">
+            <span class="format-label">{$t('pending.batch_csv_format')}</span>
+            <button class="template-link" on:click|stopPropagation={downloadTemplate}>
+              <Icon name="download" size={12} />
+              {$t('pending.batch_template')}
+            </button>
+          </div>
+
+          {#if $isSuperAdmin && tenantsList.length > 0}
+            <label class="field">
+              <span>{$t('pending.batch_target_tenant')}</span>
+              <select bind:value={batchTenantId} class="tenant-select">
+                {#each tenantsList as tenant}
+                  <option value={tenant.id}>{tenant.name} ({tenant.slug})</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+        </div>
+
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeBatchModal} disabled={batchUploading}>{$t('common.cancel')}</Button>
+          <Button variant="primary" on:click={submitBatch} loading={batchUploading} disabled={!batchFile}>
+            {batchUploading ? $t('pending.batch_uploading') : $t('common.upload')}
+          </Button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -620,6 +876,143 @@
     word-break: break-all;
   }
 
+  .device-name-hint {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  /* Batch modal */
+  .batch-modal {
+    max-width: 560px;
+  }
+
+  .hidden-file {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-6);
+    border: 2px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .drop-zone:hover {
+    border-color: var(--accent-blue);
+    background: rgba(74, 158, 255, 0.05);
+  }
+
+  .drop-filename {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .batch-format-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .format-label {
+    font-family: var(--font-mono);
+  }
+
+  .template-link {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    color: var(--accent-blue);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  .template-link:hover {
+    background: rgba(74, 158, 255, 0.1);
+  }
+
+  .batch-summary {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .batch-results-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .batch-result-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border-muted);
+    font-size: var(--text-sm);
+  }
+
+  .batch-result-row:last-child {
+    border-bottom: none;
+  }
+
+  .result-assigned {
+    background: rgba(74, 222, 128, 0.05);
+  }
+
+  .result-pre {
+    background: rgba(74, 158, 255, 0.05);
+  }
+
+  .result-id {
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 80px;
+  }
+
+  .result-name {
+    flex: 1;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .result-error {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
   @media (max-width: 640px) {
     .device-row {
       flex-direction: column;
@@ -629,6 +1022,10 @@
 
     .device-actions {
       align-self: flex-end;
+    }
+
+    .batch-modal {
+      max-width: 95%;
     }
   }
 </style>

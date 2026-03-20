@@ -12,7 +12,7 @@
 
   const dispatch = createEventDispatcher()
 
-  let expanded = true
+  let expanded = false
 
   function toggle() {
     expanded = !expanded

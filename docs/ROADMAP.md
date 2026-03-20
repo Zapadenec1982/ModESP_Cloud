@@ -1,412 +1,292 @@
-# Roadmap ModESP Cloud
+# ModESP Cloud — Roadmap
 
-## Поточний стан
+## Current Status
 
-**Production deployed ✅ — ESP32 підключений, MQTT bidirectional, OTA verified, Tenant Management ✅, Multi-Tenant Users ✅, Security Hardening ✅**
+**Production deployed ✅ — 11 phases complete, ESP32 connected via MQTT+TLS**
 
----
+Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity).
 
-## Фази розробки
-
-### Фаза 1: Cloud Foundation
-**Ціль:** Базова інфраструктура. ESP32 підключається до хмари, дані зберігаються.
-
-**Firmware changes (ModESP_v4) — prerequisite:**
-- [x] NVS config: tenant_slug field
-- [x] Prefix builder: `modesp/v1/{tenant}/{device}` format
-- [x] Heartbeat publish (JSON metadata, кожні 30с)
-- [x] `_set_tenant` command handler (auto-discovery)
-- [x] HTTP API `/api/mqtt`: tenant field
-- [x] Тестування: compile, flash, verify MQTT topics
-
-**Cloud infrastructure:**
-- [x] VPS налаштування (Ubuntu 24, firewall, fail2ban)
-- [x] Mosquitto broker з ACL і TLS — конфіги готові
-- [x] PostgreSQL: базова схема (tenants, devices, alarms, telemetry, events)
-- [x] Node.js: MqttService (підписка, topic parsing, state aggregation)
-- [x] Node.js: State Map (in-memory accumulation 48 keys per device)
-- [x] Node.js: Alarm Detector (protection.* transition detection)
-- [x] Node.js: Telemetry Sampler (5хв server-side sampling → DB)
-- [x] Node.js: Event Detector (compressor on/off, defrost transitions)
-- [x] Node.js: healthcheck endpoint
-- [x] State metadata registry (state_meta.json з ModESP_v4)
-- [x] Nginx: HTTPS термінація — конфіг готовий
-- [x] systemd юніти для всіх сервісів
-- [x] Базовий моніторинг (journald + cron backup + telemetry partition timer)
-
-**Результат:** ESP32 публікує individual keys, cloud агрегує, зберігає в БД.
+**Next: Phase 12 — Bulk Device Import**
 
 ---
 
-### Фаза 2: Remote Monitoring WebUI
-**Ціль:** Технік бачить стан всіх контролерів з будь-якої точки світу.
+## Completed Phases
 
-- [x] Node.js: WebSocket сервер (real-time delta broadcasts per tenant)
-- [x] Node.js: REST API (GET /devices, GET /devices/:id, telemetry, alarms)
-- [x] Node.js: Command translation (REST → MQTT individual keys)
-- [x] Svelte: хмарний WebUI (окремий від ESP32 WebUI)
-- [x] Svelte: список пристроїв з online/offline статусом
-- [x] Svelte: перегляд стану контролера в реальному часі
-- [x] Svelte: auto-discovery UI (pending devices list, assign to tenant)
-- [x] Svelte: розгортання через Nginx
+### Phase 1: Cloud Foundation ✅
+Core infrastructure — ESP32 connects to cloud, data is persisted.
 
-**Результат:** Повноцінний віддалений моніторинг без додаткового обладнання.
+- Firmware changes (ModESP_v4): NVS tenant field, prefix builder, heartbeat, `_set_tenant` handler
+- VPS (Ubuntu 24), Mosquitto (ACL + TLS), PostgreSQL schema
+- MqttService: topic parsing, state aggregation (48 keys), alarm detector, telemetry sampler (5 min), event detector
+- Nginx HTTPS, systemd services, cron backup, telemetry partitioning
 
----
+### Phase 2: Remote Monitoring WebUI ✅
+Technician sees all controller states from anywhere in the world.
 
-### Фаза 3: Push Notifications
-**Ціль:** Технік отримує сповіщення про аварії миттєво.
+- WebSocket (real-time delta broadcasts per tenant)
+- REST API (devices, telemetry, alarms, commands)
+- Svelte WebUI: Dashboard, DeviceDetail, PendingDevices
+- Auto-discovery UI (pending → assign)
 
-- [x] Node.js: Push orchestrator (push.js) з debouncing і channel registry
-- [x] Node.js: FCM інтеграція (firebase-admin, stale token auto-cleanup)
-- [x] Node.js: Telegram Bot (long-polling, /start /stop /status /devices, UA messages)
-- [x] Маршрутизація: alarm transition → підписники цього пристрою (tenant-scoped)
-- [x] REST API: CRUD /api/notifications/subscribers, test send, delivery log
-- [x] DB: notification_subscribers + notification_log tables (migration 002)
-- [x] WebUI: Notifications page (subscribers table, add form, delivery log)
+### Phase 3: Push Notifications ✅
+Technician receives alarm notifications instantly.
 
-**Результат:** Push на телефон і Telegram при будь-якій аварії.
+- Push orchestrator with debouncing and channel registry
+- FCM + Telegram Bot + Web Push (VAPID)
+- REST API: subscribers CRUD, test send, delivery log
+- WebUI: Notifications page
 
----
+### Phase 4: Auth & User Management ✅
+Multiple technicians, multiple organizations, access control.
 
-### Фаза 4: User Management
-**Ціль:** Кілька техніків, кілька організацій, контроль доступу.
+- JWT (login, refresh token rotation, logout), 4 roles (superadmin/admin/technician/viewer)
+- User CRUD, WebSocket JWT auth, WebUI Login/Users pages
+- mosquitto-go-auth with PostgreSQL ACL (replaces static ACL)
+- MQTT Bootstrap Provisioning: shared bootstrap → unique credentials on assign
+- Stuck device auto-detection (120s grace → auto-reset)
+- Device lifecycle: soft-reset (active→pending) + hard-delete
 
-- [x] Node.js: JWT авторизація (login, refresh token rotation, logout)
-- [x] Node.js: CRUD користувачів (admin-only + self-service /me)
-- [x] Ролі: superadmin / admin / technician / viewer
-- [x] Прив'язка пристроїв до користувачів (user_devices)
-- [x] WebSocket: JWT auth через `?token=` query param
-- [x] WebUI: Login page, protected routing, Users page (admin)
-- [x] AUTH_ENABLED toggle (backward-compatible, default: false)
-- [x] seed-admin.js script
-- [x] Mosquitto: mosquitto-go-auth з PostgreSQL backend (замість static ACL)
-- [x] MQTT Bootstrap Provisioning: shared bootstrap → unique credentials on assign
-- [x] REST API: generate/rotate/revoke MQTT credentials per device
-- [x] WebUI: credentials feedback on assign, MQTT auth status on DeviceDetail
-- [x] provision-mqtt-creds.js: migration script for existing devices
-- [x] go-auth bootstrap fallback: deleted/stuck devices reconnect via shared bootstrap password (migration 011)
-- [x] ACL fix: handle MOSQ_ACL_SUBSCRIBE ($2=4) in aclquery — devices can subscribe to cmd/+ topics
-- [x] Stuck device auto-detection: backend resets devices publishing to wrong tenant after 120s grace
-- [x] Device lifecycle: DELETE soft-reset (active→pending) + hard-delete (pending), POST /devices/register
+### Phase 5: History & Analytics ✅
+Trend analysis, equipment degradation detection.
 
-**Результат:** Мультитенантна система з ізольованим доступом і zero-touch provisioning.
+- Telemetry stats: bucketed aggregation (5m/15m/1h/6h/1d), alarm stats, fleet summary
+- uPlot TelemetryChart, AlarmHistory table, fleet summary bar
+- PostgreSQL monthly partitioning, 90-day retention
 
----
+### Phase 6: Fleet OTA ✅
+Firmware updates across all devices without on-site visits.
 
-### Фаза 5: History & Analytics
-**Ціль:** Аналіз трендів, виявлення деградації обладнання.
+- Firmware upload (SHA256 checksum), single deploy + group rollout with batching
+- Auto-pause on failure threshold, board compatibility check
+- ModESP_v4 OTA handler: HTTP download → SHA256 → flash → reboot (~8s E2E)
+- WebUI: Firmware page (upload, deploy, rollout monitoring)
 
-- [x] REST API: телеметрія по часовому діапазону (from/to ISO + hours)
-- [x] REST API: агрегована статистика (min/max/avg per bucket: 5m/15m/1h/6h/1d)
-- [x] REST API: статистика аварій (count, avg_duration per alarm_code)
-- [x] REST API: fleet summary (devices_total, online, alarms_active, alarms_24h)
-- [x] WebUI: графіки температур (uPlot — TelemetryChart.svelte)
-- [x] WebUI: історія аварій (AlarmHistory.svelte)
-- [x] WebUI: fleet summary bar на Dashboard
-- [x] Партиціонування телеметрії по місяцях (ensure-partitions.js)
+### Phase 6.5: WebUI Polish ✅
+User-friendly UI for technicians.
 
-**Результат:** Аналітика для прийняття рішень про обслуговування.
+- i18n (UA + EN), Light/Dark theme
+- Device metadata (model, comment, manufactured_at), service records
+- DeviceDetail edit modal, search by all fields
 
----
+### Phase 7: RBAC + Scalability ✅
+Scaling to 5000+ devices, per-device access control.
 
-### Фаза 6: Fleet OTA
-**Ціль:** Оновлення прошивки на всіх пристроях без виїзду на об'єкт.
+- **7a:** Per-Device RBAC — filterDeviceAccess + checkDeviceAccess middleware, WebSocket per-device check
+- **7b:** Scalability — DB pool (30), batch state writer, heartbeat dedup, event batching, WS backpressure (64KB)
+- **7c:** Frontend RBAC — isAdmin/canWrite stores, conditional UI, route guards, device assignment modal
+- **7d:** OTA Board Compatibility — firmware.board_type, deploy validation, rollout filtering
 
-- [x] **ModESP_v4:** MQTT OTA handler (cmd/_ota → HTTP download → SHA256 → flash → reboot, ~8s E2E)
-- [x] REST API: завантаження firmware файлів (multer, SHA256 checksum)
-- [x] REST API: запуск OTA на окремому пристрої
-- [x] Груповий rollout з batch_size і інтервалом
-- [x] Відстеження статусу OTA по парку (periodic checker, heartbeat version detection)
-- [x] Автоматичний rollback при масовому збої (auto-pause on fail threshold)
-- [x] WebUI: сторінка управління firmware (upload, deploy, rollout monitoring)
+### Phase 8a: Tenant Management ✅
+Superadmin role, cross-tenant operations.
 
-**Результат:** Zero-touch оновлення парку з будь-якої точки світу.
+- Tenants CRUD API, device reassign (MQTT creds rotation + _set_tenant via old slug)
+- Tenants WebUI page, DeviceDetail "Change Tenant" modal
 
----
+### Phase 8b: Multi-Tenant User Memberships ✅
+One user belongs to multiple tenants (M:N).
 
-### Фаза 6.5: WebUI Polish & Device Management
-**Ціль:** Зручний UI для техніків: i18n, theming, повне керування метаданими пристрою.
+- user_tenants junction table, pendingToken flow
+- Login → tenant picker → select-tenant / switch-tenant
+- WebUI: tenant switcher in sidebar, Users manage tenants modal
 
-- [x] WebUI: i18n система (UK + EN) з Svelte store + locale switcher
-- [x] WebUI: Light theme toggle (CSS custom properties `[data-theme="light"]`)
-- [x] DB: нові колонки devices (model, comment, manufactured_at) — migration 005
-- [x] DB: service_records таблиця (технік, причина, роботи) — migration 005
-- [x] REST API: PATCH /devices/:id (name, location, serial_number, model, comment, manufactured_at)
-- [x] REST API: CRUD /devices/:id/service-records (GET, POST, DELETE)
-- [x] REST API: GET /devices/:id повертає users з доступом (user_devices JOIN)
-- [x] WebUI: DeviceDetail — edit modal (6 полів), users with access, manufactured_at
-- [x] WebUI: DeviceDetail — Service tab (записи обслуговування, додавання, видалення)
-- [x] WebUI: DeviceCard — model в footer
-- [x] WebUI: Dashboard — пошук по model, serial_number
-- [x] WebUI: PendingDevices — model/serial в assign modal
+### Phase 8c: Telegram Bot Redesign ✅
+Full-featured Telegram bot with authentication and RBAC.
 
-**Результат:** Повна картка пристрою з редагуванням, сервісною історією, двома мовами і темами.
+- User auth via link code, 7 commands, per-device RBAC
+- Multi-tenant support (/tenant switch)
+- Alarm raised + cleared + device offline notifications with location
+- Persistent reply keyboard, i18n UA/EN, chat cleanup
 
----
+### Phase 9: Audit Logging ✅
+Compliance-ready audit of all mutations.
 
-### Фаза 7: RBAC + Scalability
-**Ціль:** Масштабування до 5000+ пристроїв, per-device access control для техніків/viewers.
+- audit_log table (immutability trigger, 4 indexes)
+- Middleware: auto-capture POST/PUT/PATCH/DELETE (fire-and-forget)
+- 15 enrichment points (req.auditContext with before/after changes)
+- WebUI: AuditLog page (filters, pagination, JSON diff)
 
-#### 7a: Per-Device RBAC (Backend) ✅
-- [x] Міграція 006: audit columns (granted_by, granted_at) + indexes для user_devices
-- [x] Middleware: `filterDeviceAccess()` для list-ендпоінтів (GET /devices, GET /alarms, GET /fleet/summary)
-- [x] Middleware: `checkDeviceAccess()` для single-device ендпоінтів (один JOIN запит)
-- [x] Всі device routes: per-device access check (devices, telemetry, alarms, service-records)
-- [x] Fleet summary: фільтрація по assigned devices для non-admin
-- [x] WebSocket: per-device access check при subscribe
-- [x] Users API: GET /users/:id/devices, PUT /users/:id/devices (bulk replace)
-- [x] POST /users/:id/devices: tenant verification + granted_by
-- [x] grant-all-devices.js: одноразовий скрипт для backward compatibility
-- [x] schema.sql: оновлено user_devices з audit columns + indexes
+### Phase 10: Test Infrastructure ✅
+130+ integration tests on real PostgreSQL.
 
-#### 7b: Backend Scalability ✅
-- [x] DB Pool: max=30 (env configurable), statement_timeout=30s
-- [x] Batch state writer (N queries → 1 multi-row UPDATE via VALUES)
-- [x] Heartbeat write dedup (firmware_version тільки при зміні, _lastFw cache)
-- [x] Event INSERT batching (буфер + flush щосекунди, flush on shutdown)
-- [x] Telemetry retention (cleanup-telemetry.js — drop партицій >90 днів)
-- [x] Telemetry query LIMIT 10000 + X-Truncated header
-- [x] WebSocket backpressure (bufferedAmount > 64KB → skip)
-- [x] StateMap monitoring (device count, total keys, approx MB, event buffer — every 60s)
+- Vitest 3.2 + Supertest + Docker Compose (PostgreSQL 5433, tmpfs)
+- 15 test suites: auth, RBAC, tenant isolation, CRUD, audit, OTA, notifications
+- Test helpers: app.js, factories.js, migration runner
 
-#### 7c: Frontend RBAC ✅
-- [x] Stores: isAdmin, canWrite derived stores
-- [x] Conditional UI: edit/command/service buttons hidden for viewer, ParameterEditor readonly
-- [x] Route guards: /users, /firmware, /pending → admin only (svelte-spa-router wrap)
-- [x] Device Assignment UI: checklist modal на Users page (search, select all/none, bulk PUT)
-- [x] i18n: нові ключі для RBAC (uk.js + en.js)
+### Phase 11: Platform Hardening & Compliance ✅
+Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 
-#### 7d: OTA Board Compatibility ✅
-- [x] Міграція 007: firmwares.board_type column + index
-- [x] Firmware upload з board_type (optional, NULL = universal)
-- [x] OTA deploy: board validation (firmware.board_type vs device.model, 400 on mismatch)
-- [x] Rollout: фільтрація eligible devices по board (incompatible skipped)
-- [x] OTA command payload: includes board_type for device-side verification
-- [x] Firmware WebUI: board select on upload, board column in library, compatibility info in deploy modal, incompatible devices disabled
-
-**Результат:** Безпечна мультикористувацька система з per-device access control.
+- **11a:** Events API + Chart Overlay (compressor/defrost/alarm events on telemetry chart)
+- **11b:** HACCP Data Export — CSV (telemetry, devices, alarms) + PDF report (pdfmake, Cyrillic)
+- **11c:** Password Change UI + NIST policy (15-char min, HaveIBeenPwned k-anonymity check)
+- **11d:** Alarm Severity Classification (critical/warning/info, nuisance delays, severity filter)
 
 ---
 
-### Фаза 8a: Tenant Management ✅
-**Ціль:** Повноцінне управління тенантами через WebUI, superadmin роль для cross-tenant операцій.
+## Upcoming Phases
 
-#### Дворівнева модель ролей
-- Platform: `superadmin` → бачить всі тенанти, CRUD, reassign devices
-- Tenant: `admin` → керує своїм тенантом, `technician` → assigned devices, `viewer` → read-only
+### Phase 12: Bulk Device Import
+**Goal:** Mass onboarding of 50-1000 devices via CSV upload instead of one-by-one assignment.
+**Timeline:** 3-5 days
+
+- [ ] `POST /api/devices/import` — CSV upload, per-row: find pending → assign + MQTT creds
+- [ ] `GET /api/devices/pending/export` — export pending list to CSV (fill in Excel → re-upload)
+- [ ] `GET /api/devices/import/template` — blank CSV template with headers
+- [ ] WebUI: `ImportModal.svelte` — drag-and-drop, preview, result (assigned/skipped/errors)
+- [ ] WebUI: "Import CSV" button on PendingDevices
+
+**Outcome:** Admin downloads pending list → fills metadata in Excel → uploads back → 500 devices activated in a minute.
+
+---
+
+### Phase 13: Energy Monitoring + Health Score
+**Goal:** Transform raw compressor data into business metrics (kWh, cost, health score).
+**Timeline:** 2-3 weeks
 
 #### Backend
-- [x] Міграція 009: superadmin role (users_role_check constraint)
-- [x] Auth middleware: superadmin inherits admin, requireSuperadmin(), cross-tenant bypass
-- [x] Device-access middleware: superadmin bypass для filterDeviceAccess + checkDeviceAccess
-- [x] Tenants CRUD API (routes/tenants.js): GET, POST, PATCH, DELETE з Zod валідацією
-- [x] GET /tenants повертає device_count + user_count (superadmin: всі, admin: свій)
-- [x] POST /devices/:id/reassign — transaction: UPDATE device, DELETE user_devices, rotate MQTT creds, send _set_tenant + _set_mqtt_creds via OLD slug
-- [x] GET /devices/:id — superadmin cross-tenant access, JOIN tenants for tenant_slug
-- [x] POST /devices/pending/:mqttId/assign — superadmin can assign to any tenant via tenant_id body param
-- [x] seed-admin.js: --role flag (default: admin), parameterized role INSERT
-- [x] mqtt.js: export refreshRegistries + updateDeviceStateMap
+- [ ] New telemetry channels: power_watts, energy_kwh
+- [ ] REST API: `GET /devices/:id/energy` → kWh, cost, avg power
+- [ ] REST API: `GET /fleet/energy` → total kWh, top consumers, cost
+- [ ] Health Score calculator (hourly cron): alarm frequency, duty deviation, sensor errors, offline hours → score 0-100
+- [ ] REST API: `GET /devices/:id/health`, `GET /fleet/health`
 
 #### WebUI
-- [x] Stores: isSuperAdmin derived store, isAdmin/canWrite include superadmin
-- [x] API: getTenants, createTenant, updateTenant, deleteTenant, reassignDevice
-- [x] Sidebar: tenants nav item (admin + superadmin)
-- [x] App.svelte: /tenants route з admin guard
-- [x] Tenants.svelte: table + create/edit/delete modals, auto-slug, plan, active toggle
-- [x] DeviceDetail: "Change Tenant" button + modal (superadmin only)
-- [x] PendingDevices: tenant dropdown при assign (superadmin)
-- [x] i18n: tenants.*, role_superadmin, device.change_tenant, pending.target_tenant (uk+en)
+- [ ] DeviceDetail: Energy tab (kWh chart, cost KPI)
+- [ ] DeviceDetail: Health Score badge (green/yellow/red)
+- [ ] Dashboard: fleet energy summary, sort by health score
 
-**Результат:** Superadmin може створювати тенантів, переносити пристрої між ними, керувати всією платформою.
+**Outcome:** Customer sees energy cost per refrigerator and which units need attention.
 
 ---
 
-### Фаза 8b: Multi-Tenant User Memberships ✅
-**Ціль:** Один користувач належить кільком тенантам (M:N). Технік обслуговує обладнання кількох клієнтів.
+### Phase 14: Fleet Benchmarking + Anomaly Detection
+**Goal:** Compare similar equipment, automatically detect anomalies.
+**Timeline:** 2-3 weeks
 
-**Патерн:** Active Tenant (WorkOS/Clerk/AWS) — junction table `user_tenants`, JWT тримає один `tenantId`, перемикання мінтить новий JWT. Всі ~44 SQL запити з `WHERE tenant_id` залишаються без змін.
+- [ ] Fleet baseline service: avg ± 2σ per model for duty_cycle, alarm_freq, temp_deviation
+- [ ] Anomaly detector: Z-score > 2.0 → anomaly event + notification
+- [ ] REST API: benchmarks, anomalies (per-device + fleet-wide)
+- [ ] Fleet Analytics page (new): duty cycle chart, outliers table
+- [ ] DeviceDetail: Anomalies tab
 
-#### Backend
-- [x] Міграція 010: `user_tenants` junction table (M:N) + seed від `users.tenant_id`
-- [x] Auth service: `generatePendingToken()` / `verifyPendingToken()` (JWT без tenantId, 5хв)
-- [x] POST /auth/login: multi-tenant detection → `require_tenant_select` + pending_token
-- [x] POST /auth/select-tenant: завершення логіну після вибору тенанту
-- [x] POST /auth/switch-tenant: перемикання тенанту (новий JWT pair, superadmin bypass)
-- [x] POST /auth/refresh: повертає `tenants` array для frontend
-- [x] GET /users: повертає `user.tenants[]` array з усіма членствами
-- [x] POST /users: також INSERT в user_tenants
-- [x] GET/POST/DELETE /users/:id/tenants — CRUD membership (superadmin only)
-
-#### WebUI
-- [x] Stores: `currentTenant`, `availableTenants`, `hasMultipleTenants`
-- [x] API: `selectTenant()`, `switchTenant()`, `addUserTenant()`, `removeUserTenant()`
-- [x] Login: tenant selection step (cards з аватаром, slug, last-used default)
-- [x] Sidebar: tenant switcher widget (dropdown, поточний тенант, перемикання → reload)
-- [x] Users: multi-tenant badges, "Manage Tenants" modal (add/remove chips)
-- [x] i18n: auth.select_workspace, auth.switch_workspace, users.manage_tenants (uk+en)
-
-**Результат:** Технік логіниться → бачить picker тенантів → працює в одному → перемикається через sidebar.
+**Outcome:** "Refrigerator #7 runs 40% more than average Model X — check door seal."
 
 ---
 
-### Фаза 8c: Telegram Bot Redesign ✅
-**Ціль:** Повноцінний Telegram бот з авторизацією, RBAC, моніторинг + розширені сповіщення.
+### Phase 15: Webhooks + API Platform
+**Goal:** External integrations — CMMS, ERP, automation.
+**Timeline:** 1.5-2 weeks
 
-#### Backend
-- [x] Міграція 012: `telegram_link_code`, `telegram_link_expires` колонки + indexes
-- [x] telegram.js: повне переписування — user auth через link code, 7 команд (/start, /devices, /status, /alarms, /tenant, /unlink, /help)
-- [x] telegram.js: RBAC — admin бачить все, viewer/technician тільки assigned devices (user_devices)
-- [x] telegram.js: multi-tenant support (/tenant switch + in-memory context)
-- [x] telegram.js: extended send() — 3 типи повідомлень (alarm raised, alarm cleared, device offline)
-- [x] push.js: alarm cleared notifications (видалено `if (!evt.active) return`)
-- [x] push.js: device offline push (2 хв delay, cancel on reconnect)
-- [x] push.js: user-based dispatch (dispatchToLinkedUsers + RBAC per user)
-- [x] push.js: duplicate prevention (linked users excluded from legacy subscribers)
-- [x] users.js: 3 нові endpoints (POST/DELETE /me/telegram-link, POST /:id/telegram-link)
+- [ ] Webhook dispatcher: alarm/device/anomaly events, HMAC-SHA256 signature, retry + circuit breaker
+- [ ] REST API: CRUD webhooks, test delivery, delivery log
+- [ ] API Keys: machine-to-machine auth (alternative to JWT)
+- [ ] OpenAPI 3.0 spec → `/api/docs`
+- [ ] WebUI: Webhooks page, API Keys page
 
-#### WebUI
-- [x] api.js: generateTelegramLink, generateMyTelegramLink, unlinkMyTelegram
-- [x] Users.svelte: Telegram column (linked badge / link button)
-- [x] Users.svelte: Telegram link modal (code + /start instructions)
-- [x] i18n: telegram keys (uk+en)
-
-#### Telegram Bot UX (Phase 8c.1) ✅
-- [x] Persistent reply keyboard (📦 Пристрої / 🚨 Аварії / 🔀 Тенант / EN↔UA)
-- [x] Interactive device buttons (tap device → detailed status with location)
-- [x] i18n (UA/EN) — full bilingual support with per-chat language preference
-- [x] Language switch button (persistent keyboard)
-- [x] Chat cleanup (auto-delete old messages on navigation)
-- [x] NaN temperature fix (isFinite guard on all Number().toFixed() calls)
-- [x] Device location on status page and in all notification types (alarm raised, alarm cleared, offline)
-- [x] Removed inline menu/refresh/back buttons — cleaner UX
-- [x] `setMyCommands` for Telegram command autocomplete
-- [x] Superadmin cross-tenant bypass for device/alarm API routes
-
-**Результат:** Telegram бот з авторизацією, per-device доступом, i18n, зручною навігацією через persistent keyboard і сповіщеннями з локацією.
+**Outcome:** Alarm → webhook → CMMS creates work order. Automatically.
 
 ---
 
-### Фаза 11: Security & Infrastructure Hardening ✅
-**Ціль:** Захист firmware downloads, HTTP security headers, backup automation, password reset.
+### Phase 16: Advanced Reporting + PWA
+**Goal:** Printable reports for customers, mobile experience.
+**Timeline:** 2-3 weeks
 
-#### Signed Firmware URLs ✅
-- [x] `firmware-url.js`: HMAC-SHA256 signed URLs (JWT_SECRET, 30-хв expiry)
-- [x] `firmware-download.js`: GET `/api/firmware/dl` (signature verification, path traversal protection)
-- [x] `ota.js`: генерує signed URL замість прямого посилання
-- [x] `index.js`: видалено `express.static('/firmware')`, маршрут зареєстровано ПЕРЕД authenticate middleware
-- [x] Nginx: `/api/firmware/` location з rate limit та 120s read timeout
+> Basic HACCP export (CSV + PDF) already implemented in Phase 11b. This phase extends to scheduled reports and email delivery.
 
-#### CSP + HSTS ✅
-- [x] Helmet: повна Content Security Policy (self, unsafe-inline для стилів, wss: для WebSocket)
-- [x] Nginx: CSP header в основному та static assets блоках
-- [x] HSTS: додано `preload` директиву в обидва nginx блоки
+- [ ] New report types: Device Health Report, Fleet Overview, Energy Report
+- [ ] Scheduled reports: weekly/monthly generation → email attachment
+- [ ] PWA: manifest.json, Service Worker, offline device states, install prompt
 
-#### Password Reset ✅
-- [x] Міграція 016: `password_reset_code`, `password_reset_expires` колонки
-- [x] `POST /users/:id/password-reset` — адмін генерує 16-char hex код (30-хв TTL)
-- [x] `POST /auth/reset-password` — публічний endpoint, timing-safe comparison
-- [x] Login.svelte: "Забули пароль?" → форма з email/код/новий пароль
-- [x] Users.svelte: іконка ключа → модалка з згенерованим кодом
-- [x] i18n: uk.js + en.js
-
-#### Backup Automation ✅
-- [x] `backup-postgres.sh`: pg_dump + gzip, GPG шифрування, offsite rsync, 14-днів ретенція
-- [x] systemd timer: `modesp-backup.timer` (щодня 02:00, Persistent=true)
-
-#### Telemetry Partitions ✅
-- [x] `ensure-partitions.js`: lookahead 3→6 місяців
-
-**Результат:** Firmware захищений підписаними URL, HTTP headers відповідають OWASP рекомендаціям, автоматичний backup, можливість скидання пароля без email-сервера.
+**Outcome:** Customer receives PDF report weekly by email. Technician installs PWA on phone.
 
 ---
 
-### Фаза 9a: Bulk Device Import
-**Ціль:** Масове додавання 50-1000 пристроїв одним CSV файлом замість ручного assign по одному.
+### Phase 17: Maintenance Recommendations
+**Goal:** Automatic maintenance recommendations based on data.
+**Timeline:** 1.5-2 weeks
 
-- [ ] Міграція 013: `import_batches` таблиця (трекінг імпортів)
-- [ ] `POST /api/devices/import` — CSV upload, per-row: знайти pending → assign + MQTT creds
-- [ ] `GET /api/devices/pending/export` — експорт pending списку в CSV (заповнити в Excel → re-upload)
-- [ ] `GET /api/devices/import/template` — порожній CSV шаблон з заголовками
-- [ ] npm: `csv-parse` для парсингу CSV
-- [ ] WebUI: `ImportModal.svelte` — drag-and-drop, preview, результат (assigned/skipped/errors)
-- [ ] WebUI: кнопка "Import CSV" на PendingDevices
-- [ ] i18n: import ключі (uk+en)
+- [ ] Rules engine: defrost timeouts → "check heater", duty deviation → "check door seal", compressor hours → "scheduled maintenance"
+- [ ] REST API: recommendations per device, dismiss action
+- [ ] Push + Webhook events for critical recommendations
+- [ ] WebUI: Recommendations tab, dashboard badge
 
-CSV колонки: mqtt_device_id (обов'язковий), name, serial_number, location, model, comment — ті ж поля що при ручному assign.
-
-**Результат:** Адмін скачує pending список → заповнює метадані в Excel → завантажує назад → 500 пристроїв активовано за хвилину.
+**Outcome:** Platform says: "Refrigerator #3 — clean condenser, efficiency dropped 25%."
 
 ---
 
-### Фаза 9b: REST API + OpenAPI (ERP Integration)
-**Ціль:** Зовнішні системи (1C, SAP, CRM) можуть автоматично реєструвати пристрої, отримувати статус, підписуватись на події.
+### Phase 18: Tenant Self-Service + Billing
+**Goal:** SaaS business model — customers register and pay independently.
+**Timeline:** 4-6 weeks
 
-- [ ] Міграція 014: `api_keys` таблиця, `api_rate_limits`
-- [ ] API key middleware (`X-API-Key` header, bcrypt hash, rate limiting)
-- [ ] `POST /api/ext/devices` — реєстрація пристроїв (single/batch)
-- [ ] `GET /api/ext/devices` — список пристроїв тенанту
-- [ ] `GET /api/ext/devices/:id/status` — стан + алармі
-- [ ] `PATCH /api/ext/devices/:id` — оновлення метаданих
-- [ ] OpenAPI 3.0 spec (YAML) — Swagger UI для документації
-- [ ] WebUI: сторінка управління API ключами
-- [ ] Webhooks (опціонально): підписка на device_online/offline, alarm events
+- [ ] Self-registration with email verification
+- [ ] Plan enforcement: max devices, max users, feature gates
+- [ ] Billing integration (LiqPay / Stripe)
+- [ ] Usage metering: devices, telemetry volume, API calls
+- [ ] WebUI: Registration, Billing, plan comparison, invoices
 
-**Результат:** 1С-розробник відкриває Swagger → бачить всі endpoints → пише інтеграцію.
+| Plan | Devices | Users | Features | Price |
+|------|---------|-------|----------|-------|
+| Free | 3 | 2 | Monitoring, push | $0 |
+| Pro | 50 | 10 | + Energy, Health Score, Reports, Webhooks | ~$49/mo |
+| Enterprise | ∞ | ∞ | + Anomaly, Recommendations, API Keys, SLA | Custom |
 
----
-
-### Фаза 10: Advanced Analytics (майбутнє)
-- [ ] ML моделі для предиктивного обслуговування
-- [ ] Виявлення аномалій (порівняння з нормою по флоту)
-- [ ] Автоматичні рекомендації: "конденсатор потребує чистки"
-- [ ] Звіти для клієнтів (PDF, email)
+**Outcome:** Customer registers → adds devices → pays monthly.
 
 ---
 
-## Залежності між проектами
+## Visual Roadmap
 
-### ModESP_v4 → Phase 1 (firmware changes)
-- [x] NVS: `tenant` field (string, max 32)
-- [x] Prefix: `modesp/v1/{tenant}/{device}` (або `modesp/v1/pending/{device}`)
-- [x] Heartbeat: JSON metadata кожні 30с (~100 bytes, stack buffer)
-- [x] `_set_tenant` command: save to NVS → reconnect
-- [x] HTTP API: tenant field в GET/POST `/api/mqtt`
-- [x] RAM overhead: ≤ 2KB (80KB вільної залишиться ≥ 78KB)
+```
+2026 Q2 (Apr-May)                  Q3 (Jun-Aug)                   Q4 (Sep+)
+──────────────────────────────────────────────────────────────────────────────
+ Phase 12: Bulk Import              Phase 15: Webhooks + API      Phase 18: Self-Service
+ └── 3-5 days                      └── 1.5-2 weeks              └── 4-6 weeks
 
-### ModESP_v4 → Phase 6 (MQTT OTA) ✅
-- [x] Підписка на `cmd/_ota` з URL firmware
-- [x] HTTP download → esp_ota_begin/write/end (з SHA256, magic byte, board match)
-- [x] Publish OTA status/progress (_ota.status, _ota.progress, _ota.error)
-- [x] Partition table: otadata + ota_0 + ota_1 (rollback support)
-- [x] E2E тест: download → verify → flash → reboot ~8 сек
+ Phase 13: Energy + Health          Phase 16: Reports + PWA
+ └── 2-3 weeks                     └── 2-3 weeks
+
+ Phase 14: Benchmarking             Phase 17: Recommendations
+ └── 2-3 weeks                     └── 1.5-2 weeks
+──────────────────────────────────────────────────────────────────────────────
+```
+
+---
+
+## Competitive Position
+
+### Unique Advantages
+
+| Advantage | Details | Closest Competitor |
+|-----------|---------|-------------------|
+| Deep edge integration | 48 state + 60 command keys, direct control | Axiom (read-only) |
+| Fleet OTA with rollback | Board-type validation, batch rollout, auto-pause | Monnit (basic OTA) |
+| Zero-touch auto-discovery | Pending → assign → auto-reconnect | None |
+| Per-device RBAC | user_devices M:N, not just per-site | None (all per-site) |
+| M:N multi-tenant users | Technician serves multiple customers | None |
+| Self-hosted | Full data control, ~$20/mo on VPS | Monnit Enterprise (expensive) |
+| HACCP Export | CSV + PDF with Cyrillic, regulatory-ready | SmartSense, Monnit |
+
+### Feature Gaps (upcoming)
+
+| Gap | Who Already Has It | Phase |
+|-----|-------------------|-------|
+| Energy monitoring (kWh) | Axiom, KLATU, SmartSense | Phase 13 |
+| Equipment Health Score | SmartSense, KLATU | Phase 13 |
+| Anomaly detection | Axiom, KLATU | Phase 14 |
+| Fleet benchmarking | Axiom, SmartSense | Phase 14 |
+| Webhooks / API | Monnit, Tive, SmartSense | Phase 15 |
+| Scheduled reports | Monnit, SmartSense | Phase 16 |
+| Mobile PWA | SmartSense, Monnit | Phase 16 |
+| Maintenance recommendations | KLATU, SmartSense | Phase 17 |
+| SaaS self-service | All cloud competitors | Phase 18 |
 
 ---
 
 ## Changelog
 
-- 2026-03-07 — Створено. 7 фаз розробки, залежності з ModESP_v4.
-- 2026-03-07 — Оновлено. Phase 1 деталізовано під реальний MQTT протокол (individual keys, state aggregation, server-side sampling). Firmware changes як prerequisite.
-- 2026-03-07 — Phase 1 cloud code: backend scaffolding, schema.sql, db.js, mqtt.js, index.js, state_meta.json, unit tests (20/20). Firmware changes позначено [x].
-- 2026-03-07 — Phase 2: REST API (devices, telemetry, alarms, commands), WebSocket (real-time state), Svelte WebUI (Dashboard, DeviceDetail, PendingDevices). Протестовано з ESP32 F27FCD.
-- 2026-03-07 — Phase 3: Push notifications — push.js orchestrator, telegram.js (UA), fcm.js, notifications REST API, WebUI Notifications page. Graceful skip when tokens not configured.
-- 2026-03-07 — Phase 4: Auth & User Management — auth.js service, JWT middleware, login/refresh/logout routes, users CRUD, seed-admin script, WebSocket JWT, WebUI Login/Users pages, AUTH_ENABLED toggle.
-- 2026-03-07 — Phase 5: History & Analytics — telemetry stats (bucketed aggregation), alarm stats, fleet summary API, uPlot TelemetryChart, AlarmHistory table, Dashboard fleet summary bar, ensure-partitions.js.
-- 2026-03-07 — Phase 6: Fleet OTA (cloud side) — firmware upload/list/delete, OTA deploy + group rollout with batching, ota.js service (status checker, auto-pause), sendJsonCommand QoS 1, Firmware WebUI page, migration 003.
-- 2026-03-08 — Phase 6 complete: ModESP_v4 OTA handler (ota_handler.cpp) — E2E verified. Partition table fix (otadata + ota_1 for rollback).
-- 2026-03-08 — Phase 6.5: WebUI polish — i18n (UK+EN), light/dark theme, device metadata (model, comment, manufactured_at), editing, service records, search by all fields.
-- 2026-03-08 — Phase 7a: Per-Device RBAC (backend) — migration 006, device-access middleware (filterDeviceAccess + checkDeviceAccess), all device/telemetry/alarm/fleet routes protected, WebSocket per-device check, users GET/PUT devices (bulk), grant-all-devices.js migration script.
-- 2026-03-08 — Phase 7b: Backend Scalability — DB pool max=30 + statement_timeout, batch state writer (N→1 query), heartbeat write dedup, event INSERT batching (1s flush), cleanup-telemetry.js (90-day retention), telemetry LIMIT 10000, WS backpressure (64KB), StateMap monitoring (60s stats).
-- 2026-03-08 — Phase 7c: Frontend RBAC — isAdmin/canWrite derived stores, conditional UI (edit/command/service hidden for viewer, ParameterEditor readonly), route guards (admin-only pages via svelte-spa-router wrap), device assignment modal on Users page (search, select all/none, bulk PUT), i18n keys (uk+en).
-- 2026-03-08 — Phase 7d: OTA Board Compatibility — migration 007 (firmwares.board_type), firmware upload with board_type, deploySingle board mismatch check (400), createRollout filters incompatible devices, OTA payload includes board_type, Firmware WebUI board awareness (select on upload, column in library, compatibility in deploy modal).
-- 2026-03-08 — VPS Production Deployment: backend (modesp-backend.service), WebUI via Nginx, MQTT bidirectional, OTA E2E confirmed, admin + viewer accounts, ESP32 connected and operational.
-- 2026-03-08 — VPS Ops: cron backup (PostgreSQL daily 2:00, retention 30d), telemetry cleanup (daily 3:00, >90d), telemetry partition timer (systemd, 25th monthly). Phase 1 моніторинг — ✅.
-- 2026-03-09 — Phase 4 completion: Dynamic MQTT Auth — mosquitto-go-auth + PostgreSQL (migration 008, mqtt-auth.js service, REST API for credentials lifecycle, bootstrap provisioning in mqtt.js, mosquitto.conf rewrite with per_listener_settings + SQL ACL, provision-mqtt-creds.js migration script, WebUI credentials feedback on assign + MQTT auth status on DeviceDetail, i18n uk+en).
-- 2026-03-09 — Phase 8a: Tenant Management — superadmin role (migration 009), tenants CRUD API, device reassign endpoint, Tenants WebUI page, DeviceDetail "Change Tenant" modal, PendingDevices tenant select for superadmin, isSuperAdmin store, seed-admin --role flag, i18n (uk+en).
-- 2026-03-09 — Phase 8b: Multi-Tenant User Memberships — migration 010 (user_tenants M:N), pendingToken flow, login/select-tenant/switch-tenant endpoints, tenant membership CRUD, frontend tenant picker on login, sidebar tenant switcher, Users manage tenants modal, i18n (uk+en).
-- 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback (migration 011 mqtt_bootstrap table), device lifecycle (soft-reset active→pending, hard-delete pending, POST /devices/register), stuck device auto-detection (120s grace → auto-reset), ACL fix for MOSQ_ACL_SUBSCRIBE ($2=4), QoS 1 for _set_tenant/_set_mqtt_creds. Full assign flow E2E verified with emulator.
-- 2026-03-10 — Roadmap: додано Phase 9a (Bulk CSV Import) і Phase 9b (REST API + OpenAPI для ERP). Advanced Analytics перенесено в Phase 10.
-- 2026-03-10 — Bugfix session: reset-to-pending ordering (MQTT commands before DB change), heartbeat empty payload guard, credential key standardization (user/pass), go-auth cache fix (300s→5s — root cause of assign loop after credential rotation).
-- 2026-03-11 — Phase 8c: Telegram Bot Redesign — migration 012 (telegram_link_code/expires), telegram.js full rewrite (user auth, 7 commands, RBAC, multi-tenant), push.js rewrite (alarm cleared, device offline with 2min delay, user-based dispatch, duplicate prevention), users.js 3 new endpoints, WebUI Telegram column + link modal, i18n (uk+en).
-- 2026-03-11 — Phase 8c.1: Telegram Bot UX — persistent reply keyboard, i18n UA/EN with per-chat preference, interactive device status buttons, chat cleanup (auto-delete), NaN temperature fix, device location in status page and all notification types, removed inline menu/refresh/back buttons, setMyCommands, superadmin cross-tenant bypass in device/alarm routes.
-- 2026-03-15 — Phase 11: Security & Infrastructure Hardening — signed firmware URLs (HMAC-SHA256, 30-min expiry), CSP headers (helmet + nginx), HSTS preload, password reset (admin-generated codes, Login page UI, Users page button), backup automation (systemd timer, pg_dump + gzip + GPG + rsync), telemetry partition lookahead 3→6 months.
+- 2026-03-15 — Revision: merged ROADMAP + ROADMAP_NEXT, renumbered phases 12-18, removed internal details. Split into EN + UA versions.
+- 2026-03-15 — Phase 11 complete: Events API, HACCP Export (CSV+PDF), Password Change (NIST), Alarm Severity (ISA-18.2).
+- 2026-03-11 — Phase 8c: Telegram Bot Redesign + UX (auth, RBAC, i18n, persistent keyboard).
+- 2026-03-10 — MQTT Auth hardening: go-auth bootstrap fallback, stuck device auto-detection.
+- 2026-03-09 — Phases 8a-8b: Tenant Management + Multi-Tenant Users.
+- 2026-03-08 — VPS Production Deployment. Phases 6-7 complete (OTA, RBAC, Scalability).
+- 2026-03-07 — Project created. Phases 1-5 implemented (Foundation → Analytics).

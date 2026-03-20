@@ -56,6 +56,16 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
       sql += ` AND a.active = false`;
     }
 
+    // Severity filter: ?severity=critical,warning
+    if (req.query.severity) {
+      const valid = ['critical', 'warning', 'info'];
+      const severities = req.query.severity.split(',').filter(s => valid.includes(s));
+      if (severities.length > 0) {
+        sql += ` AND a.severity = ANY($${idx++})`;
+        params.push(severities);
+      }
+    }
+
     if (req.query.from) {
       sql += ` AND a.triggered_at >= $${idx++}`;
       params.push(new Date(req.query.from));

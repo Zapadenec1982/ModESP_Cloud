@@ -407,6 +407,19 @@ router.post('/logout', async (req, res) => {
   const tokenHash = authSvc.hashRefreshToken(refresh_token);
 
   try {
+    // Fetch user info before revoking so audit middleware can log who logged out
+    const tokenRow = await db.query(
+      `SELECT rt.user_id, rt.tenant_id, u.email, u.role
+       FROM refresh_tokens rt
+       LEFT JOIN users u ON u.id = rt.user_id
+       WHERE rt.token_hash = $1`,
+      [tokenHash]
+    );
+    if (tokenRow.rows.length) {
+      const t = tokenRow.rows[0];
+      req.user = { id: t.user_id, email: t.email, role: t.role, tenantId: t.tenant_id };
+    }
+
     await db.query(
       'UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1',
       [tokenHash]

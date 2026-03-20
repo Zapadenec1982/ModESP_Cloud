@@ -65,10 +65,6 @@
   $: onlineCount = $devices.filter(d => d.online).length
   $: totalCount = $devices.length
   $: alarmCount = $devices.filter(d => d.alarm_active).length
-  $: avgTemp = (() => {
-    const temps = $devices.filter(d => d.air_temp != null).map(d => d.air_temp)
-    return temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : null
-  })()
 
   async function load() {
     try {
@@ -167,7 +163,6 @@
     online={onlineCount}
     total={totalCount}
     alarms={alarmCount}
-    {avgTemp}
   />
 
   <DeviceFilter bind:search bind:filter bind:view />

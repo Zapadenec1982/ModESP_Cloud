@@ -3,10 +3,12 @@
 const { Router } = require('express');
 const db         = require('../services/db');
 const otaSvc     = require('../services/ota');
+const { authorize } = require('../middleware/auth');
+const { checkDeviceAccess } = require('../middleware/device-access');
 
 const router = Router();
 
-// ── POST /api/ota/deploy — single device OTA ─────────────
+// ── POST /api/ota/deploy — single device OTA (technician+)
 router.post('/deploy', async (req, res, next) => {
   try {
     const { firmware_id, device_id } = req.body || {};
@@ -19,6 +21,23 @@ router.post('/deploy', async (req, res, next) => {
       });
     }
 
+    // Per-device RBAC: technician/viewer can only deploy to assigned devices
+    if (req.user && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      if (req.user.role === 'viewer') {
+        return res.status(403).json({ error: 'forbidden', message: 'Viewers cannot deploy firmware', status: 403 });
+      }
+      // Technician: check device access
+      const accessCheck = await db.query(
+        `SELECT 1 FROM user_devices ud
+         JOIN devices d ON d.id = ud.device_id
+         WHERE ud.user_id = $1 AND d.mqtt_device_id = $2 AND d.tenant_id = $3`,
+        [req.user.id, device_id, req.tenantId]
+      );
+      if (accessCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'forbidden', message: 'Device access denied', status: 403 });
+      }
+    }
+
     // Resolve tenant slug
     const tRes = await db.query('SELECT slug FROM tenants WHERE id = $1', [req.tenantId]);
     if (tRes.rows.length === 0) {
@@ -29,6 +48,9 @@ router.post('/deploy', async (req, res, next) => {
       req.tenantId, tRes.rows[0].slug, firmware_id, device_id, req.userId
     );
 
+    // Audit: OTA deploy details
+    req.auditContext = { changes: { firmware_id, device_id } };
+
     res.status(201).json({ data: result });
   } catch (err) {
     if (err.status) {
@@ -38,8 +60,8 @@ router.post('/deploy', async (req, res, next) => {
   }
 });
 
-// ── POST /api/ota/rollout — group OTA ────────────────────
-router.post('/rollout', async (req, res, next) => {
+// ── POST /api/ota/rollout — group OTA ──────── (admin only)
+router.post('/rollout', authorize('admin'), async (req, res, next) => {
   try {
     const { firmware_id, device_ids, batch_size, batch_interval_s, fail_threshold_pct } = req.body || {};
 
@@ -65,6 +87,9 @@ router.post('/rollout', async (req, res, next) => {
       failThresholdPct: fail_threshold_pct,
       userId:           req.userId,
     });
+
+    // Audit: rollout details
+    req.auditContext = { entityId: result.rollout_id || result.id, changes: { firmware_id, target_count: device_ids?.length } };
 
     res.status(201).json({ data: result });
   } catch (err) {
@@ -175,8 +200,8 @@ router.get('/rollouts/:id', async (req, res, next) => {
   }
 });
 
-// ── POST /api/ota/rollouts/:id/pause ─────────────────────
-router.post('/rollouts/:id/pause', async (req, res, next) => {
+// ── POST /api/ota/rollouts/:id/pause ──────── (admin only)
+router.post('/rollouts/:id/pause', authorize('admin'), async (req, res, next) => {
   try {
     const result = await otaSvc.pauseRollout(req.tenantId, req.params.id);
     res.json({ data: result });
@@ -188,8 +213,8 @@ router.post('/rollouts/:id/pause', async (req, res, next) => {
   }
 });
 
-// ── POST /api/ota/rollouts/:id/resume ────────────────────
-router.post('/rollouts/:id/resume', async (req, res, next) => {
+// ── POST /api/ota/rollouts/:id/resume ─────── (admin only)
+router.post('/rollouts/:id/resume', authorize('admin'), async (req, res, next) => {
   try {
     const result = await otaSvc.resumeRollout(req.tenantId, req.params.id);
     res.json({ data: result });
@@ -201,8 +226,8 @@ router.post('/rollouts/:id/resume', async (req, res, next) => {
   }
 });
 
-// ── POST /api/ota/rollouts/:id/cancel ────────────────────
-router.post('/rollouts/:id/cancel', async (req, res, next) => {
+// ── POST /api/ota/rollouts/:id/cancel ─────── (admin only)
+router.post('/rollouts/:id/cancel', authorize('admin'), async (req, res, next) => {
   try {
     const result = await otaSvc.cancelRollout(req.tenantId, req.params.id);
     res.json({ data: result });

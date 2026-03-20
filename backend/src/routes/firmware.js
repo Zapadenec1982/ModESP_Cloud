@@ -6,6 +6,7 @@ const crypto       = require('crypto');
 const path         = require('path');
 const fs           = require('fs');
 const db           = require('../services/db');
+const { authorize } = require('../middleware/auth');
 
 const router = Router();
 
@@ -31,8 +32,8 @@ const upload = multer({
   },
 });
 
-// ── POST /api/firmware/upload ─────────────────────────────
-router.post('/upload', upload.single('file'), async (req, res, next) => {
+// ── POST /api/firmware/upload ───────────────── (admin only)
+router.post('/upload', authorize('admin'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -95,6 +96,9 @@ router.post('/upload', upload.single('file'), async (req, res, next) => {
       ]
     );
 
+    // Audit: firmware upload details
+    req.auditContext = { entityId: result.rows[0].id, changes: { version: version.trim(), filename: req.file.originalname, size: req.file.size } };
+
     res.status(201).json({ data: result.rows[0] });
   } catch (err) {
     // Multer errors
@@ -154,8 +158,8 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// ── DELETE /api/firmware/:id ──────────────────────────────
-router.delete('/:id', async (req, res, next) => {
+// ── DELETE /api/firmware/:id ────────────────── (admin only)
+router.delete('/:id', authorize('admin'), async (req, res, next) => {
   try {
     // Check no active OTA jobs reference this firmware
     const activeJobs = await db.query(
@@ -174,7 +178,7 @@ router.delete('/:id', async (req, res, next) => {
 
     // Get firmware record
     const fw = await db.query(
-      'SELECT id, filename FROM firmwares WHERE tenant_id = $1 AND id = $2',
+      'SELECT id, version, filename FROM firmwares WHERE tenant_id = $1 AND id = $2',
       [req.tenantId, req.params.id]
     );
     if (fw.rows.length === 0) {
@@ -198,6 +202,9 @@ router.delete('/:id', async (req, res, next) => {
       'DELETE FROM firmwares WHERE tenant_id = $1 AND id = $2',
       [req.tenantId, req.params.id]
     );
+
+    // Audit: preserve firmware version
+    req.auditContext = { entityId: req.params.id, changes: { before: { version: fw.rows[0].version } } };
 
     res.json({ data: { deleted: true } });
   } catch (err) {

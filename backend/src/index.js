@@ -78,8 +78,8 @@ app.use(helmet({
 
 // Rate limiting — auth & registration endpoints
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
-  max: 20,                    // 20 attempts per IP
+  windowMs: 5 * 60 * 1000,  // 5 min
+  max: 50,                    // 50 attempts per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
@@ -298,8 +298,10 @@ app.use('/api', createAuditMiddleware(logger));
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
-  // Public auth routes (no JWT required, rate-limited)
-  app.use('/api/auth', authLimiter, require('./routes/auth'));
+  // Public auth routes (no JWT required)
+  // Rate limit login only — refresh fires automatically and shouldn't count
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT
   app.use('/api', authenticate);
@@ -307,8 +309,8 @@ if (AUTH_ENABLED) {
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
-  app.use('/api/firmware', authorize('admin'), require('./routes/firmware'));
-  app.use('/api/ota',      authorize('admin'), require('./routes/ota'));
+  app.use('/api/firmware', require('./routes/firmware'));
+  app.use('/api/ota',      require('./routes/ota'));
   app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
 } else {
   // Dev fallback: tenant from header
@@ -320,6 +322,10 @@ app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
+app.use('/api/devices',  require('./routes/events'));     // /:id/events
+const { deviceRouter: exportDevices, alarmRouter: exportAlarms } = require('./routes/export');
+app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
+app.use('/api/alarms',   exportAlarms);                   // /export.csv
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
 
@@ -383,15 +389,17 @@ async function main() {
 // ── Graceful shutdown ─────────────────────────────────────
 async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
-  otaSvc.shutdown();
-  pushSvc.shutdown();
-  telegramSvc.shutdown();
-  fcmSvc.shutdown();
-  webpushSvc.shutdown();
-  wsSvc.shutdown();
+  await Promise.allSettled([
+    otaSvc.shutdown(),
+    pushSvc.shutdown(),
+    telegramSvc.shutdown(),
+    fcmSvc.shutdown(),
+    webpushSvc.shutdown(),
+    wsSvc.shutdown(),
+  ]);
   await mqttSvc.shutdown();
   await db.shutdown();
-  server.close();
+  await new Promise(resolve => server.close(resolve));
   process.exit(0);
 }
 

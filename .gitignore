@@ -5,6 +5,10 @@
 CLAUDE.md
 ARCHITECTURE_INTERNAL.md
 
+# Agent rules (local only)
+.rules/
+AGENTS.md
+
 # Dependencies
 node_modules/
 

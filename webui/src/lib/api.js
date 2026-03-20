@@ -141,6 +141,47 @@ async function request(path, options = {}) {
 }
 
 /**
+ * Like request() but returns full JSON response (data + meta).
+ * Used for paginated endpoints that return { data, meta }.
+ */
+async function requestFull(path, options = {}) {
+  const url = `${BASE}${path}`;
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+  if (!accessToken && refreshToken && !options._noRetry) {
+    await tryRefresh();
+  }
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  let res = await fetch(url, { ...options, headers });
+
+  if (res.status === 401 && refreshToken && !options._noRetry) {
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+      res = await fetch(url, { ...options, headers, _noRetry: true });
+    } else {
+      clearAuth();
+      toast.warning('Session expired — please log in again');
+      navigate('/');
+      throw Object.assign(new Error('Session expired'), { status: 401 });
+    }
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+
+  return res.json();
+}
+
+/**
  * Raw POST without auth header (for unauthenticated endpoints like select-tenant).
  */
 async function requestRaw(path, options = {}) {
@@ -363,15 +404,39 @@ export function getPendingDevices() {
   return request('/devices/pending');
 }
 
-export function assignDevice(mqttId, { name, location, model, serial_number, comment, tenant_id } = {}) {
+export function assignDevice(mqttId, { name, location, model, serial_number, comment, manufactured_at, tenant_id } = {}) {
   return request(`/devices/pending/${mqttId}/assign`, {
     method: 'POST',
-    body: JSON.stringify({ name, location, model, serial_number, comment, tenant_id }),
+    body: JSON.stringify({ name, location, model, serial_number, comment, manufactured_at, tenant_id }),
   });
 }
 
 export function deletePendingDevice(mqttId) {
   return request(`/devices/pending/${mqttId}`, { method: 'DELETE' });
+}
+
+export async function batchRegisterDevices(file, tenantId) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (tenantId) formData.append('tenant_id', tenantId)
+
+  const headers = {}
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+
+  const res = await fetch(`${BASE}/devices/pending/batch`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    if (body.errors) {
+      const msgs = body.errors.slice(0, 5).map(e => `Row ${e.row}: ${e.message}`).join('; ')
+      throw new Error(msgs + (body.errors.length > 5 ? ` (+${body.errors.length - 5} more)` : ''))
+    }
+    throw new Error(body.message || `HTTP ${res.status}`)
+  }
+  return (await res.json()).data
 }
 
 export function deleteDevice(id) {
@@ -467,12 +532,14 @@ export function getTelemetryStats(deviceId, { hours, from, to, channels, bucket 
 
 // ── Alarms ───────────────────────────────────────────────
 
-export function getAlarms({ active, from, to, limit } = {}) {
+export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  if (severity) params.set('severity', severity);
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);
 }
@@ -485,6 +552,18 @@ export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   if (limit) params.set('limit', limit);
   const qs = params.toString();
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
+}
+
+// ── Events ──────────────────────────────────────────────
+
+export function getDeviceEvents(deviceId, { event_type, from, to, limit } = {}) {
+  const params = new URLSearchParams();
+  if (event_type) params.set('event_type', event_type);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (limit) params.set('limit', limit);
+  const qs = params.toString();
+  return request(`/devices/${deviceId}/events${qs ? '?' + qs : ''}`);
 }
 
 export function getAlarmStats({ from, to } = {}) {
@@ -548,6 +627,13 @@ export function updateUser(id, data) {
   return request(`/users/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  });
+}
+
+export function changePassword(oldPassword, newPassword) {
+  return request('/users/me', {
+    method: 'PUT',
+    body: JSON.stringify({ old_password: oldPassword, password: newPassword }),
   });
 }
 
@@ -724,11 +810,60 @@ export function cancelRollout(id) {
 
 // ── Audit Log ────────────────────────────────────────────
 
-export function getAuditLog(params = {}) {
+export async function getAuditLog(params = {}) {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== '') qs.set(k, v);
   }
   const query = qs.toString();
-  return request(`/audit-log${query ? '?' + query : ''}`);
+  // Need full response (data + meta) — use requestFull
+  return requestFull(`/audit-log${query ? '?' + query : ''}`);
+}
+
+// ── Data Export (CSV / PDF) ──────────────────────────────
+
+async function downloadFile(path, filename) {
+  const headers = {};
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || `Export failed: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function exportTelemetryCsv(deviceId, from, to) {
+  const qs = new URLSearchParams({ from, to }).toString();
+  const fname = `telemetry_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.csv`;
+  return downloadFile(`/devices/${deviceId}/telemetry/export.csv?${qs}`, fname);
+}
+
+export function exportTelemetryPdf(deviceId, from, to, bucket = '1h') {
+  const qs = new URLSearchParams({ from, to, bucket }).toString();
+  const fname = `haccp_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/devices/${deviceId}/telemetry/export.pdf?${qs}`, fname);
+}
+
+export function exportAlarmsCsv(from, to, severity) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (severity) params.set('severity', severity);
+  const qs = params.toString();
+  const fname = `alarms_${(from || '').slice(0, 10)}_${(to || '').slice(0, 10)}.csv`;
+  return downloadFile(`/alarms/export.csv${qs ? '?' + qs : ''}`, fname);
+}
+
+export function exportDevicesCsv() {
+  const fname = `devices_${new Date().toISOString().slice(0, 10)}.csv`;
+  return downloadFile('/devices/export.csv', fname);
 }

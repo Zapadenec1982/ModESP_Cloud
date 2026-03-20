@@ -84,9 +84,10 @@ export function alarmLabel(code) {
  * @returns {'critical'|'warning'|'info'}
  */
 export function alarmSeverity(code) {
+  // Synced with backend mqtt.js alarmSeverity()
   if (['high_temp_alarm', 'low_temp_alarm', 'sensor1_alarm', 'sensor2_alarm'].includes(code)) return 'critical'
-  if (['door_alarm', 'continuous_run_alarm', 'pulldown_alarm'].includes(code)) return 'warning'
-  return 'info'
+  if (['rate_alarm', 'short_cycle_alarm', 'rapid_cycle_alarm'].includes(code)) return 'info'
+  return 'warning'  // door, pulldown, continuous_run
 }
 
 /**

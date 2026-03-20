@@ -110,8 +110,19 @@
 
   async function handleDeactivate(user) {
     try {
-      await deleteUser(user.id)
+      await updateUser(user.id, { active: false })
       toast.success($t('users.user_deactivated', user.email))
+      await loadUsers()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function handleDelete(user) {
+    if (!confirm($t('users.confirm_delete', user.email))) return
+    try {
+      await deleteUser(user.id)
+      toast.success($t('users.user_deleted', user.email))
       await loadUsers()
     } catch (e) {
       toast.error(e.message)
@@ -445,7 +456,9 @@
             <!-- Telegram -->
             <div class="cell cell-telegram">
               {#if user.telegram_id}
-                <Badge variant="success" size="sm">{$t('users.telegram_linked')}</Badge>
+                <button class="link-btn link-btn--relink" on:click={() => generateTgLink(user)}>
+                  <Badge variant="success" size="sm">{$t('users.telegram_linked')}</Badge>
+                </button>
               {:else}
                 <button class="link-btn" on:click={() => generateTgLink(user)}>{$t('users.telegram_link')}</button>
               {/if}
@@ -497,14 +510,17 @@
                 <!-- Deactivate/Reactivate (not for superadmin rows) -->
                 {#if user.role !== 'superadmin'}
                   {#if user.active}
-                    <Button variant="danger" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}">
+                    <Button variant="secondary" size="sm" on:click={() => handleDeactivate(user)} aria-label="Deactivate {user.email}" title={$t('users.deactivate')}>
                       <Icon name="x-circle" size={13} />
                     </Button>
                   {:else}
-                    <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)} aria-label="Reactivate {user.email}">
+                    <Button variant="secondary" size="sm" on:click={() => handleReactivate(user)} aria-label="Reactivate {user.email}" title={$t('users.reactivate')}>
                       <Icon name="check" size={13} />
                     </Button>
                   {/if}
+                  <Button variant="danger" size="sm" on:click={() => handleDelete(user)} aria-label="Delete {user.email}" title={$t('users.delete')}>
+                    <Icon name="trash" size={13} />
+                  </Button>
                 {/if}
               {/if}
             </div>
@@ -1096,6 +1112,17 @@
 
   .link-btn:hover {
     text-decoration: underline;
+  }
+
+  .link-btn--relink {
+    display: flex;
+    align-items: center;
+    opacity: 0.9;
+  }
+
+  .link-btn--relink:hover {
+    opacity: 1;
+    text-decoration: none;
   }
 
   .sep {

@@ -11,10 +11,12 @@
 import { writable, derived } from 'svelte/store';
 import uk from './locales/uk.js';
 import en from './locales/en.js';
+import pl from './locales/pl.js';
+import de from './locales/de.js';
 
 const STORAGE_KEY = 'modesp-locale';
-const SUPPORTED = ['uk', 'en'];
-const dictionaries = { uk, en };
+const SUPPORTED = ['uk', 'en', 'pl', 'de'];
+const dictionaries = { uk, en, pl, de };
 
 function detectLocale() {
   try {
@@ -22,13 +24,15 @@ function detectLocale() {
     if (saved && SUPPORTED.includes(saved)) return saved;
   } catch { /* private mode */ }
 
-  // Browser language detection: uk/ru → uk, else → en
+  // Browser language detection
   const lang = (navigator.language || '').toLowerCase();
   if (lang.startsWith('uk') || lang.startsWith('ru')) return 'uk';
+  if (lang.startsWith('pl')) return 'pl';
+  if (lang.startsWith('de')) return 'de';
   return 'en';
 }
 
-/** Current locale ('uk' | 'en') */
+/** Current locale ('uk' | 'en' | 'pl' | 'de') */
 export const locale = writable(detectLocale());
 
 // Persist on change
@@ -77,4 +81,6 @@ export function setLocale(loc) {
 export const supportedLocales = [
   { code: 'uk', label: 'UA' },
   { code: 'en', label: 'EN' },
+  { code: 'pl', label: 'PL' },
+  { code: 'de', label: 'DE' },
 ];

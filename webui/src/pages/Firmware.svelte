@@ -16,6 +16,7 @@
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
   import { toast } from '../lib/toast.js'
+  import { isAdmin } from '../lib/stores.js'
 
   // ── State ──────────────────────────────────────────────
 
@@ -271,7 +272,8 @@
     <Skeleton height="200px" />
     <Skeleton height="200px" />
   {:else}
-    <!-- ── Upload Section ────────────────────────────── -->
+    <!-- ── Upload Section (admin only) ──────────────── -->
+    {#if $isAdmin}
     <section class="section-card upload-section">
       <div class="section-header">
         <Icon name="upload" size={16} />
@@ -305,6 +307,7 @@
         </div>
       </div>
     </section>
+    {/if}
 
     <!-- ── Firmware Library ──────────────────────────── -->
     <section class="section-card">
@@ -347,9 +350,11 @@
                   <td class="text-muted">{formatDate(fw.created_at)}</td>
                   <td class="actions">
                     <Button variant="primary" size="sm" on:click={() => openDeploy(fw)}>{$t('common.deploy')}</Button>
-                    <Button variant="danger" size="sm" on:click={() => handleDelete(fw)} aria-label="Delete firmware {fw.version}">
-                      <Icon name="trash" size={13} />
-                    </Button>
+                    {#if $isAdmin}
+                      <Button variant="danger" size="sm" on:click={() => handleDelete(fw)} aria-label="Delete firmware {fw.version}">
+                        <Icon name="trash" size={13} />
+                      </Button>
+                    {/if}
                   </td>
                 </tr>
               {/each}
@@ -472,10 +477,12 @@
             <input type="radio" bind:group={deployMode} value="single" />
             <span>{$t('firmware.single_device')}</span>
           </label>
-          <label class="mode-option">
-            <input type="radio" bind:group={deployMode} value="group" />
-            <span>{$t('firmware.group_rollout')}</span>
-          </label>
+          {#if $isAdmin}
+            <label class="mode-option">
+              <input type="radio" bind:group={deployMode} value="group" />
+              <span>{$t('firmware.group_rollout')}</span>
+            </label>
+          {/if}
         </div>
 
         {#if deployFirmware?.board_type}

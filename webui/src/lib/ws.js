@@ -47,6 +47,10 @@ export function connect() {
     for (const deviceId of activeSubscriptions) {
       socket.send(JSON.stringify({ action: 'subscribe', device_id: deviceId }));
     }
+    // Re-subscribe to global events if previously subscribed
+    if (globalSubscribed) {
+      socket.send(JSON.stringify({ action: 'subscribe_global' }));
+    }
   };
 
   socket.onmessage = (event) => {
@@ -131,11 +135,25 @@ export function on(type, fn) {
 }
 
 /**
+ * Subscribe to global (tenant-wide) events: alarms, pending devices.
+ * Call once after connect — re-subscribes automatically on reconnect.
+ */
+let globalSubscribed = false;
+
+export function subscribeGlobal() {
+  globalSubscribed = true;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ action: 'subscribe_global' }));
+  }
+}
+
+/**
  * Disconnect WebSocket.
  */
 export function disconnect() {
   clearTimeout(reconnectTimer);
   activeSubscriptions.clear();
+  globalSubscribed = false;
   if (socket) {
     socket.onclose = null; // prevent reconnect
     socket.close();

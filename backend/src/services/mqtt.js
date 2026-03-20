@@ -141,10 +141,14 @@ async function shutdown() {
   for (const t of timers) clearInterval(t);
   timers = [];
 
+  // Clear pending nuisance alarm timers
+  for (const timer of pendingAlarms.values()) clearTimeout(timer);
+  pendingAlarms.clear();
+
   // Flush remaining buffered events before closing
   if (eventBuffer.length > 0) {
     logger.info({ count: eventBuffer.length }, 'Flushing event buffer on shutdown');
-    await flushEvents().catch(() => {});
+    await flushEvents().catch(err => logger.error({ err }, 'Failed to flush events on shutdown'));
   }
 
   if (client) {
@@ -173,23 +177,24 @@ function onConnect() {
   logger.info('Subscribed to MQTT topics');
 }
 
-function onMessage(topic, payload) {
+function onMessage(topic, payload, packet) {
   try {
     const msg = payload.toString().trim();
     const parsed = parseTopic(topic);
     if (!parsed) return;
 
     const { tenantSlug, deviceId, subtopic, stateKey } = parsed;
+    const isRetained = packet && packet.retain;
 
     switch (subtopic) {
       case 'state':
-        if (stateKey) handleStateKey(tenantSlug, deviceId, stateKey, msg);
+        if (stateKey) handleStateKey(tenantSlug, deviceId, stateKey, msg, isRetained);
         break;
       case 'status':
-        handleStatus(tenantSlug, deviceId, msg);
+        handleStatus(tenantSlug, deviceId, msg, isRetained);
         break;
       case 'heartbeat':
-        handleHeartbeat(tenantSlug, deviceId, msg);
+        handleHeartbeat(tenantSlug, deviceId, msg, isRetained);
         break;
       default:
         // cmd and unknown — ignore on cloud side
@@ -247,9 +252,12 @@ function parseScalar(payload) {
 
 // ── Handlers ──────────────────────────────────────────────
 
-function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
+async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained) {
   const value = parseScalar(rawPayload);
   const now   = Date.now();
+
+  // Skip retained messages for unknown devices (prevents phantom devices after deletion)
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   // Ensure stateMap entry exists
   let state = stateMap.get(deviceId);
@@ -279,7 +287,21 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   if (ALARM_KEYS.has(key)) {
     const prev = state[key];
     if (prev !== undefined && prev !== value) {
-      detectAlarm(tenantSlug, deviceId, key, value, state);
+      await detectAlarm(tenantSlug, deviceId, key, value, state);
+    } else if (prev === undefined && value === false) {
+      // After backend restart, stateMap is empty. If device reports alarm=false
+      // but DB still has active=true, reconcile by clearing stale alarms.
+      const tenantInfo = resolveTenant(tenantSlug);
+      const alarmCode = key.replace('protection.', '');
+      const { rowCount } = await db.query(
+        `UPDATE alarms SET active = false, cleared_at = NOW()
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+        [tenantInfo.id, deviceId, alarmCode]
+      ).catch(err => { logger.error({ err, deviceId, alarmCode }, 'Failed to reconcile alarm'); return { rowCount: 0 }; });
+      if (rowCount > 0) {
+        logger.info({ deviceId, alarmCode }, 'Reconciled stale alarm after restart');
+        emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
+      }
     }
   }
 
@@ -307,15 +329,19 @@ function handleStateKey(tenantSlug, deviceId, key, rawPayload) {
   emitter.emit('state_delta', { tenantSlug, deviceId, changes: { [key]: value } });
 
   // Ensure device exists in registry (auto-discovery for unknown devices)
-  ensureDevice(tenantSlug, deviceId);
+  // Skip for retained messages — prevents re-creating deleted devices on restart
+  if (!isRetained) ensureDevice(tenantSlug, deviceId);
 
   // Detect stuck devices (active in DB but publishing as pending)
   checkStuckDevice(tenantSlug, deviceId);
 }
 
-function handleStatus(tenantSlug, deviceId, payload) {
+function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   const online = (payload === 'online');
   const now    = Date.now();
+
+  // Skip retained messages for unknown devices
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -358,8 +384,8 @@ function handleStatus(tenantSlug, deviceId, payload) {
     insertEvent(tenantInfo.id, deviceId, 'device_offline');
   }
 
-  // Auto-discovery
-  ensureDevice(tenantSlug, deviceId);
+  // Auto-discovery — skip for retained messages
+  if (!isRetained) ensureDevice(tenantSlug, deviceId);
 
   // Detect stuck devices (active in DB but publishing as pending)
   checkStuckDevice(tenantSlug, deviceId);
@@ -373,8 +399,11 @@ function handleStatus(tenantSlug, deviceId, payload) {
   logger.info({ tenantSlug, deviceId, online }, 'Device status');
 }
 
-function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
+function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
   const now = Date.now();
+
+  // Skip retained messages for unknown devices
+  if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -421,37 +450,74 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload) {
 
 // ── Alarm detection ───────────────────────────────────────
 
-function detectAlarm(tenantSlug, deviceId, key, value, state) {
+// Nuisance alarm delay (ISA-18.2): suppress transient alarms
+const pendingAlarms = new Map();  // "deviceId:alarmCode" -> setTimeout handle
+const NUISANCE_DELAY = { door_alarm: 120000, pulldown_alarm: 300000 };  // 2min, 5min
+
+async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
   const alarmCode  = key.replace('protection.', '');
-
-  const severity = alarmSeverity(alarmCode);
+  const severity   = alarmSeverity(alarmCode);
+  const pendingKey = `${deviceId}:${alarmCode}`;
+  const delay      = NUISANCE_DELAY[alarmCode];
 
   if (value === true) {
-    // Alarm raised
-    logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
-    db.query(
-      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
-       VALUES ($1, $2, $3, $4, true, NOW())`,
-      [tenantInfo.id, deviceId, alarmCode, severity]
-    ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm'));
-    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+    if (delay) {
+      // Delayed alarm — wait before confirming (transient filter)
+      if (pendingAlarms.has(pendingKey)) return;  // Already pending
+      logger.debug({ deviceId, alarmCode, delay }, 'Nuisance delay started');
+      const timer = setTimeout(() => {
+        pendingAlarms.delete(pendingKey);
+        raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity);
+      }, delay);
+      pendingAlarms.set(pendingKey, timer);
+    } else {
+      raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity);
+    }
   } else if (value === false) {
-    // Alarm cleared
+    // If pending (not yet raised) → cancel (transient, never recorded)
+    if (pendingAlarms.has(pendingKey)) {
+      clearTimeout(pendingAlarms.get(pendingKey));
+      pendingAlarms.delete(pendingKey);
+      logger.debug({ deviceId, alarmCode }, 'Nuisance alarm cancelled (transient)');
+      return;
+    }
+    // Alarm cleared — await DB before emitting to avoid race condition
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
-    db.query(
-      `UPDATE alarms SET active = false, cleared_at = NOW()
-       WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
-      [tenantInfo.id, deviceId, alarmCode]
-    ).catch(err => logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm'));
+    try {
+      await db.query(
+        `UPDATE alarms SET active = false, cleared_at = NOW()
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+        [tenantInfo.id, deviceId, alarmCode]
+      );
+    } catch (err) {
+      logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm');
+    }
     emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
   }
 }
 
+async function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
+  logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
+  try {
+    await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+       VALUES ($1, $2, $3, $4, true, NOW())`,
+      [tenantInfo.id, deviceId, alarmCode, severity]
+    );
+  } catch (err) {
+    logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm');
+  }
+  emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+}
+
 function alarmSeverity(code) {
-  // Critical alarms: sensor failures, lockout-related
+  // Critical: sensor failures, temperature violations (immediate action needed)
   if (code === 'sensor1_alarm' || code === 'sensor2_alarm') return 'critical';
   if (code === 'high_temp_alarm' || code === 'low_temp_alarm') return 'critical';
+  // Info: statistical/informational (no immediate action, ISA-18.2 nuisance reduction)
+  if (code === 'rate_alarm' || code === 'short_cycle_alarm' || code === 'rapid_cycle_alarm') return 'info';
+  // Warning: everything else (door, pulldown, continuous_run)
   return 'warning';
 }
 
@@ -510,8 +576,19 @@ const discoveryCount = new Map(); // tenantSlug → { count, resetAt }
 const DISCOVERY_LIMIT = 20;       // new devices per tenant per minute
 const DISCOVERY_WINDOW_MS = 60000;
 
+/** Recently deleted devices — blocks re-creation from retained MQTT messages */
+const deletedDevices = new Map(); // deviceId → deleteTimestamp
+const DELETED_BLOCK_MS = 30_000; // 30 seconds (enough for retained messages to pass)
+
 function ensureDevice(tenantSlug, deviceId) {
   if (deviceRegistry.has(deviceId)) return;
+
+  // Block re-creation of recently deleted devices (retained MQTT messages)
+  const deletedAt = deletedDevices.get(deviceId);
+  if (deletedAt) {
+    if (Date.now() - deletedAt < DELETED_BLOCK_MS) return;
+    deletedDevices.delete(deviceId); // expired — allow re-discovery
+  }
 
   // Rate-limit discoveries per tenant slug
   const now = Date.now();
@@ -543,11 +620,15 @@ function ensureDevice(tenantSlug, deviceId) {
      VALUES ($1, $2, $3, true, NOW())
      ON CONFLICT (mqtt_device_id) DO NOTHING`,
     [tenantInfo.id, deviceId, status]
-  ).then(() => {
+  ).then((res) => {
     // Set bootstrap credentials (mqtt_username + shared password hash)
     if (BOOTSTRAP_HASH) {
       mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
         .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
+    }
+    // Notify WS clients about new pending device
+    if (res.rowCount > 0 && status === 'pending') {
+      emitter.emit('pending_device', { deviceId, action: 'added' });
     }
   }).catch(err => {
     logger.error({ err, deviceId }, 'Failed to auto-discover device');
@@ -1011,12 +1092,25 @@ function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
 
 /**
  * Remove a device from in-memory stateMap and deviceRegistry.
+ * Blocks auto-discovery re-creation for 5 minutes (retained MQTT messages).
+ * Clears retained MQTT messages for the device's known topic prefix.
  * Called after device is deleted from DB.
  * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
  */
 function removeDeviceState(deviceId) {
+  // Read tenant slug before clearing state (needed for retained message cleanup)
+  const state = stateMap.get(deviceId);
+  const tenantSlug = state?._tenantSlug || null;
+
   stateMap.delete(deviceId);
   deviceRegistry.delete(deviceId);
+  deletedDevices.set(deviceId, Date.now());
+
+  // Clear retained MQTT messages for both pending and tenant topics
+  clearPendingRetained(deviceId);
+  if (tenantSlug && tenantSlug !== 'pending') {
+    clearRetainedForTenant(tenantSlug, deviceId);
+  }
 }
 
 /**
@@ -1043,6 +1137,27 @@ function clearPendingRetained(deviceId) {
   logger.info({ deviceId }, 'Cleared retained pending MQTT messages');
 }
 
+/**
+ * Clear retained MQTT messages for a device under a specific tenant slug.
+ * Same approach as clearPendingRetained but for tenant-scoped topics.
+ */
+function clearRetainedForTenant(tenantSlug, deviceId) {
+  if (!client || !connected) return;
+  const prefix = `modesp/v1/${tenantSlug}/${deviceId}`;
+
+  client.publish(`${prefix}/status`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/heartbeat`, '', { retain: true, qos: 0 });
+
+  for (const key of ALARM_KEYS) {
+    client.publish(`${prefix}/state/${key}`, '', { retain: true, qos: 0 });
+  }
+  client.publish(`${prefix}/state/protection.alarm_active`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.alarm_code`, '', { retain: true, qos: 0 });
+  client.publish(`${prefix}/state/protection.compressor_blocked`, '', { retain: true, qos: 0 });
+
+  logger.info({ tenantSlug, deviceId }, 'Cleared retained tenant MQTT messages');
+}
+
 // ── Exports ───────────────────────────────────────────────
 
 /** Return pre-computed bootstrap password hash (or null if not configured) */
@@ -1057,4 +1172,5 @@ module.exports = {
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),
+  emit: emitter.emit.bind(emitter),
 };

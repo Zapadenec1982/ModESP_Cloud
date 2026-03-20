@@ -2,9 +2,9 @@
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
   import { wrap } from 'svelte-spa-router/wrap'
-  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, sidebarCollapsed } from './lib/stores.js'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
-  import { connect, disconnect, reconnect, on } from './lib/ws.js'
+  import { connect, disconnect, reconnect, on, subscribeGlobal } from './lib/ws.js'
   import { t } from './lib/i18n.js'
   import Sidebar from './components/layout/Sidebar.svelte'
   import MobileHeader from './components/layout/MobileHeader.svelte'
@@ -14,7 +14,6 @@
   import Dashboard from './pages/Dashboard.svelte'
   import DeviceDetail from './pages/DeviceDetail.svelte'
   import PendingDevices from './pages/PendingDevices.svelte'
-  import Notifications from './pages/Notifications.svelte'
   import Login from './pages/Login.svelte'
   import Users from './pages/Users.svelte'
   import Firmware from './pages/Firmware.svelte'
@@ -35,13 +34,19 @@
     return sa
   }
 
+  // Technician+ route guard (firmware page)
+  function canWriteCheck() {
+    let cw = false
+    canWrite.subscribe(v => cw = v)()
+    return cw
+  }
+
   const routes = {
     '/':                Dashboard,
     '/device/:id':      DeviceDetail,
     '/alarms':          Alarms,
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
-    '/notifications':   Notifications,
-    '/firmware':        wrap({ component: Firmware, conditions: [isAdminCheck] }),
+    '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
@@ -85,6 +90,7 @@
     }
     booting = false
     connect()
+    subscribeGlobal()
     // Small delay ensures access token is fully set in memory after restoreSession()
     // before firing API requests (prevents spurious 401 on first request)
     await refreshCounts()
@@ -112,7 +118,6 @@
     '/': 'pages.dashboard',
     '/alarms': 'pages.alarms',
     '/pending': 'pages.pending',
-    '/notifications': 'pages.notifications',
     '/firmware': 'pages.firmware',
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',
