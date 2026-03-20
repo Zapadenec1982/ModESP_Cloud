@@ -34,11 +34,15 @@
   {:else}
     <button
       class="settings-btn"
-      on:click={() => setLocale($locale === 'uk' ? 'en' : 'uk')}
-      title="Language: {$locale.toUpperCase()}"
+      on:click={() => {
+        const codes = supportedLocales.map(l => l.code)
+        const idx = codes.indexOf($locale)
+        setLocale(codes[(idx + 1) % codes.length])
+      }}
+      title="Language: {supportedLocales.find(l => l.code === $locale)?.label || $locale.toUpperCase()}"
       aria-label="Toggle language"
     >
-      <span class="lang-icon">{$locale === 'uk' ? 'UA' : 'EN'}</span>
+      <span class="lang-icon">{supportedLocales.find(l => l.code === $locale)?.label || $locale.toUpperCase()}</span>
     </button>
   {/if}
 </div>
