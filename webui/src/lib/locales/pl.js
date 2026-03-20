@@ -597,6 +597,11 @@ export default {
     haccp_report: 'Raport HACCP',
   },
 
+  // ── Chart ──
+  chart: {
+    offline_periods: 'Offline',
+  },
+
   // ── Audit Log ──
   audit: {
     title: 'Dziennik audytu',

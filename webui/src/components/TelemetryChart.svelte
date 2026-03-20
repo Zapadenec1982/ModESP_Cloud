@@ -2,16 +2,12 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
-  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf } from '../lib/api.js';
+  import { getTelemetry } from '../lib/api.js';
   import { liveState } from '../lib/stores.js';
   import { t } from '../lib/i18n.js';
-  import { toast } from '../lib/toast.js';
+  import { on as wsOn } from '../lib/ws.js';
 
   export let deviceId;
-
-  // ── Events overlay state ─────────────────────────────────
-  let deviceEvents = [];
-  let showEventLog = false;
 
   // Temperature channels + equipment state channels
   const TEMP_CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
@@ -164,47 +160,37 @@
     };
   }
 
-  // ── Events overlay plugin ─────────────────────────────────
-  const EVENT_COLORS = {
-    device_online:   '#22c55e',
-    device_offline:  '#ef4444',
-    compressor_on:   'rgba(59,130,246,0.4)',
-    compressor_off:  'rgba(59,130,246,0.4)',
-    defrost_start:   'rgba(251,146,60,0.4)',
-    defrost_end:     'rgba(251,146,60,0.4)',
-  };
+  // ── Offline gap detection & visualization ─────────────────
 
-  function eventsPlugin(events) {
+  function detectGapsFromTimestamps(timestamps, thresholdSec = 900) {
+    const gaps = [];
+    for (let i = 1; i < timestamps.length; i++) {
+      if (timestamps[i] - timestamps[i - 1] > thresholdSec)
+        gaps.push({ start: timestamps[i - 1], end: timestamps[i] });
+    }
+    return gaps;
+  }
+
+  let offlineZones = [];
+
+  function offlineZonesPlugin() {
     return {
       hooks: {
-        drawClear: [
-          (u) => {
-            if (!events || events.length === 0) return;
-            const ctx = u.ctx;
-            ctx.save();
-
-            for (const ev of events) {
-              const ts = Math.floor(new Date(ev.time).getTime() / 1000);
-              const x = u.valToPos(ts, 'x', true);
-
-              // Skip events outside visible range
-              if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
-
-              const color = EVENT_COLORS[ev.event_type] || 'rgba(139,148,158,0.4)';
-
-              ctx.strokeStyle = color;
-              ctx.lineWidth = 1;
-              ctx.setLineDash([4, 4]);
-              ctx.beginPath();
-              ctx.moveTo(x, u.bbox.top);
-              ctx.lineTo(x, u.bbox.top + u.bbox.height);
-              ctx.stroke();
-            }
-
-            ctx.setLineDash([]);
-            ctx.restore();
+        drawAxes: [(u) => {
+          if (offlineZones.length === 0) return;
+          const { ctx } = u;
+          const { left, top, width, height } = u.bbox;
+          ctx.save();
+          ctx.beginPath();
+          ctx.fillStyle = 'rgba(128, 128, 128, 0.15)';
+          for (const { start, end } of offlineZones) {
+            const x0 = Math.max(u.valToPos(start, 'x', true), left);
+            const x1 = Math.min(u.valToPos(end, 'x', true), left + width);
+            if (x1 > x0) ctx.rect(x0, top, x1 - x0, height);
           }
-        ]
+          ctx.fill();
+          ctx.restore();
+        }]
       }
     };
   }
@@ -237,7 +223,7 @@
           stroke:   cfg.stroke,
           width:    cfg.width,
           dash:     cfg.dash,
-          spanGaps: true,
+          spanGaps: false,
           points:   { show: data[0].length < 100 },
         };
       }),
@@ -286,7 +272,7 @@
       scales,
       axes,
       series,
-      plugins: [bandPlugin(channels), eventsPlugin(deviceEvents)],
+      plugins: [offlineZonesPlugin(), bandPlugin(channels)],
       legend: {
         show: true,
       },
@@ -304,22 +290,21 @@
       const fromISO = new Date(range.from).toISOString();
       const toISO   = new Date(range.to).toISOString();
 
-      const [rows, events] = await Promise.all([
-        getTelemetry(deviceId, {
-          from: fromISO,
-          to: toISO,
-          channels: ALL_CHANNELS,
-        }),
-        getDeviceEvents(deviceId, {
-          from: fromISO,
-          to: toISO,
-          limit: 200,
-        }).catch(() => []),  // Non-critical — don't block chart on events failure
-      ]);
+      const rows = await getTelemetry(deviceId, {
+        from: fromISO,
+        to: toISO,
+        channels: ALL_CHANNELS,
+      });
 
-      deviceEvents = events;
       activeChannels = getActiveChannels(rows);
       uData = transformToUplot(rows, activeChannels);
+
+      // Detect offline gaps from timestamp intervals
+      if (uData && uData[0].length > 1) {
+        offlineZones = detectGapsFromTimestamps(uData[0]);
+      } else {
+        offlineZones = [];
+      }
 
       if (!uData) {
         noData = true;
@@ -342,6 +327,7 @@
   // ── Real-time updates from liveState ──────────────────────
 
   let liveUnsub;
+  let backfillUnsub;
   let lastAppendTs = 0;
   const APPEND_INTERVAL = 60;  // append at most every 60 seconds
 
@@ -409,36 +395,6 @@
     activePreset = null;
   }
 
-  let exporting = false;
-
-  async function handleExportCsv() {
-    exporting = true;
-    try {
-      const fromISO = new Date(range.from).toISOString();
-      const toISO   = new Date(range.to).toISOString();
-      await exportTelemetryCsv(deviceId, fromISO, toISO);
-      toast.success($t('export.export_success'));
-    } catch (e) {
-      toast.error(e.message || $t('export.export_error'));
-    } finally {
-      exporting = false;
-    }
-  }
-
-  async function handleExportPdf() {
-    exporting = true;
-    try {
-      const fromISO = new Date(range.from).toISOString();
-      const toISO   = new Date(range.to).toISOString();
-      await exportTelemetryPdf(deviceId, fromISO, toISO);
-      toast.success($t('export.export_success'));
-    } catch (e) {
-      toast.error(e.message || $t('export.export_error'));
-    } finally {
-      exporting = false;
-    }
-  }
-
   // ── Lifecycle ─────────────────────────────────────────────
 
   onMount(() => {
@@ -456,12 +412,18 @@
 
     // Subscribe to live state for real-time chart updates
     liveUnsub = liveState.subscribe(handleLiveUpdate);
+
+    // Reload chart when backfill sync completes
+    backfillUnsub = wsOn('backfill_complete', (msg) => {
+      if (msg.device_id === deviceId) loadData();
+    });
   });
 
   onDestroy(() => {
     if (chart) chart.destroy();
     if (resizeObserver) resizeObserver.disconnect();
     if (liveUnsub) liveUnsub();
+    if (backfillUnsub) backfillUnsub();
   });
 </script>
 
@@ -501,14 +463,6 @@
     <button class="btn-apply" on:click={applyCustomRange} disabled={loading}>
       Apply
     </button>
-    <div class="export-buttons">
-      <button class="btn-export" on:click={handleExportCsv} disabled={exporting || loading} title={$t('export.export_csv')}>
-        CSV
-      </button>
-      <button class="btn-export btn-export-pdf" on:click={handleExportPdf} disabled={exporting || loading} title={$t('export.export_pdf')}>
-        {exporting ? $t('export.exporting') : 'PDF'}
-      </button>
-    </div>
   </div>
 
   <div class="chart-wrap">
@@ -520,41 +474,11 @@
     {/if}
   </div>
 
-  <!-- Event log toggle -->
-  {#if deviceEvents.length > 0}
-    <button class="event-log-toggle" on:click={() => showEventLog = !showEventLog}>
-      {showEventLog ? '▾' : '▸'}
-      {$t('event.history')} ({deviceEvents.length})
-    </button>
-
-    {#if showEventLog}
-      <div class="event-log">
-        <table class="event-table">
-          <thead>
-            <tr>
-              <th>{$t('event.col_time')}</th>
-              <th>{$t('event.col_type')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each deviceEvents as ev (ev.id)}
-              <tr>
-                <td class="event-time">{new Date(ev.time).toLocaleString()}</td>
-                <td>
-                  <span class="event-badge" class:ev-online={ev.event_type === 'device_online'}
-                    class:ev-offline={ev.event_type === 'device_offline'}
-                    class:ev-comp={ev.event_type.startsWith('compressor')}
-                    class:ev-defrost={ev.event_type.startsWith('defrost')}
-                  >
-                    {$t(`event.type_${ev.event_type}`, ev.event_type)}
-                  </span>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
+  {#if offlineZones.length > 0}
+    <div class="offline-legend">
+      <span class="offline-swatch"></span>
+      <span class="offline-label">{$t('chart.offline_periods')} ({offlineZones.length})</span>
+    </div>
   {/if}
 </div>
 
@@ -670,41 +594,6 @@
 
   .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .export-buttons {
-    display: flex;
-    gap: var(--space-1);
-    margin-left: auto;
-  }
-
-  .btn-export {
-    padding: 0.35rem 0.7rem;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-export:hover:not(:disabled) {
-    background: var(--bg-hover);
-    color: var(--text-primary);
-  }
-
-  .btn-export-pdf {
-    border-color: var(--accent-green, #22c55e);
-    color: var(--accent-green, #22c55e);
-  }
-
-  .btn-export-pdf:hover:not(:disabled) {
-    background: var(--accent-green, #22c55e);
-    color: #fff;
-  }
-
-  .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
-
   /* ── Chart area ───────────────────────────────── */
 
   .chart-wrap {
@@ -748,97 +637,23 @@
     border-color: var(--accent-blue) !important;
   }
 
-  /* ── Event log ─────────────────────────────── */
+  /* ── Offline legend ─────────────────────────── */
 
-  .event-log-toggle {
-    display: inline-flex;
+  .offline-legend {
+    display: flex;
     align-items: center;
-    gap: var(--space-1);
-    margin-top: var(--space-2);
-    padding: var(--space-1) var(--space-2);
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: color 0.2s;
-  }
-
-  .event-log-toggle:hover {
-    color: var(--text-primary);
-  }
-
-  .event-log {
-    margin-top: var(--space-2);
-    max-height: 300px;
-    overflow-y: auto;
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-  }
-
-  .event-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: var(--text-sm);
-  }
-
-  .event-table th {
-    position: sticky;
-    top: 0;
-    background: var(--bg-tertiary);
-    padding: var(--space-2) var(--space-3);
-    text-align: left;
-    font-weight: 600;
-    color: var(--text-muted);
+    gap: 6px;
+    padding: 4px 8px;
     font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    border-bottom: 1px solid var(--border-default);
+    color: var(--text-muted);
   }
 
-  .event-table td {
-    padding: var(--space-1) var(--space-3);
-    border-bottom: 1px solid var(--border-muted);
-    color: var(--text-secondary);
-  }
-
-  .event-table tbody tr:hover {
-    background: var(--bg-hover);
-  }
-
-  .event-time {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    white-space: nowrap;
-  }
-
-  .event-badge {
+  .offline-swatch {
     display: inline-block;
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-  }
-
-  .ev-online {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
-  }
-
-  .ev-offline {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-  }
-
-  .ev-comp {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-  }
-
-  .ev-defrost {
-    background: rgba(251, 146, 60, 0.15);
-    color: #fb923c;
+    width: 14px;
+    height: 10px;
+    background: rgba(128, 128, 128, 0.3);
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 2px;
   }
 </style>

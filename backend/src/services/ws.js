@@ -40,10 +40,11 @@ function attach(server, log) {
   wss.on('connection', onConnection);
 
   // Listen to MQTT events
-  mqttSvc.on('state_delta',   onStateDelta);
-  mqttSvc.on('alarm',         onAlarm);
-  mqttSvc.on('device_status', onDeviceStatus);
-  mqttSvc.on('pending_device', onPendingDevice);
+  mqttSvc.on('state_delta',       onStateDelta);
+  mqttSvc.on('alarm',             onAlarm);
+  mqttSvc.on('device_status',     onDeviceStatus);
+  mqttSvc.on('pending_device',    onPendingDevice);
+  mqttSvc.on('backfill_complete', onBackfillComplete);
 
   logger.info('WebSocket server attached on /ws');
 }
@@ -262,6 +263,14 @@ function onPendingDevice({ deviceId, action: act }) {
     type: 'pending_device',
     device_id: deviceId,
     action: act, // 'added', 'assigned', 'removed'
+    time: new Date().toISOString(),
+  });
+}
+
+function onBackfillComplete({ deviceId }) {
+  broadcast(deviceId, {
+    type: 'backfill_complete',
+    device_id: deviceId,
     time: new Date().toISOString(),
   });
 }

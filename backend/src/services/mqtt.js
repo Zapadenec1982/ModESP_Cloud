@@ -169,6 +169,9 @@ function onConnect() {
   client.subscribe('modesp/v1/+/+/state/+');
   client.subscribe('modesp/v1/+/+/status');
   client.subscribe('modesp/v1/+/+/heartbeat');
+  client.subscribe('modesp/v1/+/+/backfill');
+  client.subscribe('modesp/v1/+/+/backfill/events');
+  client.subscribe('modesp/v1/+/+/backfill/done');
 
   // Legacy
   client.subscribe('modesp/+/state/+');
@@ -195,6 +198,11 @@ function onMessage(topic, payload, packet) {
         break;
       case 'heartbeat':
         handleHeartbeat(tenantSlug, deviceId, msg, isRetained);
+        break;
+      case 'backfill':
+        if (stateKey === 'events') handleBackfillEvents(tenantSlug, deviceId, msg);
+        else if (stateKey === 'done') handleBackfillDone(tenantSlug, deviceId);
+        else handleBackfill(tenantSlug, deviceId, msg);
         break;
       default:
         // cmd and unknown — ignore on cloud side
@@ -446,6 +454,135 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
   } catch (err) {
     logger.warn({ err, deviceId }, 'Failed to parse heartbeat JSON');
   }
+}
+
+// ── Backfill handlers ─────────────────────────────────────
+
+const backfillCounters = new Map(); // deviceId → { count, reset }
+const BACKFILL_RATE_LIMIT = 100;    // max messages per minute per device
+const MIN_EPOCH = 1700000000;       // ~2023-11-14, filter out uptime-based timestamps
+const MAX_BACKFILL_AGE = 90 * 86400; // 90 days
+
+function handleBackfill(tenantSlug, deviceId, rawPayload) {
+  const tenantInfo = resolveTenant(tenantSlug);
+  if (!tenantInfo) return;
+
+  let batch;
+  try { batch = JSON.parse(rawPayload); } catch { return; }
+  if (batch.v !== 1 || !Array.isArray(batch.r)) return;
+
+  // Rate limit
+  const now = Date.now();
+  let counter = backfillCounters.get(deviceId);
+  if (!counter || now > counter.reset) {
+    counter = { count: 0, reset: now + 60000 };
+    backfillCounters.set(deviceId, counter);
+  }
+  if (++counter.count > BACKFILL_RATE_LIMIT) return;
+
+  const nowSec = Math.floor(now / 1000);
+  const rows = [];
+
+  for (const rec of batch.r) {
+    if (!rec.t || rec.t < MIN_EPOCH || rec.t > nowSec || rec.t < nowSec - MAX_BACKFILL_AGE) continue;
+    const ts = new Date(rec.t * 1000);
+    const channels = [
+      { ch: 'air',      val: rec.a },
+      { ch: 'evap',     val: rec.e },
+      { ch: 'cond',     val: rec.c },
+      { ch: 'setpoint', val: rec.s },
+    ];
+    for (const { ch, val } of channels) {
+      if (val === undefined || val === null || val === -32768) continue;
+      rows.push([ts, tenantInfo.id, deviceId, ch, val / 10.0]);
+    }
+  }
+
+  if (rows.length === 0) return;
+
+  const values = [];
+  const placeholders = rows.map((row, i) => {
+    const b = i * 5;
+    values.push(...row);
+    return `($${b+1}, $${b+2}, $${b+3}, $${b+4}, $${b+5})`;
+  }).join(', ');
+
+  db.query(
+    `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
+     VALUES ${placeholders}`,
+    values
+  ).catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
+
+  logger.info({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
+}
+
+const BACKFILL_EVENT_NAMES = {
+  1: 'compressor_on', 2: 'compressor_off',
+  3: 'defrost_start', 4: 'defrost_end',
+  5: 'alarm_high_temp', 6: 'alarm_low_temp', 7: 'alarm_clear',
+  8: 'door_open', 9: 'door_close', 10: 'power_on',
+};
+
+function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
+  const tenantInfo = resolveTenant(tenantSlug);
+  if (!tenantInfo) return;
+
+  let batch;
+  try { batch = JSON.parse(rawPayload); } catch { return; }
+  if (batch.v !== 1 || !Array.isArray(batch.e)) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const telemetryRows = [];
+  const eventRows = [];
+
+  for (const evt of batch.e) {
+    if (!evt.t || evt.t < MIN_EPOCH || evt.t > nowSec) continue;
+    const ts = new Date(evt.t * 1000);
+
+    // Reconstruct comp/defrost telemetry from event pairs
+    if (evt.ty === 1)      telemetryRows.push([ts, tenantInfo.id, deviceId, 'comp', 1]);
+    else if (evt.ty === 2) telemetryRows.push([ts, tenantInfo.id, deviceId, 'comp', 0]);
+    else if (evt.ty === 3) telemetryRows.push([ts, tenantInfo.id, deviceId, 'defrost', 1]);
+    else if (evt.ty === 4) telemetryRows.push([ts, tenantInfo.id, deviceId, 'defrost', 0]);
+
+    const eventName = BACKFILL_EVENT_NAMES[evt.ty] || `event_${evt.ty}`;
+    eventRows.push([ts, tenantInfo.id, deviceId, eventName, JSON.stringify({ backfill: true, raw_type: evt.ty })]);
+  }
+
+  // Batch insert telemetry (comp/defrost reconstruction)
+  if (telemetryRows.length > 0) {
+    const values = [];
+    const ph = telemetryRows.map((r, i) => {
+      const b = i * 5;
+      values.push(...r);
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5})`;
+    }).join(',');
+    db.query(
+      `INSERT INTO telemetry (time,tenant_id,device_id,channel,value) VALUES ${ph}`,
+      values
+    ).catch(err => logger.error({ err, deviceId }, 'Backfill events telemetry insert failed'));
+  }
+
+  // Batch insert events (with device timestamp, NOT NOW())
+  if (eventRows.length > 0) {
+    const values = [];
+    const ph = eventRows.map((r, i) => {
+      const b = i * 5;
+      values.push(...r);
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5})`;
+    }).join(',');
+    db.query(
+      `INSERT INTO events (time,tenant_id,device_id,event_type,payload) VALUES ${ph}`,
+      values
+    ).catch(err => logger.error({ err, deviceId }, 'Backfill events insert failed'));
+  }
+
+  logger.info({ deviceId, telemetry: telemetryRows.length, events: eventRows.length }, 'Backfill events ingested');
+}
+
+function handleBackfillDone(tenantSlug, deviceId) {
+  logger.info({ tenantSlug, deviceId }, 'Backfill complete signal received');
+  emitter.emit('backfill_complete', { tenantSlug, deviceId });
 }
 
 // ── Alarm detection ───────────────────────────────────────
