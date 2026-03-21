@@ -155,6 +155,12 @@ CREATE TABLE telemetry_2026_05 PARTITION OF telemetry
 CREATE TABLE telemetry_2026_06 PARTITION OF telemetry
   FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
 
+-- Unique index on each initial partition (for ON CONFLICT DO NOTHING)
+CREATE UNIQUE INDEX idx_telemetry_2026_03_unique ON telemetry_2026_03 (tenant_id, device_id, channel, time);
+CREATE UNIQUE INDEX idx_telemetry_2026_04_unique ON telemetry_2026_04 (tenant_id, device_id, channel, time);
+CREATE UNIQUE INDEX idx_telemetry_2026_05_unique ON telemetry_2026_05 (tenant_id, device_id, channel, time);
+CREATE UNIQUE INDEX idx_telemetry_2026_06_unique ON telemetry_2026_06 (tenant_id, device_id, channel, time);
+
 -- ============================================================
 -- Events (compressor on/off, defrost start/end, device online/offline)
 -- ============================================================
@@ -168,6 +174,7 @@ CREATE TABLE events (
 );
 
 CREATE INDEX idx_events_lookup ON events(tenant_id, device_id, time DESC);
+CREATE UNIQUE INDEX idx_events_dedup ON events(tenant_id, device_id, event_type, time);
 
 -- ============================================================
 -- Refresh Tokens (Phase 4, create now for schema completeness)

@@ -531,6 +531,10 @@ const BACKFILL_EVENT_NAMES = {
   3: 'defrost_start', 4: 'defrost_end',
   5: 'alarm_high_temp', 6: 'alarm_low_temp', 7: 'alarm_clear',
   8: 'door_open', 9: 'door_close', 10: 'power_on',
+  11: 'alarm_sensor1', 12: 'alarm_sensor2',
+  13: 'alarm_continuous_run', 14: 'alarm_rapid_cycle',
+  15: 'alarm_pulldown', 16: 'alarm_rate',
+  17: 'alarm_lockout', 18: 'alarm_door',
 };
 
 function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
@@ -583,7 +587,8 @@ function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
       return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5})`;
     }).join(',');
     db.query(
-      `INSERT INTO events (time,tenant_id,device_id,event_type,payload) VALUES ${ph}`,
+      `INSERT INTO events (time,tenant_id,device_id,event_type,payload) VALUES ${ph}
+       ON CONFLICT DO NOTHING`,
       values
     ).catch(err => logger.error({ err, deviceId }, 'Backfill events insert failed'));
   }
