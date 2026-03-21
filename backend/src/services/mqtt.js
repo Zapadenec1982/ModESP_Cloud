@@ -796,11 +796,12 @@ const resettingDevices = new Set();
 /**
  * Detect devices stuck in "pending" namespace after a failed assign.
  * If deviceRegistry says device is active in a non-SYSTEM tenant,
- * but it's still publishing as "pending", auto-reset to pending.
+ * but it's still publishing as "pending", auto-reassign by sending
+ * the correct credentials and tenant slug to the device.
  */
 function checkStuckDevice(tenantSlug, deviceId) {
   if (tenantSlug !== 'pending') return;
-  if (resettingDevices.has(deviceId)) return; // already resetting
+  if (resettingDevices.has(deviceId)) return; // already processing
 
   // Skip during startup — retained messages from old topics trigger false positives
   if (Date.now() - startupTime < STARTUP_GRACE_MS) return;
@@ -815,13 +816,13 @@ function checkStuckDevice(tenantSlug, deviceId) {
 
     logger.warn(
       { deviceId, dbTenantId: regEntry.tenantId, mqttSlug: 'pending' },
-      'Stuck device detected: active in DB but publishing as pending — auto-resetting'
+      'Stuck device detected: active in DB but publishing as pending — auto-reassigning'
     );
 
     resettingDevices.add(deviceId);
-    autoResetToPending(deviceId)
+    autoReassignDevice(deviceId, regEntry.tenantId)
       .catch(err => {
-        logger.error({ err, deviceId }, 'Failed to auto-reset stuck device');
+        logger.error({ err, deviceId }, 'Failed to auto-reassign stuck device');
       })
       .finally(() => {
         resettingDevices.delete(deviceId);
@@ -829,39 +830,51 @@ function checkStuckDevice(tenantSlug, deviceId) {
   }
 }
 
-/** Reset a stuck device back to pending with bootstrap credentials */
-async function autoResetToPending(deviceId) {
-  if (!BOOTSTRAP_HASH) {
-    logger.error({ deviceId }, 'Cannot auto-reset: no bootstrap hash');
+/** Re-send credentials and tenant slug to a stuck device so it reconnects properly */
+async function autoReassignDevice(deviceId, tenantId) {
+  // Look up tenant slug
+  let tenantSlug = null;
+  for (const [slug, info] of tenantRegistry) {
+    if (info.id === tenantId) { tenantSlug = slug; break; }
+  }
+  if (!tenantSlug) {
+    logger.error({ deviceId, tenantId }, 'Auto-reassign failed: tenant not found in registry');
     return;
   }
 
-  const username = `device_${deviceId}`;
-  await db.transaction(async (client) => {
-    await client.query(
-      `UPDATE devices
-       SET tenant_id = $1, status = 'pending',
-           mqtt_username = $2, mqtt_password_hash = $3
-       WHERE mqtt_device_id = $4 AND status = 'active'`,
-      [db.SYSTEM_TENANT_ID, username, BOOTSTRAP_HASH, deviceId]
-    );
-    await client.query(
-      `DELETE FROM user_devices WHERE device_id = (
-         SELECT id FROM devices WHERE mqtt_device_id = $1
-       )`, [deviceId]
-    );
-  });
+  // Get existing credentials from DB (or provision new ones)
+  const { rows } = await db.query(
+    `SELECT mqtt_username, mqtt_password_hash FROM devices WHERE mqtt_device_id = $1`,
+    [deviceId]
+  );
+  if (!rows.length) return;
 
-  // Update in-memory state
-  const state = stateMap.get(deviceId);
-  if (state) {
-    state._tenantId = db.SYSTEM_TENANT_ID;
-    state._tenantSlug = 'pending';
-    state._dirty = true;
+  const existing = rows[0];
+  let username = existing.mqtt_username;
+  let password = null;
+
+  // If device has bootstrap credentials, provision new unique ones
+  if (username === `device_${deviceId}` && BOOTSTRAP_HASH && existing.mqtt_password_hash === BOOTSTRAP_HASH) {
+    const creds = await mqttAuth.provisionDevice(tenantId, deviceId);
+    username = creds.username;
+    password = creds.password;
+    logger.info({ deviceId }, 'Auto-reassign: provisioned new credentials');
+  } else {
+    // Device already has unique credentials but lost its tenant.
+    // Re-provision so we have the plaintext password to send.
+    const creds = await mqttAuth.provisionDevice(tenantId, deviceId);
+    username = creds.username;
+    password = creds.password;
   }
 
-  await loadRegistries();
-  logger.info({ deviceId }, 'Auto-reset stuck device to pending');
+  // Send credentials first (device saves but does NOT reconnect)
+  sendJsonCommand('pending', deviceId, '_set_mqtt_creds', { user: username, pass: password });
+
+  // Then send tenant slug (device saves + reconnects with new credentials)
+  sendCommand('pending', deviceId, '_set_tenant', tenantSlug, { qos: 1 });
+
+  recordAssign(deviceId);
+  logger.info({ deviceId, tenantSlug }, 'Auto-reassigned stuck device to tenant');
 }
 
 // ── Tenant resolution ─────────────────────────────────────
