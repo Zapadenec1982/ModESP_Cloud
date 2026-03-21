@@ -243,8 +243,8 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
 });
 
 // ── DELETE /api/tenants/:id ─────────────────────────────────
-// Soft delete tenant (superadmin only).
-// Rejects if tenant has any devices.
+// Hard delete tenant (superadmin only).
+// Moves orphan devices to __system__, deletes users and data.
 router.delete('/:id', requireSuperadmin, async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -258,59 +258,116 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
       });
     }
 
-    // Check for any devices (not just active)
-    const deviceCheck = await db.query(
-      `SELECT COUNT(*)::int AS cnt FROM devices WHERE tenant_id = $1`,
-      [id]
-    );
-    if (deviceCheck.rows[0].cnt > 0) {
-      return res.status(400).json({
-        error: 'validation_failed',
-        message: `Cannot delete tenant with ${deviceCheck.rows[0].cnt} device(s). Reassign them first.`,
-        status: 400,
-      });
-    }
-
-    // Soft delete: deactivate tenant + all its users
     const result = await db.transaction(async (client) => {
+      // Verify tenant exists
       const { rows } = await client.query(
-        `UPDATE tenants SET active = false WHERE id = $1 AND active = true
-         RETURNING id, name, slug`,
+        `SELECT id, name, slug FROM tenants WHERE id = $1`,
         [id]
       );
-
       if (rows.length === 0) return null;
+      const tenant = rows[0];
 
-      // Deactivate all users of this tenant
-      await client.query(
-        `UPDATE users SET active = false WHERE tenant_id = $1`,
-        [id]
+      // Move devices to __system__ tenant
+      const moved = await client.query(
+        `UPDATE devices SET tenant_id = $1 WHERE tenant_id = $2 RETURNING mqtt_device_id`,
+        [db.SYSTEM_TENANT_ID, id]
       );
 
-      // Revoke all refresh tokens
+      // Revoke all refresh tokens for tenant users
       await client.query(
         `DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
         [id]
       );
 
-      return rows[0];
+      // Delete push subscriptions for tenant users
+      await client.query(
+        `DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
+        [id]
+      );
+
+      // Delete user_tenants links
+      await client.query(
+        `DELETE FROM user_tenants WHERE tenant_id = $1`,
+        [id]
+      );
+
+      // Delete users belonging to this tenant
+      await client.query(
+        `DELETE FROM users WHERE tenant_id = $1`,
+        [id]
+      );
+
+      // Delete the tenant itself
+      await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
+
+      return { ...tenant, movedDevices: moved.rowCount };
     });
 
     if (!result) {
       return res.status(404).json({
         error: 'not_found',
-        message: 'Tenant not found or already deactivated',
+        message: 'Tenant not found',
         status: 404,
       });
     }
 
-    // Audit: preserve deleted tenant identity
+    // Audit
     req.auditContext = { entityId: id, changes: { before: { name: result.name, slug: result.slug } } };
 
     // Refresh MQTT tenant registry
     await mqttSvc.refreshRegistries();
 
+    logger.info({ tenantId: id, name: result.name, movedDevices: result.movedDevices }, 'Tenant hard deleted');
     res.json({ data: { deleted: true, tenant: result } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── DELETE /api/tenants/bulk ────────────────────────────────
+// Bulk delete tenants (superadmin only).
+router.delete('/bulk', requireSuperadmin, async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'validation_failed', message: 'ids array required', status: 400 });
+    }
+
+    // Filter out system tenant
+    const toDelete = ids.filter(id => id !== db.SYSTEM_TENANT_ID);
+    if (toDelete.length === 0) {
+      return res.status(400).json({ error: 'validation_failed', message: 'Cannot delete system tenant', status: 400 });
+    }
+
+    let totalMoved = 0;
+    const deleted = [];
+
+    for (const id of toDelete) {
+      const result = await db.transaction(async (client) => {
+        const { rows } = await client.query(`SELECT id, name, slug FROM tenants WHERE id = $1`, [id]);
+        if (rows.length === 0) return null;
+
+        const moved = await client.query(
+          `UPDATE devices SET tenant_id = $1 WHERE tenant_id = $2`, [db.SYSTEM_TENANT_ID, id]
+        );
+        await client.query(`DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
+        await client.query(`DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
+        await client.query(`DELETE FROM user_tenants WHERE tenant_id = $1`, [id]);
+        await client.query(`DELETE FROM users WHERE tenant_id = $1`, [id]);
+        await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
+
+        return { ...rows[0], movedDevices: moved.rowCount };
+      });
+      if (result) {
+        deleted.push(result);
+        totalMoved += result.movedDevices;
+      }
+    }
+
+    await mqttSvc.refreshRegistries();
+
+    logger.info({ count: deleted.length, totalMoved }, 'Bulk tenant delete');
+    res.json({ data: { deleted: deleted.length, movedDevices: totalMoved, tenants: deleted } });
   } catch (err) {
     next(err);
   }

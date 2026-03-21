@@ -374,6 +374,60 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
   }
 });
 
+// ── DELETE /api/devices/bulk ───────────────────────────────
+// Bulk delete devices (admin: own tenant, superadmin: any).
+router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'validation_failed', message: 'ids array required', status: 400 });
+    }
+
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+    const deleted = [];
+
+    for (const id of ids) {
+      const isUuid = id.length > 8;
+      let whereClause, params;
+      if (isSuperAdmin) {
+        whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+        params = [id];
+      } else {
+        whereClause = isUuid
+          ? 'id = $1 AND tenant_id = $2'
+          : 'mqtt_device_id = $1 AND tenant_id = $2';
+        params = [id, req.tenantId];
+      }
+
+      const { rows } = await db.query(
+        `SELECT id, mqtt_device_id, name, status, tenant_id FROM devices WHERE ${whereClause}`,
+        params
+      );
+      if (rows.length === 0) continue;
+
+      const deviceUuid = rows[0].id;
+      const deviceMqttId = rows[0].mqtt_device_id;
+
+      await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+      await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+      await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+      await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+      await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+
+      mqttSvc.removeDeviceState(deviceMqttId);
+      deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
+    }
+
+    if (deleted.length > 0) await mqttSvc.refreshRegistries();
+
+    logger.info({ count: deleted.length }, 'Bulk device delete');
+    res.json({ data: { deleted: deleted.length, devices: deleted } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── POST /api/devices/pending/:mqttId/assign ──────────────
 // Assign a pending device to the current tenant.
 // Body: { name: string, location?: string }

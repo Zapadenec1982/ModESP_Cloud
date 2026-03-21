@@ -443,6 +443,10 @@ export function deleteDevice(id) {
   return request(`/devices/${id}`, { method: 'DELETE' });
 }
 
+export function deleteDevicesBulk(ids) {
+  return request('/devices/bulk', { method: 'DELETE', body: JSON.stringify({ ids }) });
+}
+
 export function resetDeviceToPending(id) {
   return request(`/devices/${id}/reset-pending`, { method: 'POST' });
 }
@@ -715,6 +719,10 @@ export function updateTenant(id, data) {
 
 export function deleteTenant(id) {
   return request(`/tenants/${id}`, { method: 'DELETE' });
+}
+
+export function deleteTenantsBulk(ids) {
+  return request('/tenants/bulk', { method: 'DELETE', body: JSON.stringify({ ids }) });
 }
 
 export function reassignDevice(deviceId, tenantId) {
