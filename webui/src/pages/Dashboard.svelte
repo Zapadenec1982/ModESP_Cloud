@@ -1,14 +1,16 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevices } from '../lib/api.js'
+  import { getDevices, deleteDevicesBulk } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { devices, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
+  import { toast } from '../lib/toast.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
   import DeviceCard from '../components/DeviceCard.svelte'
   import DeviceListRow from '../components/dashboard/DeviceListRow.svelte'
   import PageHeader from '../components/layout/PageHeader.svelte'
+  import Button from '../components/ui/Button.svelte'
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
   import Icon from '../components/ui/Icon.svelte'
@@ -16,11 +18,52 @@
   let loading = true
   let error = null
   let interval
+  let deleting = false
 
   // Filter state
   let search = ''
   let filter = 'all'
   let view = 'grid'
+
+  // Selection
+  let selected = new Set()
+  $: selectedCount = selected.size
+  $: allFilteredSelected = filtered.length > 0 && filtered.every(d => selected.has(d.id))
+
+  function toggleSelect(id) {
+    if (selected.has(id)) selected.delete(id)
+    else selected.add(id)
+    selected = selected
+  }
+
+  function toggleSelectAll() {
+    if (allFilteredSelected) {
+      selected = new Set()
+    } else {
+      selected = new Set(filtered.map(d => d.id))
+    }
+  }
+
+  function clearSelection() {
+    selected = new Set()
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return
+    const msg = $t('dashboard.bulk_delete_confirm').replace('{0}', String(selected.size))
+    if (!confirm(msg)) return
+    deleting = true
+    try {
+      const res = await deleteDevicesBulk([...selected])
+      toast.success($t('dashboard.bulk_deleted').replace('{0}', String(res?.data?.deleted || selected.size)))
+      selected = new Set()
+      await load()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      deleting = false
+    }
+  }
 
   // WS tracking
   let subscribedIds = new Set()
@@ -167,6 +210,21 @@
 
   <DeviceFilter bind:search bind:filter bind:view />
 
+  {#if selectedCount > 0}
+    <div class="bulk-bar">
+      <span class="bulk-info">
+        <Icon name="check-square" size={16} />
+        {$t('dashboard.selected').replace('{0}', String(selectedCount))}
+      </span>
+      <div class="bulk-actions">
+        <Button variant="secondary" size="sm" on:click={clearSelection}>{$t('common.cancel')}</Button>
+        <Button variant="danger" size="sm" icon="trash-2" loading={deleting} on:click={handleBulkDelete}>
+          {$t('dashboard.delete_selected')}
+        </Button>
+      </div>
+    </div>
+  {/if}
+
   {#if loading}
     <div class="skeleton-grid">
       {#each Array(6) as _}
@@ -195,8 +253,12 @@
     {/if}
   {:else if view === 'list'}
     <div class="list-view">
+      <button class="select-all-row" on:click={toggleSelectAll}>
+        <input type="checkbox" checked={allFilteredSelected} tabindex="-1" />
+        <span>{allFilteredSelected ? $t('dashboard.deselect_all') : $t('dashboard.select_all')}</span>
+      </button>
       {#each filtered as device (device.id)}
-        <DeviceListRow {device} />
+        <DeviceListRow {device} selectable selected={selected.has(device.id)} on:toggle={(e) => toggleSelect(e.detail)} />
       {/each}
     </div>
   {:else if groups}
@@ -280,5 +342,53 @@
     padding: 1px 6px;
     border-radius: var(--radius-full);
     font-weight: 600;
+  }
+
+  .bulk-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-surface);
+    border: 1px solid var(--accent-blue);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-4);
+    animation: fade-in 0.2s ease-out;
+  }
+
+  .bulk-info {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--accent-blue);
+  }
+
+  .bulk-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .select-all-row {
+    all: unset;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+
+  .select-all-row:hover { color: var(--text-secondary); }
+
+  .select-all-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-blue);
+    cursor: pointer;
   }
 </style>

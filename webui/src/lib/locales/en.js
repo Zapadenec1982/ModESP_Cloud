@@ -131,6 +131,12 @@ export default {
     no_match: 'No matching devices',
     no_match_hint: 'Try adjusting your search or filter',
     load_error: 'Failed to load devices',
+    select_all: 'Select all',
+    deselect_all: 'Deselect all',
+    selected: 'Selected: {0}',
+    delete_selected: 'Delete selected',
+    bulk_delete_confirm: 'Delete {0} device(s)? All telemetry data and events will be permanently deleted.',
+    bulk_deleted: '{0} device(s) deleted',
   },
 
   // ── Device detail ──

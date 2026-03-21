@@ -1,10 +1,15 @@
 <script>
+  import { createEventDispatcher } from 'svelte'
   import { navigate } from '../../lib/stores.js'
   import { timeAgo } from '../../lib/format.js'
   import StatusDot from '../ui/StatusDot.svelte'
   import Icon from '../ui/Icon.svelte'
 
   export let device
+  export let selectable = false
+  export let selected = false
+
+  const dispatch = createEventDispatcher()
 
   $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: status = device.status === 'pending' ? 'pending'
@@ -12,12 +17,23 @@
   $: alarmStatus = device.alarm_active ? 'alarm'
     : device.online ? 'online' : 'offline'
 
-  function handleClick() {
+  function handleClick(e) {
+    if (selectable && (e.target.type === 'checkbox' || e.target.closest('.cell-check'))) return
     navigate(`/device/${device.mqtt_device_id}`)
+  }
+
+  function handleCheck(e) {
+    e.stopPropagation()
+    dispatch('toggle', device.id)
   }
 </script>
 
-<button class="row" on:click={handleClick}>
+<button class="row" class:selected on:click={handleClick}>
+  {#if selectable}
+    <div class="cell cell-check" on:click={handleCheck}>
+      <input type="checkbox" checked={selected} tabindex="-1" />
+    </div>
+  {/if}
   <div class="cell cell-status">
     <StatusDot {status} size="sm" />
   </div>
@@ -63,7 +79,26 @@
     border-color: var(--text-muted);
   }
 
+  .row.selected {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-blue);
+  }
+
   .cell { flex-shrink: 0; }
+
+  .cell-check {
+    width: 24px;
+    display: flex;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .cell-check input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-blue);
+    cursor: pointer;
+  }
 
   .cell-status { width: 24px; display: flex; justify-content: center; }
 
