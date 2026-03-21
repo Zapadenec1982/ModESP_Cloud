@@ -932,7 +932,8 @@ async function telemetrySampler() {
   try {
     await db.query(
       `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
-       VALUES ${placeholders.join(', ')}`,
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT DO NOTHING`,
       values
     );
     logger.info({ count: rows.length }, 'Telemetry sampled');
