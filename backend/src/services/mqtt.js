@@ -738,6 +738,16 @@ function ensureDevice(tenantSlug, deviceId) {
     deletedDevices.delete(deviceId); // expired — allow re-discovery
   }
 
+  // Unknown device publishing with a tenant slug (not pending) —
+  // it was deleted from DB but still has old credentials on ESP.
+  // Reset it to pending so it can be properly re-assigned.
+  if (tenantSlug !== 'pending') {
+    logger.warn({ tenantSlug, deviceId },
+      'Unknown device publishing with tenant — resetting to pending');
+    sendCommand(tenantSlug, deviceId, '_set_tenant', 'pending', { qos: 1 });
+    return; // don't create DB record yet — device will reconnect as pending
+  }
+
   // Rate-limit discoveries per tenant slug
   const now = Date.now();
   let entry = discoveryCount.get(tenantSlug);
@@ -752,22 +762,21 @@ function ensureDevice(tenantSlug, deviceId) {
   entry.count++;
 
   const tenantInfo = resolveTenant(tenantSlug);
-  const status = tenantSlug === 'pending' ? 'pending' : 'active';
 
   // Add to registry SYNCHRONOUSLY to prevent duplicate logs from concurrent messages
   deviceRegistry.set(deviceId, {
     id:       null,  // will be resolved on next registry refresh
     tenantId: tenantInfo.id,
-    status,
+    status: 'pending',
   });
 
   logger.info({ tenantSlug, deviceId }, 'Auto-discovery: new device');
 
   db.query(
     `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
-     VALUES ($1, $2, $3, true, NOW())
+     VALUES ($1, $2, 'pending', true, NOW())
      ON CONFLICT (mqtt_device_id) DO NOTHING`,
-    [tenantInfo.id, deviceId, status]
+    [tenantInfo.id, deviceId]
   ).then((res) => {
     // Set bootstrap credentials (mqtt_username + shared password hash)
     if (BOOTSTRAP_HASH) {
@@ -775,7 +784,7 @@ function ensureDevice(tenantSlug, deviceId) {
         .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
     }
     // Notify WS clients about new pending device
-    if (res.rowCount > 0 && status === 'pending') {
+    if (res.rowCount > 0) {
       emitter.emit('pending_device', { deviceId, action: 'added' });
     }
   }).catch(err => {
