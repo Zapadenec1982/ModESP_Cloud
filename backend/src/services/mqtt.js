@@ -924,7 +924,7 @@ async function telemetrySampler() {
   const placeholders = [];
   let idx = 1;
   for (const r of rows) {
-    placeholders.push(`(NOW(), $${idx}, $${idx+1}, $${idx+2}, $${idx+3})`);
+    placeholders.push(`(date_trunc('second', NOW()), $${idx}, $${idx+1}, $${idx+2}, $${idx+3})`);
     values.push(r.tenantId, r.deviceId, r.channel, r.value);
     idx += 4;
   }
