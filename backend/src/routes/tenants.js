@@ -282,7 +282,8 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
       await client.query(`DELETE FROM ota_rollouts WHERE tenant_id = $1`, [id]);
       await client.query(`DELETE FROM firmwares WHERE tenant_id = $1`, [id]);
       await client.query(`DELETE FROM service_records WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM audit_log WHERE tenant_id = $1`, [id]);
+      // audit_log is immutable (trigger prevents DELETE/UPDATE)
+      // FK has ON DELETE SET NULL — handled by DB automatically
 
       // Delete user-related data
       await client.query(
@@ -316,7 +317,7 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
     // Refresh MQTT tenant registry
     await mqttSvc.refreshRegistries();
 
-    logger.info({ tenantId: id, name: result.name, movedDevices: result.movedDevices }, 'Tenant hard deleted');
+    req.log?.info?.({ tenantId: id, name: result.name, movedDevices: result.movedDevices }, 'Tenant hard deleted');
     res.json({ data: { deleted: true, tenant: result } });
   } catch (err) {
     next(err);
@@ -365,7 +366,7 @@ router.delete('/bulk', requireSuperadmin, async (req, res, next) => {
 
     await mqttSvc.refreshRegistries();
 
-    logger.info({ count: deleted.length, totalMoved }, 'Bulk tenant delete');
+    req.log?.info?.({ count: deleted.length, totalMoved }, 'Bulk tenant delete');
     res.json({ data: { deleted: deleted.length, movedDevices: totalMoved, tenants: deleted } });
   } catch (err) {
     next(err);

@@ -421,7 +421,7 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 
     if (deleted.length > 0) await mqttSvc.refreshRegistries();
 
-    logger.info({ count: deleted.length }, 'Bulk device delete');
+    req.log?.info?.({ count: deleted.length }, 'Bulk device delete');
     res.json({ data: { deleted: deleted.length, devices: deleted } });
   } catch (err) {
     next(err);
