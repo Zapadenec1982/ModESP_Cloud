@@ -2,12 +2,17 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
-  import { getTelemetry } from '../lib/api.js';
+  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf } from '../lib/api.js';
   import { liveState } from '../lib/stores.js';
   import { t } from '../lib/i18n.js';
+  import { toast } from '../lib/toast.js';
   import { on as wsOn } from '../lib/ws.js';
 
   export let deviceId;
+
+  // ── Events overlay state ─────────────────────────────────
+  let deviceEvents = [];
+  let showEventLog = false;
 
   // Temperature channels + equipment state channels
   const TEMP_CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
@@ -425,6 +430,37 @@
     if (liveUnsub) liveUnsub();
     if (backfillUnsub) backfillUnsub();
   });
+
+  // ── Export CSV / PDF ─────────────────────────────────────
+  let exporting = false;
+
+  async function handleExportCsv() {
+    exporting = true;
+    try {
+      const fromISO = new Date(range.from).toISOString();
+      const toISO = new Date(range.to).toISOString();
+      await exportTelemetryCsv(deviceId, fromISO, toISO);
+      toast.success($t('export.export_success'));
+    } catch (e) {
+      toast.error(e.message || $t('export.export_error'));
+    } finally {
+      exporting = false;
+    }
+  }
+
+  async function handleExportPdf() {
+    exporting = true;
+    try {
+      const fromISO = new Date(range.from).toISOString();
+      const toISO = new Date(range.to).toISOString();
+      await exportTelemetryPdf(deviceId, fromISO, toISO);
+      toast.success($t('export.export_success'));
+    } catch (e) {
+      toast.error(e.message || $t('export.export_error'));
+    } finally {
+      exporting = false;
+    }
+  }
 </script>
 
 <div class="telemetry-chart">
@@ -463,6 +499,14 @@
     <button class="btn-apply" on:click={applyCustomRange} disabled={loading}>
       Apply
     </button>
+    <div class="export-buttons">
+      <button class="btn-export" on:click={handleExportCsv} disabled={exporting || loading} title={$t('export.export_csv')}>
+        CSV
+      </button>
+      <button class="btn-export btn-export-pdf" on:click={handleExportPdf} disabled={exporting || loading} title={$t('export.export_pdf')}>
+        {exporting ? $t('export.exporting') : 'PDF'}
+      </button>
+    </div>
   </div>
 
   <div class="chart-wrap">
@@ -593,6 +637,43 @@
   }
 
   .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Export buttons ─────────────────────────────── */
+
+  .export-buttons {
+    display: flex;
+    gap: 0.4rem;
+    margin-left: auto;
+  }
+
+  .btn-export {
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-export:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .btn-export-pdf {
+    border-color: var(--accent-green, #22c55e);
+    color: var(--accent-green, #22c55e);
+  }
+
+  .btn-export-pdf:hover:not(:disabled) {
+    background: var(--accent-green, #22c55e);
+    color: #fff;
+  }
+
+  .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* ── Chart area ───────────────────────────────── */
 

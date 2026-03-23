@@ -496,6 +496,17 @@ export default {
     offline_periods: 'Офлайн',
   },
 
+  // ── Export ──
+  export: {
+    csv: 'CSV',
+    pdf: 'PDF',
+    export_csv: 'Експорт CSV',
+    export_pdf: 'Звіт HACCP (PDF)',
+    exporting: 'Експорт...',
+    export_success: 'Експорт завантажено',
+    export_error: 'Помилка експорту',
+  },
+
   // ── Журнал аудиту ──
   audit: {
     title: 'Журнал аудиту',
