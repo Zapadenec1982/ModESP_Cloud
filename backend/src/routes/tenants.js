@@ -273,29 +273,28 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
         [db.SYSTEM_TENANT_ID, id]
       );
 
-      // Revoke all refresh tokens for tenant users
+      // Delete tenant-scoped data (order matters: children before parents)
+      await client.query(`DELETE FROM notification_log WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM notification_subscribers WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM alarms WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM events WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM ota_jobs WHERE rollout_id IN (SELECT id FROM ota_rollouts WHERE tenant_id = $1)`, [id]);
+      await client.query(`DELETE FROM ota_rollouts WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM firmwares WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM service_records WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM audit_log WHERE tenant_id = $1`, [id]);
+
+      // Delete user-related data
       await client.query(
         `DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
         [id]
       );
-
-      // Delete push subscriptions for tenant users
       await client.query(
         `DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
         [id]
       );
-
-      // Delete user_tenants links
-      await client.query(
-        `DELETE FROM user_tenants WHERE tenant_id = $1`,
-        [id]
-      );
-
-      // Delete users belonging to this tenant
-      await client.query(
-        `DELETE FROM users WHERE tenant_id = $1`,
-        [id]
-      );
+      await client.query(`DELETE FROM user_tenants WHERE tenant_id = $1`, [id]);
+      await client.query(`DELETE FROM users WHERE tenant_id = $1`, [id]);
 
       // Delete the tenant itself
       await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
