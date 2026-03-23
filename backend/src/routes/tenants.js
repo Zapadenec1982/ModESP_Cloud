@@ -282,8 +282,12 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
       await client.query(`DELETE FROM ota_rollouts WHERE tenant_id = $1`, [id]);
       await client.query(`DELETE FROM firmwares WHERE tenant_id = $1`, [id]);
       await client.query(`DELETE FROM service_records WHERE tenant_id = $1`, [id]);
-      // audit_log is immutable (trigger prevents DELETE/UPDATE)
-      // FK has ON DELETE SET NULL — handled by DB automatically
+      // Nullify audit_log references before deleting users/tenant
+      // (immutable trigger blocks cascaded updates, so do it explicitly)
+      await client.query(`ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable`);
+      await client.query(`UPDATE audit_log SET user_id = NULL WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
+      await client.query(`UPDATE audit_log SET tenant_id = NULL WHERE tenant_id = $1`, [id]);
+      await client.query(`ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable`);
 
       // Delete user-related data
       await client.query(
