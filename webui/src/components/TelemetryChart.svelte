@@ -477,9 +477,9 @@
     </div>
   </div>
 
-  <div class="range-picker">
+  <div class="range-row">
     <label>
-      <span>From</span>
+      <span>FROM</span>
       <input
         type="datetime-local"
         bind:value={range.from}
@@ -488,7 +488,7 @@
       />
     </label>
     <label>
-      <span>To</span>
+      <span>TO</span>
       <input
         type="datetime-local"
         bind:value={range.to}
@@ -499,6 +499,8 @@
     <button class="btn-apply" on:click={applyCustomRange} disabled={loading}>
       Apply
     </button>
+  </div>
+  <div class="export-row">
     <div class="export-buttons">
       <button class="btn-export" on:click={handleExportCsv} disabled={exporting || loading} title={$t('export.export_csv')}>
         CSV
@@ -574,23 +576,25 @@
 
   .presets button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* ── Range picker row ─────────────────────────── */
+  /* ── Range row ────────────────────────────────── */
 
-  .range-picker {
+  .range-row {
     display: flex;
     align-items: flex-end;
-    gap: var(--space-3);
-    margin-bottom: var(--space-3);
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
     flex-wrap: wrap;
   }
 
-  .range-picker label {
+  .range-row label {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
+    flex: 1;
+    min-width: 0;
   }
 
-  .range-picker span {
+  .range-row span {
     font-size: var(--text-xs);
     color: var(--text-muted);
     text-transform: uppercase;
@@ -598,7 +602,8 @@
     letter-spacing: 0.03em;
   }
 
-  .range-picker input {
+  .range-row input {
+    width: 100%;
     padding: 0.35rem 0.5rem;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
@@ -609,14 +614,23 @@
     outline: none;
     transition: border-color 0.2s;
     color-scheme: dark;
+    box-sizing: border-box;
   }
 
-  .range-picker input:focus {
+  .range-row input:focus {
     border-color: var(--accent-blue);
   }
 
-  .range-picker input:disabled {
+  .range-row input:disabled {
     opacity: 0.5;
+  }
+
+  /* ── Export row ─────────────────────────────── */
+
+  .export-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-2);
   }
 
   .btn-apply {
@@ -736,5 +750,73 @@
     background: rgba(128, 128, 128, 0.3);
     border: 1px solid rgba(128, 128, 128, 0.5);
     border-radius: 2px;
+  }
+
+  /* ── Mobile responsive ────────────────────── */
+
+  @media (max-width: 640px) {
+    .telemetry-chart {
+      padding: var(--space-2);
+    }
+
+    .chart-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-2);
+    }
+
+    .chart-header h3 {
+      font-size: var(--text-sm);
+    }
+
+    .presets {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .presets button {
+      flex: 1;
+      padding: 0.4rem 0.3rem;
+      font-size: var(--text-xs);
+      text-align: center;
+    }
+
+    .range-row {
+      gap: var(--space-1);
+    }
+
+    .range-row input {
+      font-size: var(--text-xs);
+      padding: 0.3rem 0.25rem;
+    }
+
+    .export-row {
+      justify-content: flex-start;
+    }
+
+    .btn-apply {
+      padding: 0.35rem 0.6rem;
+      font-size: var(--text-xs);
+    }
+
+    .export-buttons {
+      margin-left: 0;
+      gap: 0.3rem;
+    }
+
+    .btn-export {
+      padding: 0.3rem 0.6rem;
+      font-size: var(--text-xs);
+    }
+
+    .chart-wrap {
+      min-height: 250px;
+      margin: 0 calc(-1 * var(--space-2));
+    }
+
+    .telemetry-chart :global(.u-legend) {
+      font-size: 10px;
+      flex-wrap: wrap;
+    }
   }
 </style>
