@@ -335,7 +335,9 @@
   .sidebar-footer {
     border-top: 1px solid var(--border-muted);
     padding: var(--space-3);
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
