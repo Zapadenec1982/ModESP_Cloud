@@ -635,6 +635,8 @@ export default {
     equipment_model: 'Equipment Model',
     no_profile: 'No power profile configured',
     no_profile_hint: 'Set up an equipment model or enter power values in device settings to enable energy monitoring',
+    new_model: 'New Model',
+    model_created: 'Equipment model created',
     period_day: 'Today',
     period_week: 'Week',
     period_month: 'Month',

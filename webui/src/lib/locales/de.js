@@ -616,6 +616,8 @@ export default {
     equipment_model: 'Gerätemodell',
     no_profile: 'Kein Leistungsprofil konfiguriert',
     no_profile_hint: 'Erstellen Sie ein Gerätemodell oder geben Sie die Leistungswerte in den Geräteeinstellungen ein',
+    new_model: 'Neues Modell',
+    model_created: 'Gerätemodell erstellt',
     period_day: 'Heute',
     period_week: 'Woche',
     period_month: 'Monat',

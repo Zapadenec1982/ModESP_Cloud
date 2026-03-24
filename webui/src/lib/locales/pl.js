@@ -616,6 +616,8 @@ export default {
     equipment_model: 'Model urządzenia',
     no_profile: 'Brak profilu mocy',
     no_profile_hint: 'Utwórz model urządzenia lub podaj wartości mocy w ustawieniach urządzenia',
+    new_model: 'Nowy model',
+    model_created: 'Model urządzenia utworzony',
     period_day: 'Dziś',
     period_week: 'Tydzień',
     period_month: 'Miesiąc',

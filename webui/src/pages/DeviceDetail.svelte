@@ -45,11 +45,43 @@
   let saving = false
   let deviceModels = []
 
+  let showNewModel = false
+  let newModel = { name: '', compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
+  let creatingModel = false
+
   async function loadDeviceModels() {
     try {
       const { getDeviceModels } = await import('../lib/api.js')
       deviceModels = await getDeviceModels() || []
     } catch { deviceModels = [] }
+  }
+
+  function openNewModel() {
+    newModel = { name: '', compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
+    showNewModel = true
+  }
+
+  async function createModel() {
+    if (!newModel.name.trim()) return
+    creatingModel = true
+    try {
+      const { createDeviceModel } = await import('../lib/api.js')
+      const created = await createDeviceModel({
+        name: newModel.name.trim(),
+        compressor_kw: newModel.compressor_kw ? Number(newModel.compressor_kw) : null,
+        evap_fan_kw: newModel.evap_fan_kw ? Number(newModel.evap_fan_kw) : null,
+        cond_fan_kw: newModel.cond_fan_kw ? Number(newModel.cond_fan_kw) : null,
+        defrost_heater_kw: newModel.defrost_heater_kw ? Number(newModel.defrost_heater_kw) : null,
+        standby_kw: newModel.standby_kw ? Number(newModel.standby_kw) : null,
+      })
+      await loadDeviceModels()
+      editForm.model_id = created.id
+      showNewModel = false
+      toast.success($t('energy.model_created'))
+    } catch (e) {
+      toast.error(e.message)
+    }
+    creatingModel = false
   }
 
   function openEdit() {
@@ -621,13 +653,55 @@
         <div class="form-section-title">{$t('energy.power_profile')}</div>
         <div class="form-group">
           <label for="edit-model-id">{$t('energy.equipment_model')}</label>
-          <select id="edit-model-id" bind:value={editForm.model_id}>
-            <option value="">— {$t('common.no')} —</option>
-            {#each deviceModels as m}
-              <option value={m.id}>{m.name} ({m.compressor_kw || 0} kW)</option>
-            {/each}
-          </select>
+          <div class="model-select-row">
+            <select id="edit-model-id" bind:value={editForm.model_id}>
+              <option value="">— {$t('common.no')} —</option>
+              {#each deviceModels as m}
+                <option value={m.id}>{m.name} ({m.compressor_kw || 0} kW)</option>
+              {/each}
+            </select>
+            <button type="button" class="btn btn-icon-sm" on:click={openNewModel} title={$t('energy.new_model')}>+</button>
+          </div>
         </div>
+
+        {#if showNewModel}
+          <div class="new-model-form">
+            <div class="form-group">
+              <label>{$t('common.name')}</label>
+              <input type="text" bind:value={newModel.name} placeholder="ModESP-4R" />
+            </div>
+            <div class="form-row-power">
+              <div class="form-group">
+                <label>{$t('energy.compressor')} (kW)</label>
+                <input type="number" step="0.001" min="0" bind:value={newModel.compressor_kw} placeholder="0.450" />
+              </div>
+              <div class="form-group">
+                <label>{$t('energy.defrost')} (kW)</label>
+                <input type="number" step="0.001" min="0" bind:value={newModel.defrost_heater_kw} placeholder="0.800" />
+              </div>
+            </div>
+            <div class="form-row-power">
+              <div class="form-group">
+                <label>{$t('energy.evap_fan')} (kW)</label>
+                <input type="number" step="0.001" min="0" bind:value={newModel.evap_fan_kw} placeholder="0.050" />
+              </div>
+              <div class="form-group">
+                <label>{$t('energy.cond_fan')} (kW)</label>
+                <input type="number" step="0.001" min="0" bind:value={newModel.cond_fan_kw} placeholder="0.080" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>{$t('energy.standby')} (kW)</label>
+              <input type="number" step="0.001" min="0" bind:value={newModel.standby_kw} placeholder="0.020" style="max-width: 200px" />
+            </div>
+            <div class="new-model-actions">
+              <button type="button" class="btn btn-ghost btn-sm" on:click={() => showNewModel = false}>{$t('common.cancel')}</button>
+              <button type="button" class="btn btn-primary btn-sm" on:click={createModel} disabled={creatingModel || !newModel.name.trim()}>
+                {creatingModel ? $t('common.loading') : $t('common.save')}
+              </button>
+            </div>
+          </div>
+        {/if}
         <div class="form-row-power">
           <div class="form-group">
             <label>{$t('energy.compressor')} (kW)</label>
@@ -1115,6 +1189,44 @@
     grid-template-columns: 1fr 1fr;
     gap: var(--space-3);
   }
+
+  .model-select-row {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .model-select-row select { flex: 1; }
+  .btn-icon-sm {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    border: 1px solid var(--border-default);
+    background: var(--bg-secondary);
+    color: var(--accent-blue);
+    font-size: 18px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .btn-icon-sm:hover { background: var(--accent-blue); color: white; }
+
+  .new-model-form {
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-blue);
+    border-radius: 8px;
+    padding: var(--space-3);
+    margin-bottom: var(--space-2);
+  }
+  .new-model-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+  .btn-sm { padding: var(--space-1) var(--space-3); font-size: var(--text-xs); }
 
   .modal-actions {
     display: flex;

@@ -622,6 +622,8 @@ export default {
     equipment_model: 'Модель обладнання',
     no_profile: 'Енергопрофіль не налаштовано',
     no_profile_hint: 'Створіть модель обладнання або вкажіть потужності в налаштуваннях пристрою',
+    new_model: 'Нова модель',
+    model_created: 'Модель обладнання створено',
     period_day: 'Сьогодні',
     period_week: 'Тиждень',
     period_month: 'Місяць',
