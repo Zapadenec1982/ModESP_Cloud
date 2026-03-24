@@ -348,29 +348,24 @@
         {#if hasAlarm}
           <Badge variant="danger" pulse>{$t('device.alarm_badge')}</Badge>
         {/if}
+        <div class="header-spacer"></div>
         {#if $canWrite}
-          <button class="edit-btn" on:click={openEdit} title={$t('device.edit_device')}>
-            <Icon name="edit" size={16} />
-          </button>
-        {/if}
-        {#if $isAdmin}
           <div class="more-menu-wrap">
-            <button class="edit-btn" on:click={() => showMoreMenu = !showMoreMenu} title="More actions">
-              <Icon name="more-vertical" size={16} />
+            <button class="settings-btn" on:click={() => showMoreMenu = !showMoreMenu} title={$t('device.settings')}>
+              <Icon name="settings" size={18} />
             </button>
             {#if showMoreMenu}
               <!-- svelte-ignore a11y-click-events-have-key-events -->
               <div class="more-menu-backdrop" on:click={() => showMoreMenu = false}></div>
               <div class="more-menu">
-                {#if device.has_mqtt_credentials}
+                <button class="more-menu-item" on:click={() => { showMoreMenu = false; openEdit(); }}>
+                  <Icon name="edit" size={14} />
+                  {$t('device.edit_device')}
+                </button>
+                {#if $isAdmin}
                   <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleMqttGenerate(); }} disabled={mqttCredsBusy}>
-                    <Icon name="refresh-cw" size={14} />
-                    {$t('device.mqtt_rotate')}
-                  </button>
-                {:else}
-                  <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleMqttGenerate(); }} disabled={mqttCredsBusy}>
-                    <Icon name="key" size={14} />
-                    {$t('device.mqtt_generate')}
+                    <Icon name={device.has_mqtt_credentials ? 'refresh-cw' : 'key'} size={14} />
+                    {device.has_mqtt_credentials ? $t('device.mqtt_rotate') : $t('device.mqtt_generate')}
                   </button>
                 {/if}
                 {#if $isSuperAdmin}
@@ -781,12 +776,16 @@
     flex: 1;
   }
 
-  .edit-btn {
+  .header-spacer {
+    flex: 1;
+  }
+
+  .settings-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-default);
     background: transparent;
@@ -795,7 +794,7 @@
     transition: all var(--transition-fast);
   }
 
-  .edit-btn:hover {
+  .settings-btn:hover {
     color: var(--accent-blue);
     border-color: var(--accent-blue);
     background: var(--bg-tertiary);
