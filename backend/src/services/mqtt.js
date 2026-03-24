@@ -1274,6 +1274,14 @@ function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
  * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
  */
 function removeDeviceState(deviceId) {
+  // Clear pending nuisance-delay timers for this device
+  for (const [key, timer] of pendingAlarms) {
+    if (key.startsWith(deviceId + ':')) {
+      clearTimeout(timer);
+      pendingAlarms.delete(key);
+    }
+  }
+
   // Read tenant slug before clearing state (needed for retained message cleanup)
   const state = stateMap.get(deviceId);
   const tenantSlug = state?._tenantSlug || null;

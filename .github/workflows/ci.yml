@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: modesp_cloud_test
+          POSTGRES_USER: modesp_cloud
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U modesp_cloud"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            webui/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Install webui dependencies
+        run: npm ci
+        working-directory: webui
+
+      - name: Build webui
+        run: npm run build
+        working-directory: webui
+
+      - name: Run backend tests
+        run: npm test
+        working-directory: backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_NAME: modesp_cloud_test
+          DB_USER: modesp_cloud
+          DB_PASS: test_password
+          JWT_SECRET: ci-test-secret-must-be-at-least-32-characters-long
+          AUTH_ENABLED: true
+          NODE_ENV: test

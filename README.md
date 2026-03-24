@@ -268,6 +268,14 @@ npm run test:all      # Run both
 npm run test:coverage # Coverage report
 ```
 
+### CI/CD
+
+GitHub Actions runs on every push to `main` and on pull requests:
+- PostgreSQL 16 service container for integration tests
+- Node.js 22 — `npm ci`, `npm test` (backend), `npm run build` (webui)
+
+See `.github/workflows/ci.yml`.
+
 ---
 
 ## Quick Start (Development)

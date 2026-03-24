@@ -385,44 +385,50 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
     const deleted = [];
+    const failed = [];
 
     for (const id of ids) {
-      const isUuid = id.length > 8;
-      let whereClause, params;
-      if (isSuperAdmin) {
-        whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
-        params = [id];
-      } else {
-        whereClause = isUuid
-          ? 'id = $1 AND tenant_id = $2'
-          : 'mqtt_device_id = $1 AND tenant_id = $2';
-        params = [id, req.tenantId];
+      try {
+        const isUuid = id.length > 8;
+        let whereClause, params;
+        if (isSuperAdmin) {
+          whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+          params = [id];
+        } else {
+          whereClause = isUuid
+            ? 'id = $1 AND tenant_id = $2'
+            : 'mqtt_device_id = $1 AND tenant_id = $2';
+          params = [id, req.tenantId];
+        }
+
+        const { rows } = await db.query(
+          `SELECT id, mqtt_device_id, name, status, tenant_id FROM devices WHERE ${whereClause}`,
+          params
+        );
+        if (rows.length === 0) continue;
+
+        const deviceUuid = rows[0].id;
+        const deviceMqttId = rows[0].mqtt_device_id;
+
+        await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+        await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+        await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+        await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+        await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+        await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+
+        mqttSvc.removeDeviceState(deviceMqttId);
+        deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
+      } catch (err) {
+        req.log?.warn?.({ err, deviceId: id }, 'Bulk delete: failed to delete device');
+        failed.push({ id, error: err.message });
       }
-
-      const { rows } = await db.query(
-        `SELECT id, mqtt_device_id, name, status, tenant_id FROM devices WHERE ${whereClause}`,
-        params
-      );
-      if (rows.length === 0) continue;
-
-      const deviceUuid = rows[0].id;
-      const deviceMqttId = rows[0].mqtt_device_id;
-
-      await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-      await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-      await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-      await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-      await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-      await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
-
-      mqttSvc.removeDeviceState(deviceMqttId);
-      deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
     }
 
     if (deleted.length > 0) await mqttSvc.refreshRegistries();
 
-    req.log?.info?.({ count: deleted.length }, 'Bulk device delete');
-    res.json({ data: { deleted: deleted.length, devices: deleted } });
+    req.log?.info?.({ deleted: deleted.length, failed: failed.length }, 'Bulk device delete');
+    res.json({ data: { deleted: deleted.length, failed: failed.length, devices: deleted, errors: failed } });
   } catch (err) {
     next(err);
   }
