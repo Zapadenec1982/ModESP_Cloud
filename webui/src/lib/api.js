@@ -875,3 +875,39 @@ export function exportDevicesCsv() {
   const fname = `devices_${new Date().toISOString().slice(0, 10)}.csv`;
   return downloadFile('/devices/export.csv', fname);
 }
+
+// ── Device Models ────────────────────────────────────────
+
+export function getDeviceModels() {
+  return request('/device-models');
+}
+
+export function createDeviceModel(data) {
+  return request('/device-models', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateDeviceModel(id, data) {
+  return request(`/device-models/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteDeviceModel(id) {
+  return request(`/device-models/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+// ── Energy ───────────────────────────────────────────────
+
+export function getEnergySummary(deviceId, from, to) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return request(`/devices/${deviceId}/energy/summary${qs ? '?' + qs : ''}`);
+}

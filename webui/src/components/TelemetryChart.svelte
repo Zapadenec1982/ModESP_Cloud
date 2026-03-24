@@ -17,7 +17,8 @@
   // Temperature channels + equipment state channels
   const TEMP_CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
   const STATE_CHANNELS = ['comp', 'defrost'];
-  const ALL_CHANNELS = [...TEMP_CHANNELS, ...STATE_CHANNELS];
+  const ENERGY_CHANNELS = ['energy'];
+  const ALL_CHANNELS = [...TEMP_CHANNELS, ...STATE_CHANNELS, ...ENERGY_CHANNELS];
 
   const PRESETS = [
     { label: '1h',  hours: 1 },
@@ -34,6 +35,7 @@
     setpoint: { label: 'Setpoint',   stroke: '#a78bfa', width: 2, dash: [5, 5] },
     comp:     { label: 'Compressor', stroke: 'rgba(59,130,246,0.5)', fill: 'rgba(59,130,246,0.08)', band: true },
     defrost:  { label: 'Defrost',    stroke: 'rgba(251,146,60,0.5)', fill: 'rgba(251,146,60,0.12)', band: true },
+    energy:   { label: 'Energy (kWh)', stroke: '#fbbf24', width: 2, fill: 'rgba(251,191,36,0.08)' },
   };
 
   // Map liveState keys → telemetry channels for real-time append

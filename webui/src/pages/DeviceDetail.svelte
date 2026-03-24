@@ -16,6 +16,7 @@
   import TelemetryChart from '../components/TelemetryChart.svelte'
   import AlarmHistory from '../components/AlarmHistory.svelte'
   import StateView from '../components/StateView.svelte'
+  import EnergyTab from '../components/device/EnergyTab.svelte'
 
   // svelte-spa-router passes route params via `params` prop
   export let params = {}
@@ -33,13 +34,23 @@
     { id: 'params',  label: $t('device.tab_params') },
     { id: 'alarms',  label: $t('device.tab_alarms') },
     { id: 'service', label: $t('device.tab_service') },
+    { id: 'energy',  label: $t('device.tab_energy') },
     { id: 'state',   label: $t('device.tab_state') },
   ]
 
   // ── Edit modal state ──
   let showEdit = false
-  let editForm = { name: '', location: '', serial_number: '', model: '', comment: '', manufactured_at: '' }
+  let editForm = { name: '', location: '', serial_number: '', model: '', comment: '', manufactured_at: '',
+    model_id: null, compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
   let saving = false
+  let deviceModels = []
+
+  async function loadDeviceModels() {
+    try {
+      const { getDeviceModels } = await import('../lib/api.js')
+      deviceModels = await getDeviceModels() || []
+    } catch { deviceModels = [] }
+  }
 
   function openEdit() {
     editForm = {
@@ -49,7 +60,14 @@
       model: device.model || '',
       comment: device.comment || '',
       manufactured_at: device.manufactured_at ? device.manufactured_at.slice(0, 10) : '',
+      model_id: device.model_id || '',
+      compressor_kw: device.compressor_kw ?? '',
+      evap_fan_kw: device.evap_fan_kw ?? '',
+      cond_fan_kw: device.cond_fan_kw ?? '',
+      defrost_heater_kw: device.defrost_heater_kw ?? '',
+      standby_kw: device.standby_kw ?? '',
     }
+    loadDeviceModels()
     showEdit = true
   }
 
@@ -70,6 +88,15 @@
       if (editForm.comment !== (device.comment || '')) changes.comment = editForm.comment
       const currentMfg = device.manufactured_at ? device.manufactured_at.slice(0, 10) : ''
       if (editForm.manufactured_at !== currentMfg) changes.manufactured_at = editForm.manufactured_at || null
+
+      // Power profile fields
+      const modelId = editForm.model_id || null
+      if (modelId !== (device.model_id || null)) changes.model_id = modelId
+      for (const f of ['compressor_kw', 'evap_fan_kw', 'cond_fan_kw', 'defrost_heater_kw', 'standby_kw']) {
+        const val = editForm[f] === '' ? null : Number(editForm[f])
+        const cur = device[f] ?? null
+        if (val !== cur) changes[f] = val
+      }
 
       if (Object.keys(changes).length === 0) {
         closeEdit()
@@ -493,6 +520,8 @@
             </div>
           {/if}
         </div>
+      {:else if activeTab === 'energy'}
+        <EnergyTab deviceId={device.mqtt_device_id} {device} />
       {:else if activeTab === 'state'}
         <StateView state={$liveState} />
       {/if}
@@ -586,6 +615,47 @@
         <div class="form-group">
           <label for="edit-manufactured">{$t('device.manufactured_at')}</label>
           <input id="edit-manufactured" type="date" bind:value={editForm.manufactured_at} />
+        </div>
+
+        <!-- Power Profile -->
+        <div class="form-section-title">{$t('energy.power_profile')}</div>
+        <div class="form-group">
+          <label for="edit-model-id">{$t('energy.equipment_model')}</label>
+          <select id="edit-model-id" bind:value={editForm.model_id}>
+            <option value="">— {$t('common.no')} —</option>
+            {#each deviceModels as m}
+              <option value={m.id}>{m.name} ({m.compressor_kw || 0} kW)</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-row-power">
+          <div class="form-group">
+            <label>{$t('energy.compressor')} (kW)</label>
+            <input type="number" step="0.001" min="0" placeholder={device?.model_compressor_kw || ''}
+              bind:value={editForm.compressor_kw} />
+          </div>
+          <div class="form-group">
+            <label>{$t('energy.defrost')} (kW)</label>
+            <input type="number" step="0.001" min="0" placeholder={device?.model_defrost_heater_kw || ''}
+              bind:value={editForm.defrost_heater_kw} />
+          </div>
+        </div>
+        <div class="form-row-power">
+          <div class="form-group">
+            <label>{$t('energy.evap_fan')} (kW)</label>
+            <input type="number" step="0.001" min="0" placeholder={device?.model_evap_fan_kw || ''}
+              bind:value={editForm.evap_fan_kw} />
+          </div>
+          <div class="form-group">
+            <label>{$t('energy.cond_fan')} (kW)</label>
+            <input type="number" step="0.001" min="0" placeholder={device?.model_cond_fan_kw || ''}
+              bind:value={editForm.cond_fan_kw} />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>{$t('energy.standby')} (kW)</label>
+          <input type="number" step="0.001" min="0" placeholder={device?.model_standby_kw || ''}
+            bind:value={editForm.standby_kw} style="max-width: 200px" />
         </div>
       </div>
       <div class="modal-actions">
@@ -1018,6 +1088,32 @@
   .form-group textarea {
     resize: vertical;
     min-height: 60px;
+  }
+
+  .form-group select {
+    width: 100%;
+    padding: var(--space-2);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+  }
+
+  .form-section-title {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-default);
+  }
+
+  .form-row-power {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
   }
 
   .modal-actions {

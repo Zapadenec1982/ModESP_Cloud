@@ -132,6 +132,7 @@ export default {
     tab_chart: 'Wykres',
     tab_params: 'Parametry',
     tab_alarms: 'Alarmy',
+    tab_energy: 'Energia',
     tab_state: 'Stan',
     temperature: 'Temperatura',
     setpoint: 'Nastawa',
@@ -595,6 +596,29 @@ export default {
     export_alarms: 'Eksport alarmów',
     export_telemetry: 'Eksport telemetrii',
     haccp_report: 'Raport HACCP',
+  },
+
+  // ── Monitorowanie energii ──
+  energy: {
+    tab: 'Energia',
+    total: 'Razem',
+    daily_avg: 'Średnia dzienna',
+    breakdown: 'Rozkład',
+    compressor: 'Sprężarka',
+    defrost: 'Grzałka odszraniania',
+    fans: 'Wentylatory',
+    evap_fan: 'Wentylator parownika',
+    cond_fan: 'Wentylator skraplacza',
+    standby: 'Czuwanie',
+    estimated: 'Szacowane',
+    metered: 'Zmierzone',
+    power_profile: 'Profil mocy',
+    equipment_model: 'Model urządzenia',
+    no_profile: 'Brak profilu mocy',
+    no_profile_hint: 'Utwórz model urządzenia lub podaj wartości mocy w ustawieniach urządzenia',
+    period_day: 'Dziś',
+    period_week: 'Tydzień',
+    period_month: 'Miesiąc',
   },
 
   // ── Chart ──

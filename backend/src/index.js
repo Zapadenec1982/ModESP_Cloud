@@ -328,6 +328,7 @@ app.use('/api/devices',  exportDevices);                  // /:id/telemetry/expo
 app.use('/api/alarms',   exportAlarms);                   // /export.csv
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
+app.use('/api/device-models', require('./routes/device-models'));
 
 // Firmware/OTA routes (admin-only when AUTH_ENABLED, mounted above; dev fallback below)
 if (!AUTH_ENABLED) {

@@ -224,4 +224,142 @@ router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) =
   }
 });
 
+// ── GET /api/devices/:id/energy/summary ────────────────
+// Energy consumption summary with breakdown by component.
+// Query params: from, to (or hours, default 24h)
+
+router.get('/:id/energy/summary', checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
+    if (!device) {
+      return res.status(404).json({
+        error: 'not_found', message: `Device ${req.params.id} not found`, status: 404,
+      });
+    }
+
+    const range = parseTimeRange(req.query);
+    if (!range) {
+      return res.status(400).json({
+        error: 'validation_failed', message: 'Invalid from/to dates', status: 400,
+      });
+    }
+
+    // Total energy from telemetry
+    const { rows: [energyRow] } = await db.query(
+      `SELECT COALESCE(SUM(value), 0) AS total_kwh,
+              COUNT(*)::int AS samples
+       FROM telemetry
+       WHERE tenant_id = $1 AND device_id = $2
+         AND channel = 'energy'
+         AND time >= $3 AND time < $4`,
+      [device.tenantId, device.mqttId, range.from, range.to]
+    );
+
+    const totalKwh = parseFloat(Number(energyRow.total_kwh).toFixed(3));
+
+    // Get device power profile for breakdown calculation
+    const { rows: profileRows } = await db.query(
+      `SELECT
+         COALESCE(d.compressor_kw, m.compressor_kw, 0) AS compressor_kw,
+         COALESCE(d.evap_fan_kw, m.evap_fan_kw, 0)     AS evap_fan_kw,
+         COALESCE(d.cond_fan_kw, m.cond_fan_kw, 0)      AS cond_fan_kw,
+         COALESCE(d.defrost_heater_kw, m.defrost_heater_kw, 0) AS defrost_heater_kw,
+         COALESCE(d.standby_kw, m.standby_kw, 0)        AS standby_kw,
+         COALESCE(m.energy_source, 'estimated')          AS energy_source
+       FROM devices d
+       LEFT JOIN device_models m ON d.model_id = m.id
+       WHERE d.mqtt_device_id = $1`,
+      [device.mqttId]
+    );
+
+    let breakdown = null;
+    let source = 'estimated';
+
+    if (profileRows.length > 0) {
+      const p = profileRows[0];
+      source = p.energy_source;
+
+      // Calculate runtime from events for breakdown
+      const periodMs = range.to - range.from;
+      const totalHours = periodMs / 3600000;
+
+      // Compressor runtime from events
+      const { rows: compRows } = await db.query(
+        `WITH transitions AS (
+           SELECT time, event_type,
+             LEAD(time) OVER (ORDER BY time) AS next_time
+           FROM events
+           WHERE device_id = $1 AND tenant_id = $2
+             AND event_type IN ('compressor_on', 'compressor_off')
+             AND time >= $3 AND time < $4
+         )
+         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM next_time - time) / 3600), 0) AS hours
+         FROM transitions WHERE event_type = 'compressor_on'`,
+        [device.mqttId, device.tenantId, range.from, range.to]
+      );
+
+      // Defrost runtime from events
+      const { rows: defrostRows } = await db.query(
+        `WITH transitions AS (
+           SELECT time, event_type,
+             LEAD(time) OVER (ORDER BY time) AS next_time
+           FROM events
+           WHERE device_id = $1 AND tenant_id = $2
+             AND event_type IN ('defrost_start', 'defrost_end')
+             AND time >= $3 AND time < $4
+         )
+         SELECT COALESCE(SUM(EXTRACT(EPOCH FROM next_time - time) / 3600), 0) AS hours
+         FROM transitions WHERE event_type = 'defrost_start'`,
+        [device.mqttId, device.tenantId, range.from, range.to]
+      );
+
+      const compHours = parseFloat(compRows[0].hours);
+      const defrostHours = parseFloat(defrostRows[0].hours);
+      const fanHours = compHours; // fans run with compressor
+
+      const compKwh = compHours * Number(p.compressor_kw);
+      const fanKwh = fanHours * (Number(p.evap_fan_kw) + Number(p.cond_fan_kw));
+      const defrostKwh = defrostHours * Number(p.defrost_heater_kw);
+      const standbyKwh = totalHours * Number(p.standby_kw);
+
+      const breakdownTotal = compKwh + fanKwh + defrostKwh + standbyKwh;
+
+      breakdown = {
+        compressor: { kwh: parseFloat(compKwh.toFixed(3)), pct: breakdownTotal > 0 ? Math.round(compKwh / breakdownTotal * 100) : 0 },
+        fans:       { kwh: parseFloat(fanKwh.toFixed(3)),  pct: breakdownTotal > 0 ? Math.round(fanKwh / breakdownTotal * 100) : 0 },
+        defrost:    { kwh: parseFloat(defrostKwh.toFixed(3)), pct: breakdownTotal > 0 ? Math.round(defrostKwh / breakdownTotal * 100) : 0 },
+        standby:    { kwh: parseFloat(standbyKwh.toFixed(3)), pct: breakdownTotal > 0 ? Math.round(standbyKwh / breakdownTotal * 100) : 0 },
+      };
+    }
+
+    // Get electricity rate for cost calculation
+    const { rows: tenantRows } = await db.query(
+      'SELECT electricity_rate, electricity_currency FROM tenants WHERE id = $1',
+      [device.tenantId]
+    );
+
+    const rate = tenantRows.length > 0 && tenantRows[0].electricity_rate
+      ? Number(tenantRows[0].electricity_rate) : null;
+    const currency = tenantRows.length > 0 ? tenantRows[0].electricity_currency : 'UAH';
+
+    const periodDays = (range.to - range.from) / 86400000;
+
+    res.json({
+      data: {
+        total_kwh: totalKwh,
+        estimated_cost: rate ? parseFloat((totalKwh * rate).toFixed(2)) : null,
+        currency,
+        daily_avg_kwh: periodDays > 0 ? parseFloat((totalKwh / periodDays).toFixed(3)) : 0,
+        breakdown,
+        source,
+        samples: energyRow.samples,
+        period: { from: range.from.toISOString(), to: range.to.toISOString() },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

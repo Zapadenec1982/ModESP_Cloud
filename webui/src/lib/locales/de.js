@@ -132,6 +132,7 @@ export default {
     tab_chart: 'Diagramm',
     tab_params: 'Parameter',
     tab_alarms: 'Alarme',
+    tab_energy: 'Energie',
     tab_state: 'Zustand',
     temperature: 'Temperatur',
     setpoint: 'Sollwert',
@@ -595,6 +596,29 @@ export default {
     export_alarms: 'Alarme exportieren',
     export_telemetry: 'Telemetrie exportieren',
     haccp_report: 'HACCP-Bericht',
+  },
+
+  // ── Energieüberwachung ──
+  energy: {
+    tab: 'Energie',
+    total: 'Gesamt',
+    daily_avg: 'Tagesdurchschnitt',
+    breakdown: 'Aufschlüsselung',
+    compressor: 'Kompressor',
+    defrost: 'Abtauheizung',
+    fans: 'Lüfter',
+    evap_fan: 'Verdampferlüfter',
+    cond_fan: 'Kondensatorlüfter',
+    standby: 'Standby',
+    estimated: 'Geschätzt',
+    metered: 'Gemessen',
+    power_profile: 'Leistungsprofil',
+    equipment_model: 'Gerätemodell',
+    no_profile: 'Kein Leistungsprofil konfiguriert',
+    no_profile_hint: 'Erstellen Sie ein Gerätemodell oder geben Sie die Leistungswerte in den Geräteeinstellungen ein',
+    period_day: 'Heute',
+    period_week: 'Woche',
+    period_month: 'Monat',
   },
 
   // ── Chart ──

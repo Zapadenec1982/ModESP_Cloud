@@ -112,6 +112,30 @@ PostgreSQL: INSERT INTO telemetry (partitioned by month)
 > ESP32 НЕ надсилає окремі telemetry bundles. Cloud семплює з накопиченого стану.
 > Це зменшує навантаження на ESP32 (80KB вільної RAM) і спрощує прошивку.
 
+### Енергомоніторинг (server-side estimation)
+```
+device_models table
+  │ power profiles: compressor_watts, defrost_watts, fan_watts, standby_watts
+  │ refreshed кожні 60с → in-memory power profile cache
+  ▼
+Node.js Telemetry Sampler (кожні 5 хв)
+  │ Читає accumulated state: equipment.compressor, defrost.active, thermostat.req.evap_fan
+  │ Обчислює estimated kWh = (стан × rated power × interval) для кожного компонента
+  │ Компоненти: compressor, defrost_heater, fans, standby
+  ▼
+PostgreSQL: INSERT INTO telemetry (channel='energy', value=kWh)
+  │ energy_source = 'estimated' (default)
+  │
+  │ Auto-detect: якщо firmware публікує equipment.energy_kwh →
+  │ sampler використовує реальне значення, energy_source = 'metered'
+  ▼
+REST API: GET /devices/:id/energy/summary → kWh, cost, breakdown
+```
+
+> **Power profile:** device_models → per-device override через devices.power_overrides JSONB.
+> **Cost:** electricity_rate зберігається per-tenant (tenants.electricity_rate, грн/кВт·год).
+> **Forward-compatible:** CT clamp сенсори (Phase 13+) публікують `equipment.energy_kwh` — sampler автоматично перемикається на реальні показники.
+
 ### Команда (WebUI → Cloud → ESP32)
 ```
 Svelte WebUI
@@ -277,3 +301,4 @@ req.auditContext = {
 - 2026-03-07 — Оновлено. Cloud adapter pattern, state aggregation, server-side telemetry sampling, auto-discovery flow, command translation.
 - 2026-03-08 — Оновлено. Phase 7: per-device RBAC (ролі, middleware), scalability оптимізації (batch writes, dedup, retention, backpressure), OTA board compatibility.
 - 2026-03-15 — Оновлено. Audit Logging middleware (auto-capture mutations, before/after changes, immutable table).
+- 2026-03-24 — Оновлено. Energy Monitoring data flow (device_models → power profile cache → estimated kWh → telemetry channel).

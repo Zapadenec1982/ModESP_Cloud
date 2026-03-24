@@ -903,9 +903,16 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
               d.model, d.comment, d.manufactured_at, d.firmware_version, d.proto_version,
               d.online, d.status, d.last_seen, d.last_state, d.created_at,
               d.mqtt_username, (d.mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials,
-              d.tenant_id, t.slug AS tenant_slug
+              d.tenant_id, t.slug AS tenant_slug,
+              d.model_id, d.compressor_kw, d.evap_fan_kw, d.cond_fan_kw,
+              d.defrost_heater_kw, d.standby_kw,
+              m.name AS model_name,
+              m.compressor_kw AS model_compressor_kw, m.evap_fan_kw AS model_evap_fan_kw,
+              m.cond_fan_kw AS model_cond_fan_kw, m.defrost_heater_kw AS model_defrost_heater_kw,
+              m.standby_kw AS model_standby_kw, m.energy_source AS model_energy_source
        FROM devices d
        JOIN tenants t ON t.id = d.tenant_id
+       LEFT JOIN device_models m ON d.model_id = m.id
        WHERE ${whereClause}`,
       params
     );
@@ -1042,13 +1049,21 @@ router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAcces
 
 // ── PATCH /api/devices/:id ────────────────────────────────
 // Update device properties (name, location, serial_number, model, comment, manufactured_at).
+const powerField = z.number().min(0).max(100).nullable().optional();
+
 const updateDeviceSchema = z.object({
-  name:            z.string().max(128).optional(),
-  location:        z.string().max(256).optional(),
-  serial_number:   z.string().max(64).optional(),
-  model:           z.string().max(64).optional(),
-  comment:         z.string().max(2000).optional(),
-  manufactured_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD').optional().nullable(),
+  name:              z.string().max(128).optional(),
+  location:          z.string().max(256).optional(),
+  serial_number:     z.string().max(64).optional(),
+  model:             z.string().max(64).optional(),
+  comment:           z.string().max(2000).optional(),
+  manufactured_at:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD').optional().nullable(),
+  model_id:          z.string().uuid().nullable().optional(),
+  compressor_kw:     powerField,
+  evap_fan_kw:       powerField,
+  cond_fan_kw:       powerField,
+  defrost_heater_kw: powerField,
+  standby_kw:        powerField,
 }).refine(data => Object.keys(data).length > 0, {
   message: 'At least one field is required',
 });

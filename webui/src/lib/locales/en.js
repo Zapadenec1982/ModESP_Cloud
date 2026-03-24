@@ -146,6 +146,7 @@ export default {
     tab_chart: 'Chart',
     tab_params: 'Parameters',
     tab_alarms: 'Alarms',
+    tab_energy: 'Energy',
     tab_state: 'State',
     temperature: 'Temperature',
     setpoint: 'Setpoint',
@@ -614,6 +615,29 @@ export default {
     export_alarms: 'Export Alarms',
     export_telemetry: 'Export Telemetry',
     haccp_report: 'HACCP Report',
+  },
+
+  // ── Energy Monitoring ──
+  energy: {
+    tab: 'Energy',
+    total: 'Total',
+    daily_avg: 'Daily Average',
+    breakdown: 'Breakdown',
+    compressor: 'Compressor',
+    defrost: 'Defrost Heater',
+    fans: 'Fans',
+    evap_fan: 'Evaporator Fan',
+    cond_fan: 'Condenser Fan',
+    standby: 'Standby',
+    estimated: 'Estimated',
+    metered: 'Metered',
+    power_profile: 'Power Profile',
+    equipment_model: 'Equipment Model',
+    no_profile: 'No power profile configured',
+    no_profile_hint: 'Set up an equipment model or enter power values in device settings to enable energy monitoring',
+    period_day: 'Today',
+    period_week: 'Week',
+    period_month: 'Month',
   },
 
   // ── Chart ──

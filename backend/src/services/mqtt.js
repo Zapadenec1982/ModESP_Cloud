@@ -64,6 +64,9 @@ const stateMap = new Map();
 
 /** @type {Map<string, number>}  mqttDeviceId → timestamp of last assign/reassign */
 const recentAssigns = new Map();
+
+/** @type {Map<string, {compressor_kw:number, evap_fan_kw:number, cond_fan_kw:number, defrost_heater_kw:number, standby_kw:number}>} */
+const powerProfiles = new Map();
 const ASSIGN_GRACE_MS = 120_000; // 2 minutes grace before auto-reset
 
 let client = null;
@@ -920,6 +923,33 @@ async function telemetrySampler() {
         rows.push({ tenantId: state._tenantId, deviceId, channel, value: numVal });
       }
     }
+
+    // ── Energy estimation (kWh per interval) ──
+    const profile = powerProfiles.get(deviceId);
+    if (profile) {
+      const intervalHours = TELEMETRY_INTERVAL / 3600000;
+
+      // Future: real sensor override — use actual reading if firmware publishes it
+      if (state['equipment.energy_kwh'] !== undefined && typeof state['equipment.energy_kwh'] === 'number') {
+        rows.push({ tenantId: state._tenantId, deviceId, channel: 'energy', value: state['equipment.energy_kwh'] });
+      } else {
+        let energy = profile.standby_kw * intervalHours;
+
+        if (state['equipment.compressor'] === true) {
+          energy += profile.compressor_kw * intervalHours;
+          energy += (profile.evap_fan_kw + profile.cond_fan_kw) * intervalHours;
+        }
+
+        if (state['defrost.active'] === true) {
+          energy += profile.defrost_heater_kw * intervalHours;
+        }
+
+        if (energy > 0) {
+          // Round to 4 decimal places (0.0001 kWh precision)
+          rows.push({ tenantId: state._tenantId, deviceId, channel: 'energy', value: Math.round(energy * 10000) / 10000 });
+        }
+      }
+    }
   }
 
   if (rows.length === 0) return;
@@ -1069,11 +1099,54 @@ async function offlineDetector() {
 
 async function refreshRegistries() {
   await loadRegistries();
+  await loadPowerProfiles();
 
   // Clean stale recentAssigns entries
   const now = Date.now();
   for (const [id, ts] of recentAssigns) {
     if (now - ts > ASSIGN_GRACE_MS * 2) recentAssigns.delete(id);
+  }
+}
+
+/**
+ * Load power profiles for energy estimation.
+ * Device overrides win over model defaults via COALESCE.
+ */
+async function loadPowerProfiles() {
+  try {
+    const { rows } = await db.query(
+      `SELECT d.mqtt_device_id,
+              COALESCE(d.compressor_kw, m.compressor_kw, 0) AS compressor_kw,
+              COALESCE(d.evap_fan_kw, m.evap_fan_kw, 0)     AS evap_fan_kw,
+              COALESCE(d.cond_fan_kw, m.cond_fan_kw, 0)      AS cond_fan_kw,
+              COALESCE(d.defrost_heater_kw, m.defrost_heater_kw, 0) AS defrost_heater_kw,
+              COALESCE(d.standby_kw, m.standby_kw, 0)        AS standby_kw
+       FROM devices d
+       LEFT JOIN device_models m ON d.model_id = m.id
+       WHERE d.status = 'active'`
+    );
+
+    powerProfiles.clear();
+    for (const row of rows) {
+      // Skip devices with no power data at all
+      const total = Number(row.compressor_kw) + Number(row.evap_fan_kw) +
+                    Number(row.cond_fan_kw) + Number(row.defrost_heater_kw) + Number(row.standby_kw);
+      if (total > 0) {
+        powerProfiles.set(row.mqtt_device_id, {
+          compressor_kw:     Number(row.compressor_kw),
+          evap_fan_kw:       Number(row.evap_fan_kw),
+          cond_fan_kw:       Number(row.cond_fan_kw),
+          defrost_heater_kw: Number(row.defrost_heater_kw),
+          standby_kw:        Number(row.standby_kw),
+        });
+      }
+    }
+
+    if (powerProfiles.size > 0) {
+      logger.info({ count: powerProfiles.size }, 'Power profiles loaded');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to load power profiles');
   }
 }
 

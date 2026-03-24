@@ -146,6 +146,7 @@ export default {
     tab_chart: 'Графік',
     tab_params: 'Параметри',
     tab_alarms: 'Аварії',
+    tab_energy: 'Енергія',
     tab_state: 'Стан',
     temperature: 'Температура',
     setpoint: 'Уставка',
@@ -601,6 +602,29 @@ export default {
     reset_password_instructions: 'Передайте цей код користувачу. Він зможе скинути пароль на сторінці входу.',
     reset_password_expires: 'Код дійсний 30 хвилин',
     reset_password_generated: 'Код скидання згенеровано',
+  },
+
+  // ── Energy Monitoring ──
+  energy: {
+    tab: 'Енергія',
+    total: 'Всього',
+    daily_avg: 'Середнє за добу',
+    breakdown: 'Розподіл',
+    compressor: 'Компресор',
+    defrost: 'Тен відтайки',
+    fans: 'Вентилятори',
+    evap_fan: 'Вентилятор випарника',
+    cond_fan: 'Вентилятор конденсатора',
+    standby: 'Очікування',
+    estimated: 'Розрахунково',
+    metered: 'Виміряно',
+    power_profile: 'Енергопрофіль',
+    equipment_model: 'Модель обладнання',
+    no_profile: 'Енергопрофіль не налаштовано',
+    no_profile_hint: 'Створіть модель обладнання або вкажіть потужності в налаштуваннях пристрою',
+    period_day: 'Сьогодні',
+    period_week: 'Тиждень',
+    period_month: 'Місяць',
   },
 
   // ── Chart ──

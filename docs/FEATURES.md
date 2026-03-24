@@ -137,7 +137,29 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 
 ---
 
-## 7. Event Tracking
+## 7. Energy Monitoring
+
+Estimated energy consumption based on equipment model power profiles.
+
+### Energy Estimation
+- Compressor runtime × rated power → estimated kWh per sampling interval
+- Breakdown by component: compressor, defrost heater, fans, standby consumption
+- Equipment model profiles (device_models table) with per-device power overrides
+- Cost calculation with configurable electricity rate per tenant (currency-aware)
+
+### Forward Compatibility
+- Reserved MQTT key `equipment.energy_kwh` for real CT clamp energy sensors (future firmware)
+- Auto-detect: if firmware publishes `equipment.energy_kwh`, sampler uses metered value instead of estimate
+- `energy_source` flag: `estimated` (default) or `metered` (CT clamp)
+
+### UI & API
+- Energy tab on Device Detail page — kWh chart, cost summary, component breakdown
+- Energy channel (`energy`) on telemetry chart alongside temperature channels
+- `GET /api/devices/:id/energy/summary` — kWh totals, cost, breakdown by component
+
+---
+
+## 8. Event Tracking
 
 Operational events beyond alarms — equipment cycles, status changes, device connectivity.
 
@@ -148,7 +170,7 @@ Operational events beyond alarms — equipment cycles, status changes, device co
 
 ---
 
-## 8. Notifications & Alerting
+## 9. Notifications & Alerting
 
 Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
@@ -176,7 +198,7 @@ Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
 ---
 
-## 9. OTA Firmware Updates
+## 10. OTA Firmware Updates
 
 Upload, deploy, and monitor firmware updates — single device or fleet-wide rollout.
 
@@ -205,7 +227,7 @@ Upload, deploy, and monitor firmware updates — single device or fleet-wide rol
 
 ---
 
-## 10. User Management & Authentication
+## 11. User Management & Authentication
 
 JWT-based auth with 4-tier RBAC and per-device access control.
 
@@ -242,7 +264,7 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 
 ---
 
-## 11. Audit Logging
+## 12. Audit Logging
 
 Immutable, append-only audit trail for compliance and security.
 
@@ -255,7 +277,7 @@ Immutable, append-only audit trail for compliance and security.
 
 ---
 
-## 12. Real-Time Communication
+## 13. Real-Time Communication
 
 Dual real-time channels — MQTT for device-to-cloud, WebSocket for cloud-to-browser.
 
@@ -274,7 +296,7 @@ Dual real-time channels — MQTT for device-to-cloud, WebSocket for cloud-to-bro
 
 ---
 
-## 13. Web Interface
+## 14. Web Interface
 
 Responsive Svelte SPA with dark/light theme and full i18n.
 
@@ -300,7 +322,7 @@ Responsive Svelte SPA with dark/light theme and full i18n.
 
 ---
 
-## 14. Infrastructure & Operations
+## 15. Infrastructure & Operations
 
 Production-ready deployment with TLS, backups, and monitoring.
 
@@ -335,7 +357,7 @@ Production-ready deployment with TLS, backups, and monitoring.
 
 ---
 
-## 15. Developer Experience
+## 16. Developer Experience
 
 Clean codebase with testing infrastructure and local development tools.
 

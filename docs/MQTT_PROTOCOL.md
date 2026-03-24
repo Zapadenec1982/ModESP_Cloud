@@ -79,6 +79,7 @@ modesp/v1/acme/A4CF12/state/protection.alarm_code     → "none"
 | `equipment.compressor` | bool | Стан компресора |
 | `equipment.defrost_relay` | bool | Стан реле відтайки |
 | `equipment.sensor1_ok` | bool | Справність датчика 1 |
+| `equipment.energy_kwh` | float | Енергоспоживання за інтервал семплювання (кВт·год). Зарезервований ключ для майбутніх CT clamp сенсорів. Коли присутній — cloud використовує реальне значення замість розрахункового |
 
 **Protection (аварії та діагностика):**
 
@@ -378,3 +379,4 @@ Bottleneck при масштабі — PostgreSQL insert throughput і Node.js e
 
 - 2026-03-07 — Створено. Початкова версія (JSON bundles, не відповідала прошивці).
 - 2026-03-07 — Повний перепис. v1 протокол: individual scalar keys, heartbeat, auto-discovery, legacy support.
+- 2026-03-24 — Додано зарезервований ключ `equipment.energy_kwh` для CT clamp датчиків енергії.

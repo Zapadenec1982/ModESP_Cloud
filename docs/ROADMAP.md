@@ -2,9 +2,9 @@
 
 ## Current Status
 
-**Production deployed ✅ — 11 phases complete, ESP32 connected via MQTT+TLS**
+**Production deployed ✅ — 13 phases complete, ESP32 connected via MQTT+TLS**
 
-Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity).
+Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity), Energy Monitoring.
 
 **Next: Phase 12 — Bulk Device Import**
 
@@ -120,6 +120,19 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 - **11c:** Password Change UI + NIST policy (15-char min, HaveIBeenPwned k-anonymity check)
 - **11d:** Alarm Severity Classification (critical/warning/info, nuisance delays, severity filter)
 
+### Phase 13: Energy Monitoring ✅ (2026-03-24)
+Estimated energy consumption based on equipment model power profiles.
+
+- device_models table with power profiles (compressor/defrost/fan/standby watts)
+- Telemetry sampler calculates estimated kWh from compressor/defrost/fan state x rated power
+- Energy telemetry channel (`energy`) stored alongside temperature channels
+- Per-device power overrides (devices.power_overrides JSONB)
+- Cost calculation with configurable electricity rate per tenant
+- Energy summary API: `GET /devices/:id/energy/summary` (kWh, cost, breakdown)
+- Device Models CRUD API: `GET/POST/PATCH/DELETE /device-models`
+- Energy tab on Device Detail page + energy channel on telemetry chart
+- Forward-compatible: reserved `equipment.energy_kwh` MQTT key for CT clamp sensors (auto-detect metered vs estimated)
+
 ---
 
 ## Upcoming Phases
@@ -135,26 +148,6 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 - [ ] WebUI: "Import CSV" button on PendingDevices
 
 **Outcome:** Admin downloads pending list → fills metadata in Excel → uploads back → 500 devices activated in a minute.
-
----
-
-### Phase 13: Energy Monitoring + Health Score
-**Goal:** Transform raw compressor data into business metrics (kWh, cost, health score).
-**Timeline:** 2-3 weeks
-
-#### Backend
-- [ ] New telemetry channels: power_watts, energy_kwh
-- [ ] REST API: `GET /devices/:id/energy` → kWh, cost, avg power
-- [ ] REST API: `GET /fleet/energy` → total kWh, top consumers, cost
-- [ ] Health Score calculator (hourly cron): alarm frequency, duty deviation, sensor errors, offline hours → score 0-100
-- [ ] REST API: `GET /devices/:id/health`, `GET /fleet/health`
-
-#### WebUI
-- [ ] DeviceDetail: Energy tab (kWh chart, cost KPI)
-- [ ] DeviceDetail: Health Score badge (green/yellow/red)
-- [ ] Dashboard: fleet energy summary, sort by health score
-
-**Outcome:** Customer sees energy cost per refrigerator and which units need attention.
 
 ---
 
@@ -241,11 +234,11 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
  Phase 12: Bulk Import              Phase 15: Webhooks + API      Phase 18: Self-Service
  └── 3-5 days                      └── 1.5-2 weeks              └── 4-6 weeks
 
- Phase 13: Energy + Health          Phase 16: Reports + PWA
+ Phase 14: Benchmarking             Phase 16: Reports + PWA
  └── 2-3 weeks                     └── 2-3 weeks
 
- Phase 14: Benchmarking             Phase 17: Recommendations
- └── 2-3 weeks                     └── 1.5-2 weeks
+                                    Phase 17: Recommendations
+                                    └── 1.5-2 weeks
 ──────────────────────────────────────────────────────────────────────────────
 ```
 
@@ -264,13 +257,13 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 | M:N multi-tenant users | Technician serves multiple customers | None |
 | Self-hosted | Full data control, ~$20/mo on VPS | Monnit Enterprise (expensive) |
 | HACCP Export | CSV + PDF with Cyrillic, regulatory-ready | SmartSense, Monnit |
+| Energy Monitoring | Estimated kWh from power profiles, CT clamp ready | Axiom, KLATU, SmartSense |
 
 ### Feature Gaps (upcoming)
 
 | Gap | Who Already Has It | Phase |
 |-----|-------------------|-------|
-| Energy monitoring (kWh) | Axiom, KLATU, SmartSense | Phase 13 |
-| Equipment Health Score | SmartSense, KLATU | Phase 13 |
+| Equipment Health Score | SmartSense, KLATU | Phase 14 |
 | Anomaly detection | Axiom, KLATU | Phase 14 |
 | Fleet benchmarking | Axiom, SmartSense | Phase 14 |
 | Webhooks / API | Monnit, Tive, SmartSense | Phase 15 |
@@ -283,6 +276,7 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 
 ## Changelog
 
+- 2026-03-24 — Phase 13 complete: Energy Monitoring (estimated kWh, device models, cost calculation, energy tab).
 - 2026-03-15 — Revision: merged ROADMAP + ROADMAP_NEXT, renumbered phases 12-18, removed internal details. Split into EN + UA versions.
 - 2026-03-15 — Phase 11 complete: Events API, HACCP Export (CSV+PDF), Password Change (NIST), Alarm Severity (ISA-18.2).
 - 2026-03-11 — Phase 8c: Telegram Bot Redesign + UX (auth, RBAC, i18n, persistent keyboard).

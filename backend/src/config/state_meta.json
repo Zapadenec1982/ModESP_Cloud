@@ -57,6 +57,7 @@
     "equipment.compressor",
     "equipment.defrost_relay",
     "equipment.sensor1_ok",
+    "equipment.energy_kwh",
     "protection.lockout",
     "protection.alarm_active",
     "protection.alarm_code",
