@@ -246,11 +246,11 @@
       {
         stroke: 'rgba(139, 148, 158, 0.6)',
         grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
-        size: 55,
-        label: '\u00B0C',
-        font: '11px "IBM Plex Sans", system-ui',
-        labelFont: 'bold 12px "IBM Plex Sans", system-ui',
+        size: window.innerWidth <= 640 ? 36 : 50,
+        label: null,
+        font: (window.innerWidth <= 640 ? '10' : '11') + 'px "IBM Plex Sans", system-ui',
         ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
+        values: (u, vals) => vals.map(v => v == null ? '' : v + '°'),
       },
     ];
 
