@@ -272,7 +272,7 @@
 
     const opts = {
       width,
-      height: window.innerWidth <= 640 ? Math.max(280, window.innerHeight * 0.4) : 320,
+      height: 320,
       cursor: { show: true, drag: { x: true, y: false } },
       scales,
       axes,
@@ -409,8 +409,7 @@
       if (chart && chartEl) {
         const w = chartEl.clientWidth;
         if (w > 50) {
-          const h = window.innerWidth <= 640 ? Math.max(280, window.innerHeight * 0.4) : 320;
-          chart.setSize({ width: w, height: h });
+          chart.setSize({ width: w, height: 320 });
         }
       }
     });
