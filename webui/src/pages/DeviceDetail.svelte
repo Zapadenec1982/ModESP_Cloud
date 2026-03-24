@@ -260,6 +260,7 @@
 
   // ── Reset to pending ──
   let resettingToPending = false
+  let showMoreMenu = false
 
   async function handleResetToPending() {
     if (!confirm($t('device.reset_pending_confirm').replace('{0}', device.mqtt_device_id))) return
@@ -352,6 +353,46 @@
             <Icon name="edit" size={16} />
           </button>
         {/if}
+        {#if $isAdmin}
+          <div class="more-menu-wrap">
+            <button class="edit-btn" on:click={() => showMoreMenu = !showMoreMenu} title="More actions">
+              <Icon name="more-vertical" size={16} />
+            </button>
+            {#if showMoreMenu}
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
+              <div class="more-menu-backdrop" on:click={() => showMoreMenu = false}></div>
+              <div class="more-menu">
+                {#if device.has_mqtt_credentials}
+                  <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleMqttGenerate(); }} disabled={mqttCredsBusy}>
+                    <Icon name="refresh-cw" size={14} />
+                    {$t('device.mqtt_rotate')}
+                  </button>
+                {:else}
+                  <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleMqttGenerate(); }} disabled={mqttCredsBusy}>
+                    <Icon name="key" size={14} />
+                    {$t('device.mqtt_generate')}
+                  </button>
+                {/if}
+                {#if $isSuperAdmin}
+                  <button class="more-menu-item" on:click={() => { showMoreMenu = false; openReassign(); }}>
+                    <Icon name="repeat" size={14} />
+                    {$t('device.change_tenant')}
+                  </button>
+                {/if}
+                <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleResetToPending(); }}
+                  disabled={resettingToPending || device.status === 'pending'}>
+                  <Icon name="rotate-ccw" size={14} />
+                  {$t('device.reset_pending')}
+                </button>
+                <div class="more-menu-divider"></div>
+                <button class="more-menu-item more-menu-danger" on:click={() => { showMoreMenu = false; openDeleteConfirm(); }}>
+                  <Icon name="trash-2" size={14} />
+                  {$t('device.delete_device')}
+                </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="header-meta">
@@ -389,75 +430,6 @@
 
       {#if device.comment}
         <div class="header-comment">{device.comment}</div>
-      {/if}
-
-      {#if device.users && device.users.length > 0}
-        <div class="device-users">
-          <Icon name="users" size={14} />
-          <span class="users-label">{$t('device.users_with_access')}:</span>
-          {#each device.users as user}
-            <span class="user-chip">
-              {user.email}
-              <Badge variant={roleVariant(user.role)} size="sm">{user.role}</Badge>
-            </span>
-          {/each}
-        </div>
-      {/if}
-
-      <!-- MQTT Auth status (admin only) -->
-      {#if $isAdmin}
-        <div class="mqtt-auth-row">
-          <Icon name="lock" size={14} />
-          <span class="mqtt-label">{$t('device.mqtt_auth')}:</span>
-          {#if device.has_mqtt_credentials}
-            <Badge variant="success" size="sm">{$t('device.mqtt_configured')}</Badge>
-          {:else}
-            <Badge variant="neutral" size="sm">{$t('device.mqtt_not_configured')}</Badge>
-          {/if}
-          <div class="mqtt-actions">
-            <button class="btn btn-sm btn-ghost" on:click={handleMqttGenerate} disabled={mqttCredsBusy}>
-              <Icon name="refresh-cw" size={12} />
-              {device.has_mqtt_credentials ? $t('device.mqtt_rotate') : $t('device.mqtt_generate')}
-            </button>
-            {#if device.has_mqtt_credentials}
-              <button class="btn btn-sm btn-ghost btn-danger-text" on:click={handleMqttRevoke} disabled={mqttCredsBusy}>
-                <Icon name="x-circle" size={12} />
-                {$t('device.mqtt_revoke')}
-              </button>
-            {/if}
-          </div>
-        </div>
-      {/if}
-
-      <!-- Tenant reassignment (superadmin only) -->
-      {#if $isSuperAdmin}
-        <div class="reassign-row">
-          <Icon name="layers" size={14} />
-          <span class="mqtt-label">{$t('device.tenant')}:</span>
-          <Badge variant="info" size="sm">{device.tenant_slug || '—'}</Badge>
-          <div class="mqtt-actions">
-            <button class="btn btn-sm btn-ghost" on:click={openReassign}>
-              <Icon name="repeat" size={12} />
-              {$t('device.change_tenant')}
-            </button>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Device management actions (admin only) -->
-      {#if $isAdmin}
-        <div class="device-danger-zone">
-          <button class="btn btn-sm btn-ghost btn-warning-text" on:click={handleResetToPending}
-            disabled={resettingToPending || device.status === 'pending'}
-            title={$t('device.reset_pending_hint')}>
-            <Icon name="rotate-ccw" size={12} />
-            {$t('device.reset_pending')}
-          </button>
-          <button class="btn btn-sm btn-ghost btn-danger-text" on:click={openDeleteConfirm}>
-            <Icon name="trash-2" size={12} />
-            {$t('device.delete_device')}
-          </button>
-        </div>
       {/if}
     </div>
 
@@ -827,6 +799,71 @@
     color: var(--accent-blue);
     border-color: var(--accent-blue);
     background: var(--bg-tertiary);
+  }
+
+  /* ── More menu (⋮) ─────────────────────────── */
+  .more-menu-wrap {
+    position: relative;
+  }
+
+  .more-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9;
+  }
+
+  .more-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 10;
+    min-width: 200px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    padding: var(--space-1) 0;
+    margin-top: 4px;
+  }
+
+  .more-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast);
+  }
+
+  .more-menu-item:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .more-menu-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .more-menu-danger {
+    color: var(--accent-red);
+  }
+
+  .more-menu-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--accent-red);
+  }
+
+  .more-menu-divider {
+    height: 1px;
+    background: var(--border-muted);
+    margin: var(--space-1) 0;
   }
 
   .header-meta {
