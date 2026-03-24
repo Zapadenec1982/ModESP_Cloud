@@ -46,7 +46,7 @@
   let deviceModels = []
 
   let showNewModel = false
-  let newModel = { name: '', compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
+  let newModel = { name: '', compressor_kw: '', defrost_heater_kw: '', evap_fan_w: '', cond_fan_w: '', standby_w: '' }
   let creatingModel = false
 
   async function loadDeviceModels() {
@@ -57,7 +57,7 @@
   }
 
   function openNewModel() {
-    newModel = { name: '', compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
+    newModel = { name: '', compressor_kw: '', defrost_heater_kw: '', evap_fan_w: '', cond_fan_w: '', standby_w: '' }
     showNewModel = true
   }
 
@@ -69,10 +69,10 @@
       const created = await createDeviceModel({
         name: newModel.name.trim(),
         compressor_kw: newModel.compressor_kw ? Number(newModel.compressor_kw) : null,
-        evap_fan_kw: newModel.evap_fan_kw ? Number(newModel.evap_fan_kw) : null,
-        cond_fan_kw: newModel.cond_fan_kw ? Number(newModel.cond_fan_kw) : null,
         defrost_heater_kw: newModel.defrost_heater_kw ? Number(newModel.defrost_heater_kw) : null,
-        standby_kw: newModel.standby_kw ? Number(newModel.standby_kw) : null,
+        evap_fan_kw: newModel.evap_fan_w ? Number(newModel.evap_fan_w) / 1000 : null,
+        cond_fan_kw: newModel.cond_fan_w ? Number(newModel.cond_fan_w) / 1000 : null,
+        standby_kw: newModel.standby_w ? Number(newModel.standby_w) / 1000 : null,
       })
       await loadDeviceModels()
       editForm.model_id = created.id
@@ -94,10 +94,10 @@
       manufactured_at: device.manufactured_at ? device.manufactured_at.slice(0, 10) : '',
       model_id: device.model_id || '',
       compressor_kw: device.compressor_kw ?? '',
-      evap_fan_kw: device.evap_fan_kw ?? '',
-      cond_fan_kw: device.cond_fan_kw ?? '',
       defrost_heater_kw: device.defrost_heater_kw ?? '',
-      standby_kw: device.standby_kw ?? '',
+      evap_fan_w: device.evap_fan_kw != null ? Math.round(device.evap_fan_kw * 1000) : '',
+      cond_fan_w: device.cond_fan_kw != null ? Math.round(device.cond_fan_kw * 1000) : '',
+      standby_w: device.standby_kw != null ? Math.round(device.standby_kw * 1000) : '',
     }
     loadDeviceModels()
     showEdit = true
@@ -124,10 +124,17 @@
       // Power profile fields
       const modelId = editForm.model_id || null
       if (modelId !== (device.model_id || null)) changes.model_id = modelId
-      for (const f of ['compressor_kw', 'evap_fan_kw', 'cond_fan_kw', 'defrost_heater_kw', 'standby_kw']) {
+      // kW fields (compressor, defrost — already in kW)
+      for (const f of ['compressor_kw', 'defrost_heater_kw']) {
         const val = editForm[f] === '' ? null : Number(editForm[f])
         const cur = device[f] ?? null
         if (val !== cur) changes[f] = val
+      }
+      // W→kW fields (fans, standby — UI shows W, DB stores kW)
+      for (const [uiField, dbField] of [['evap_fan_w', 'evap_fan_kw'], ['cond_fan_w', 'cond_fan_kw'], ['standby_w', 'standby_kw']]) {
+        const val = editForm[uiField] === '' ? null : Number(editForm[uiField]) / 1000
+        const cur = device[dbField] ?? null
+        if (val !== cur) changes[dbField] = val
       }
 
       if (Object.keys(changes).length === 0) {
@@ -682,17 +689,17 @@
             </div>
             <div class="form-row-power">
               <div class="form-group">
-                <label>{$t('energy.evap_fan')} (kW)</label>
-                <input type="number" step="0.001" min="0" bind:value={newModel.evap_fan_kw} placeholder="0.050" />
+                <label>{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
+                <input type="number" step="1" min="0" bind:value={newModel.evap_fan_w} placeholder="50" />
               </div>
               <div class="form-group">
-                <label>{$t('energy.cond_fan')} (kW)</label>
-                <input type="number" step="0.001" min="0" bind:value={newModel.cond_fan_kw} placeholder="0.080" />
+                <label>{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
+                <input type="number" step="1" min="0" bind:value={newModel.cond_fan_w} placeholder="80" />
               </div>
             </div>
             <div class="form-group">
-              <label>{$t('energy.standby')} (kW)</label>
-              <input type="number" step="0.001" min="0" bind:value={newModel.standby_kw} placeholder="0.020" style="max-width: 200px" />
+              <label>{$t('energy.standby')} ({$t('energy.unit_w')})</label>
+              <input type="number" step="1" min="0" bind:value={newModel.standby_w} placeholder="20" style="max-width: 200px" />
             </div>
             <div class="new-model-actions">
               <button type="button" class="btn btn-ghost btn-sm" on:click={() => showNewModel = false}>{$t('common.cancel')}</button>
@@ -716,20 +723,20 @@
         </div>
         <div class="form-row-power">
           <div class="form-group">
-            <label>{$t('energy.evap_fan')} (kW)</label>
-            <input type="number" step="0.001" min="0" placeholder={device?.model_evap_fan_kw || ''}
-              bind:value={editForm.evap_fan_kw} />
+            <label>{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
+            <input type="number" step="1" min="0" placeholder={device?.model_evap_fan_kw ? Math.round(device.model_evap_fan_kw * 1000) : ''}
+              bind:value={editForm.evap_fan_w} />
           </div>
           <div class="form-group">
-            <label>{$t('energy.cond_fan')} (kW)</label>
-            <input type="number" step="0.001" min="0" placeholder={device?.model_cond_fan_kw || ''}
-              bind:value={editForm.cond_fan_kw} />
+            <label>{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
+            <input type="number" step="1" min="0" placeholder={device?.model_cond_fan_kw ? Math.round(device.model_cond_fan_kw * 1000) : ''}
+              bind:value={editForm.cond_fan_w} />
           </div>
         </div>
         <div class="form-group">
-          <label>{$t('energy.standby')} (kW)</label>
-          <input type="number" step="0.001" min="0" placeholder={device?.model_standby_kw || ''}
-            bind:value={editForm.standby_kw} style="max-width: 200px" />
+          <label>{$t('energy.standby')} ({$t('energy.unit_w')})</label>
+          <input type="number" step="1" min="0" placeholder={device?.model_standby_kw ? Math.round(device.model_standby_kw * 1000) : ''}
+            bind:value={editForm.standby_w} style="max-width: 200px" />
         </div>
       </div>
       <div class="modal-actions">

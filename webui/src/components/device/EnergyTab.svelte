@@ -149,7 +149,7 @@
       <Icon name="zap" size={12} />
       <span>{source === 'metered' ? $t('energy.metered') : $t('energy.estimated')}</span>
       {#if effectivePower.compressor > 0}
-        <span class="source-detail">• {$t('energy.compressor')} {effectivePower.compressor} kW</span>
+        <span class="source-detail">• {$t('energy.compressor')} {effectivePower.compressor} {$t('energy.unit_kw')} | {$t('energy.fans')} {Math.round((effectivePower.evap_fan + effectivePower.cond_fan) * 1000)} {$t('energy.unit_w')}</span>
       {/if}
     </div>
   </div>

@@ -618,6 +618,8 @@ export default {
     no_profile_hint: 'Utwórz model urządzenia lub podaj wartości mocy w ustawieniach urządzenia',
     new_model: 'Nowy model',
     model_created: 'Model urządzenia utworzony',
+    unit_w: 'W',
+    unit_kw: 'kW',
     period_day: 'Dziś',
     period_week: 'Tydzień',
     period_month: 'Miesiąc',
