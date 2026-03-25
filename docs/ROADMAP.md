@@ -2,11 +2,11 @@
 
 ## Current Status
 
-**Production deployed ✅ — 13 phases complete, ESP32 connected via MQTT+TLS**
+**Production deployed ✅ — 14 phases complete, ESP32 connected via MQTT+TLS**
 
 Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity), Energy Monitoring.
 
-**Next: Phase 12 — Bulk Device Import**
+**Next: Phase 14 — Fleet Benchmarking + Anomaly Detection**
 
 ---
 
@@ -120,6 +120,15 @@ Closing gaps identified during audit — HACCP, NIST, ISA-18.2.
 - **11c:** Password Change UI + NIST policy (15-char min, HaveIBeenPwned k-anonymity check)
 - **11d:** Alarm Severity Classification (critical/warning/info, nuisance delays, severity filter)
 
+### Phase 12: Bulk Device Import ✅ (2026-03-25)
+Mass onboarding of devices via CSV upload.
+
+- CSV import modal with drag-and-drop, preview table, target tenant selector
+- Download CSV template with headers (mqtt_device_id, name, serial_number, location, model, comment, manufactured_at)
+- Batch assign: find pending → set metadata → provision MQTT credentials → assign to tenant
+- Result summary: assigned/skipped/errors per row
+- "Batch Registration" button on PendingDevices page
+
 ### Phase 13: Energy Monitoring ✅ (2026-03-24)
 Estimated energy consumption based on equipment model power profiles.
 
@@ -136,20 +145,6 @@ Estimated energy consumption based on equipment model power profiles.
 ---
 
 ## Upcoming Phases
-
-### Phase 12: Bulk Device Import
-**Goal:** Mass onboarding of 50-1000 devices via CSV upload instead of one-by-one assignment.
-**Timeline:** 3-5 days
-
-- [ ] `POST /api/devices/import` — CSV upload, per-row: find pending → assign + MQTT creds
-- [ ] `GET /api/devices/pending/export` — export pending list to CSV (fill in Excel → re-upload)
-- [ ] `GET /api/devices/import/template` — blank CSV template with headers
-- [ ] WebUI: `ImportModal.svelte` — drag-and-drop, preview, result (assigned/skipped/errors)
-- [ ] WebUI: "Import CSV" button on PendingDevices
-
-**Outcome:** Admin downloads pending list → fills metadata in Excel → uploads back → 500 devices activated in a minute.
-
----
 
 ### Phase 14: Fleet Benchmarking + Anomaly Detection
 **Goal:** Compare similar equipment, automatically detect anomalies.
@@ -231,11 +226,11 @@ Estimated energy consumption based on equipment model power profiles.
 ```
 2026 Q2 (Apr-May)                  Q3 (Jun-Aug)                   Q4 (Sep+)
 ──────────────────────────────────────────────────────────────────────────────
- Phase 12: Bulk Import              Phase 15: Webhooks + API      Phase 18: Self-Service
- └── 3-5 days                      └── 1.5-2 weeks              └── 4-6 weeks
+ Phase 14: Benchmarking             Phase 15: Webhooks + API      Phase 18: Self-Service
+ └── 2-3 weeks                     └── 1.5-2 weeks              └── 4-6 weeks
 
- Phase 14: Benchmarking             Phase 16: Reports + PWA
- └── 2-3 weeks                     └── 2-3 weeks
+                                    Phase 16: Reports + PWA
+                                    └── 2-3 weeks
 
                                     Phase 17: Recommendations
                                     └── 1.5-2 weeks
@@ -276,6 +271,7 @@ Estimated energy consumption based on equipment model power profiles.
 
 ## Changelog
 
+- 2026-03-25 — Phase 12 complete: Bulk Device Import (CSV upload with drag-drop, template, batch assign).
 - 2026-03-24 — Phase 13 complete: Energy Monitoring (estimated kWh, device models, cost calculation, energy tab).
 - 2026-03-15 — Revision: merged ROADMAP + ROADMAP_NEXT, renumbered phases 12-18, removed internal details. Split into EN + UA versions.
 - 2026-03-15 — Phase 11 complete: Events API, HACCP Export (CSV+PDF), Password Change (NIST), Alarm Severity (ISA-18.2).
