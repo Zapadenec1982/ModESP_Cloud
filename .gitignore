@@ -14,9 +14,19 @@ node_modules/
 
 # Environment
 .env
+.env.local
+.env.*.local
 
 # Logs
 *.log
+
+# Test coverage
+coverage/
+
+# TLS certificates (safety net)
+*.pem
+*.key
+*.p12
 
 # Windows artifacts
 nul
