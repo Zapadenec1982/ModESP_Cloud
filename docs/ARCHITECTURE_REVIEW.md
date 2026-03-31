@@ -316,31 +316,125 @@ const listeners = new Map();  // Not cleared on disconnect
 
 ---
 
-## 7. Prioritized Action Items
+## 7. Code Quality Deep Dive
+
+### 7.1 Code Duplication (HIGH)
+
+| Pattern | Occurrences | Files |
+|---------|-------------|-------|
+| UUID detection `id.length > 8` | 11x | devices.js, telemetry.js, export.js, alarms.js, events.js, device-access.js |
+| Device lookup WHERE clause | 8x | devices.js (lines 48-56, 204-217, 305-317, 392-402) |
+| Device deletion cascade (6 DELETEs) | 3x | devices.js (pending, single, bulk delete) |
+| Tenant/device resolution | 4x | devices.js, export.js, telemetry.js |
+| Time range parsing | 3x | telemetry.js, export.js |
+
+**Fix:** Extract shared helpers:
+- `utils/validation.js` — `isDeviceUuid(id)`
+- `utils/dateUtils.js` — `parseTimeRange(query, maxDays)`
+- `routes/devices.js` — consolidate `deleteDevice()` helper
+
+### 7.2 Global State in mqtt.js (HIGH)
+
+5 module-level Maps without encapsulation or size limits:
+
+```
+stateMap, deviceRegistry, tenantRegistry, recentAssigns, powerProfiles
+```
+
+- **Risk:** Unbounded memory growth for deleted/inactive devices
+- `recentAssigns` has no TTL-based cleanup
+- State mutations scattered across 40+ functions
+- **Fix:** Wrap in `DeviceStateManager` class with max-size limits and LRU eviction
+
+### 7.3 Naming Inconsistencies (MEDIUM)
+
+- `isSuperAdmin` vs `isSuperadmin` — inconsistent casing (11 occurrences)
+- `lastSeen` (code) vs `last_seen` (DB) vs `_lastSeen` (stateMap) — 3 conventions
+- Middleware factories named as checks: `filterDeviceAccess()`, `checkDeviceAccess()`
+
+### 7.4 Magic Numbers (MEDIUM)
+
+Well-named constants exist for core timings (TELEMETRY_INTERVAL, OFFLINE_THRESHOLD), but many hardcoded values remain:
+
+| Value | Location | Should Be |
+|-------|----------|-----------|
+| `'100kb'` | index.js:51 | `MAX_BODY_SIZE` |
+| `50`, `30` | index.js:82-89 | `RATE_LIMIT_MAX`, `REGISTRATION_LIMIT_MAX` |
+| `500000` | export.js:103 | `TELEMETRY_EXPORT_LIMIT` |
+| `8` | devices.js:49 (11x) | `MIN_MQTT_ID_LENGTH` |
+| `32` | index.js:37 | `JWT_SECRET_MIN_LENGTH` |
+| `30` | telegram.js:377 | `TG_HISTORY_PAGE_SIZE` |
+
+### 7.5 Function Complexity (MEDIUM)
+
+| File | Function | Lines | Issue |
+|------|----------|-------|-------|
+| mqtt.js | `start()` | ~140 | Init + subscriptions + timers — split into 3 |
+| devices.js | bulk import handler | ~170 | CSV parse + validate + upsert, 4 nested try/catch |
+| devices.js | command handler | ~130 | Validation + routing + error handling |
+
+### 7.6 Memory Management (MEDIUM)
+
+**Good:** Proper shutdown handlers, timer cleanup, connection pooling, event listener cleanup.
+
+**Issues:**
+- `stateMap` in mqtt.js — no eviction for offline/deleted devices
+- `recentAssigns` — timestamps stored indefinitely
+- WebSocket `listeners` Map not cleared on reconnect (frontend)
+
+### 7.7 Error Handling (GOOD)
+
+- Consistent `{ error, message, status }` format (52x `validation_failed`, 45x `not_found`)
+- Global Express error handler catches unhandled errors
+- Zod validation on all inputs
+- **Minor:** Some routes use `res.status(500).json()` directly vs `next(err)` — inconsistent
+
+### 7.8 Quality Scorecard
+
+| Aspect | Score | Notes |
+|--------|-------|-------|
+| Error Handling | 8/10 | Consistent, standardized |
+| Memory Management | 6/10 | Good patterns, unbounded Maps |
+| String Safety | 8/10 | Parameterized queries throughout |
+| Encapsulation | 5/10 | mqtt.js needs refactoring |
+| Naming | 7/10 | Strong overall, minor inconsistencies |
+| Code Duplication | 5/10 | UUID check 11x, device lookup 8x |
+| Magic Numbers | 6/10 | Core timings named, many hardcoded |
+| Function Sizes | 8/10 | Mostly reasonable |
+| TODO/FIXME | 10/10 | None found — clean codebase |
+| Imports | 7/10 | No guards needed, inconsistent order |
+
+---
+
+## 8. Prioritized Action Items
 
 ### Immediate (Sprint 1-2)
 1. [ ] Add unit tests for `mqtt.js` pure functions (alarm logic, parsers, state merge)
-2. [ ] Add `npm audit` to CI pipeline
-3. [ ] Implement telemetry partition cleanup (systemd timer)
-4. [ ] Track TODO/FIXME comments as GitHub issues
+2. [ ] Extract UUID detection helper — eliminate 11x duplication
+3. [ ] Consolidate device deletion cascade — eliminate 3x duplication
+4. [ ] Add `npm audit` to CI pipeline
+5. [ ] Implement telemetry partition cleanup (systemd timer)
 
 ### Short-Term (Sprint 3-4)
-5. [ ] Add WebSocket integration tests
-6. [ ] Stream large exports (pg-cursor instead of loading 500k rows)
-7. [ ] Fix frontend WS listener cleanup on navigation
-8. [ ] Add telemetry downsampling for long time ranges
+6. [ ] Add WebSocket integration tests
+7. [ ] Stream large exports (pg-cursor instead of loading 500k rows)
+8. [ ] Fix `isSuperAdmin`/`isSuperadmin` casing inconsistency
+9. [ ] Extract shared `parseTimeRange()` to utils
+10. [ ] Replace magic numbers with named constants
+11. [ ] Fix frontend WS listener cleanup on navigation
 
 ### Medium-Term (Sprint 5-8)
-9. [ ] Extract mqtt.js state management to testable class (DeviceStateManager)
-10. [ ] Add Redis pub/sub for WebSocket horizontal scaling
-11. [ ] Add frontend component tests (Vitest + @testing-library/svelte)
-12. [ ] Implement secret rotation policy documentation
+12. [ ] Refactor mqtt.js: extract `DeviceStateManager` class with bounded Maps
+13. [ ] Add Redis pub/sub for WebSocket horizontal scaling
+14. [ ] Add frontend component tests (Vitest + @testing-library/svelte)
+15. [ ] Add telemetry downsampling for ranges >7 days
+16. [ ] Implement secret rotation policy documentation
 
 ### Long-Term
-13. [ ] Route-based code splitting in frontend
-14. [ ] Mobile fallback (HTTP long-polling on WS failure)
-15. [ ] Database connection circuit breaker
-16. [ ] Multi-region deployment guide
+17. [ ] Route-based code splitting in frontend
+18. [ ] Mobile fallback (HTTP long-polling on WS failure)
+19. [ ] Database connection circuit breaker
+20. [ ] Multi-region deployment guide
 
 ---
 
@@ -350,7 +444,9 @@ ModESP Cloud has a **strong architectural foundation** for a production IoT plat
 
 The main risks are:
 1. **Testing gaps** in the most critical services (MQTT, WebSocket)
-2. **Single-instance scalability** ceiling for WebSocket connections
-3. **Unbounded telemetry growth** without retention policy
+2. **Code duplication** — UUID check (11x), device deletion (3x), time parsing (3x)
+3. **Single-instance scalability** ceiling for WebSocket connections
+4. **Unbounded memory growth** in mqtt.js Maps (no eviction for deleted devices)
+5. **Unbounded telemetry growth** without retention policy
 
-These are typical growth-stage challenges and are addressable without architectural redesign. The codebase is clean enough that addressing these issues incrementally is practical.
+These are typical growth-stage challenges and are addressable without architectural redesign. The codebase is clean, well-secured, and structured for incremental improvement. No TODO/FIXME debt was found, indicating active maintenance.
