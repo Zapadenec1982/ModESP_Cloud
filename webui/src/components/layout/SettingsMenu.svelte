@@ -6,6 +6,22 @@
   export let compact = false
 
   let dropdownOpen = false
+  let toggleBtn = null
+  let dropdownStyle = ''
+
+  function openDropdown() {
+    if (toggleBtn) {
+      const rect = toggleBtn.getBoundingClientRect()
+      const dropdownH = supportedLocales.length * 30 + 8
+      const spaceAbove = rect.top
+      if (spaceAbove >= dropdownH) {
+        dropdownStyle = `position:fixed;bottom:${window.innerHeight - rect.top + 4}px;left:${rect.left}px;min-width:${rect.width}px`
+      } else {
+        dropdownStyle = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;min-width:${rect.width}px`
+      }
+    }
+    dropdownOpen = !dropdownOpen
+  }
 
   function cycleLocale() {
     const codes = supportedLocales.map(l => l.code)
@@ -45,7 +61,8 @@
     <div class="lang-selector">
       <button
         class="lang-toggle"
-        on:click|stopPropagation={() => dropdownOpen = !dropdownOpen}
+        bind:this={toggleBtn}
+        on:click|stopPropagation={openDropdown}
         aria-label="Select language"
       >
         <span class="lang-label">{currentLabel}</span>
@@ -54,7 +71,7 @@
         </svg>
       </button>
       {#if dropdownOpen}
-        <div class="lang-dropdown">
+        <div class="lang-dropdown" style={dropdownStyle}>
           {#each supportedLocales as loc}
             <button
               class="lang-option"
@@ -146,9 +163,6 @@
   }
 
   .lang-dropdown {
-    position: absolute;
-    bottom: calc(100% + 4px);
-    left: 0;
     background: var(--bg-secondary);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
@@ -156,9 +170,8 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
-    min-width: 100%;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    z-index: 100;
+    z-index: 1000;
   }
 
   .lang-option {
