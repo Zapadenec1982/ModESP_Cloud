@@ -236,41 +236,30 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     const deviceMqttId = rows[0].mqtt_device_id;
     const oldTenantSlug = rows[0].tenant_slug || 'pending';
 
-    // Get bootstrap password
-    const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
-    if (!bootstrapKey) {
-      return res.status(503).json({
-        error: 'not_configured',
-        message: 'Bootstrap password not configured',
-        status: 503,
-      });
-    }
-
-    // ── Step 1: Send MQTT commands BEFORE changing DB credentials ──
-    // Device is still connected with old credentials on old tenant topic.
-    // Send bootstrap creds + pending tenant so it can reconnect after DB change.
+    // ── Step 1: Tell device to switch to pending namespace ──
+    // We do NOT send _set_mqtt_creds — device keeps its current NVS credentials.
+    // This is intentional: if the device is offline, it comes back with its old
+    // unique credentials which still match the DB hash (we don't overwrite it).
+    // If the device is online, it receives _set_tenant and reconnects to the
+    // pending namespace with its current credentials — auth still passes.
     let mqttSent = false;
     try {
-      mqttSvc.sendJsonCommand(oldTenantSlug, deviceMqttId, '_set_mqtt_creds', {
-        user: `device_${deviceMqttId}`,
-        pass: bootstrapKey,
-      });
       mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
       mqttSent = true;
     } catch (err) {
-      req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
+      req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset command failed (device may be offline)');
     }
 
-    // ── Step 2: Update DB — move to SYSTEM tenant, restore bootstrap creds ──
-    const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
-
+    // ── Step 2: Update DB — move to SYSTEM tenant, keep existing credentials ──
+    // mqtt_password_hash is intentionally NOT updated: device must be able to
+    // reconnect with its current credentials (online or offline scenario).
     await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
-             mqtt_username = $2, mqtt_password_hash = $3
-         WHERE id = $4`,
-        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, bootstrapHash, deviceUuid]
+             mqtt_username = $2
+         WHERE id = $3`,
+        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, deviceUuid]
       );
 
       // Clear per-device RBAC
@@ -357,13 +346,22 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       }
     }
 
-    // Hard delete: clear all related data + device record
+    // Soft delete: keep device record + credentials so the device can reconnect
+    // and appear in Pending if it comes back online after deletion.
+    // Related data (telemetry, alarms, events) is deleted immediately.
+    // The device record is hard-deleted after 7 days by the cleanup job in mqtt.js.
     await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
     await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
     await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    await db.query(
+      `UPDATE devices
+       SET status = 'deleted', deleted_at = NOW(),
+           tenant_id = $1, name = NULL, comment = NULL
+       WHERE id = $2`,
+      [db.SYSTEM_TENANT_ID, deviceUuid]
+    );
 
     mqttSvc.removeDeviceState(deviceMqttId);
     await mqttSvc.refreshRegistries();
@@ -415,7 +413,13 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
         await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
         await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
         await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-        await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+        await db.query(
+          `UPDATE devices
+           SET status = 'deleted', deleted_at = NOW(),
+               tenant_id = $1, name = NULL, comment = NULL
+           WHERE id = $2`,
+          [db.SYSTEM_TENANT_ID, deviceUuid]
+        );
 
         mqttSvc.removeDeviceState(deviceMqttId);
         deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
@@ -429,6 +433,59 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 
     req.log?.info?.({ deleted: deleted.length, failed: failed.length }, 'Bulk device delete');
     res.json({ data: { deleted: deleted.length, failed: failed.length, devices: deleted, errors: failed } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/devices/recover ─────────────────────────────
+// Force-recover a device that is stuck (wrong credentials in NVS, factory-reset, etc.)
+// Upserts the device as pending with bootstrap credentials so it can reconnect.
+// Use when: device was factory-reset AND was previously soft-deleted (edge case).
+router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const { mqtt_device_id } = req.body;
+    if (!mqtt_device_id || typeof mqtt_device_id !== 'string' || !/^[A-F0-9]{6}$/.test(mqtt_device_id)) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'mqtt_device_id must be a 6-char hex string (e.g. C7B0E9)',
+        status: 400,
+      });
+    }
+
+    const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
+    if (!bootstrapKey) {
+      return res.status(503).json({
+        error: 'not_configured',
+        message: 'Bootstrap password not configured',
+        status: 503,
+      });
+    }
+
+    const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
+
+    // Upsert: if device exists (even if deleted), reset to pending with bootstrap creds.
+    // If device doesn't exist at all, create it fresh.
+    await db.query(
+      `INSERT INTO devices (tenant_id, mqtt_device_id, status, mqtt_username, mqtt_password_hash, online, last_seen)
+       VALUES ($1, $2, 'pending', $3, $4, false, NOW())
+       ON CONFLICT (mqtt_device_id) DO UPDATE
+         SET status = 'pending', deleted_at = NULL,
+             tenant_id = EXCLUDED.tenant_id,
+             mqtt_username = EXCLUDED.mqtt_username,
+             mqtt_password_hash = EXCLUDED.mqtt_password_hash`,
+      [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash]
+    );
+
+    await mqttSvc.refreshRegistries();
+
+    res.json({
+      data: {
+        mqtt_device_id,
+        status: 'pending',
+        message: 'Device recovery initiated. It will appear in Pending Devices when it reconnects with bootstrap credentials.',
+      },
+    });
   } catch (err) {
     next(err);
   }
