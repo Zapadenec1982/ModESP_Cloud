@@ -15,7 +15,7 @@
   import ParameterEditor from '../components/device/ParameterEditor.svelte'
   import TelemetryChart from '../components/TelemetryChart.svelte'
   import AlarmHistory from '../components/AlarmHistory.svelte'
-  import StateView from '../components/StateView.svelte'
+
   import EnergyTab from '../components/device/EnergyTab.svelte'
 
   // svelte-spa-router passes route params via `params` prop
@@ -35,7 +35,6 @@
     { id: 'alarms',  label: $t('device.tab_alarms') },
     { id: 'service', label: $t('device.tab_service') },
     { id: 'energy',  label: $t('device.tab_energy') },
-    { id: 'state',   label: $t('device.tab_state') },
   ]
 
   // ── Edit modal state ──
@@ -561,8 +560,6 @@
         </div>
       {:else if activeTab === 'energy'}
         <EnergyTab deviceId={device.mqtt_device_id} {device} />
-      {:else if activeTab === 'state'}
-        <StateView state={$liveState} />
       {/if}
     </div>
   {/if}
