@@ -130,12 +130,13 @@ async function start(log) {
   });
 
   // ── Periodic timers ──
-  timers.push(setInterval(telemetrySampler, TELEMETRY_INTERVAL));
-  timers.push(setInterval(stateWriter,      STATE_CHECK_MS));
-  timers.push(setInterval(offlineDetector,   OFFLINE_CHECK_MS));
-  timers.push(setInterval(refreshRegistries, REGISTRY_REFRESH));
-  timers.push(setInterval(flushEvents,       1000));           // batch events every 1s
-  timers.push(setInterval(stateMapMonitor,   60000));          // log stateMap stats every 60s
+  timers.push(setInterval(telemetrySampler,       TELEMETRY_INTERVAL));
+  timers.push(setInterval(stateWriter,            STATE_CHECK_MS));
+  timers.push(setInterval(offlineDetector,        OFFLINE_CHECK_MS));
+  timers.push(setInterval(refreshRegistries,      REGISTRY_REFRESH));
+  timers.push(setInterval(flushEvents,            1000));       // batch events every 1s
+  timers.push(setInterval(stateMapMonitor,        60000));      // log stateMap stats every 60s
+  timers.push(setInterval(softDeleteCleanup,      3_600_000));  // purge soft-deleted devices every hour
 }
 
 function isConnected() { return connected; }
@@ -737,9 +738,12 @@ const deletedDevices = new Map(); // deviceId → deleteTimestamp
 const DELETED_BLOCK_MS = 30_000; // 30 seconds (enough for retained messages to pass)
 
 function ensureDevice(tenantSlug, deviceId) {
-  if (deviceRegistry.has(deviceId)) return;
+  const regEntry = deviceRegistry.get(deviceId);
 
-  // Block re-creation of recently deleted devices (retained MQTT messages)
+  // Active or pending device — already handled, nothing to do
+  if (regEntry && regEntry.status !== 'deleted') return;
+
+  // Block re-creation right after any deletion (retained MQTT messages flood window)
   const deletedAt = deletedDevices.get(deviceId);
   if (deletedAt) {
     if (Date.now() - deletedAt < DELETED_BLOCK_MS) return;
@@ -783,16 +787,18 @@ function ensureDevice(tenantSlug, deviceId) {
   db.query(
     `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
      VALUES ($1, $2, 'pending', true, NOW())
-     ON CONFLICT (mqtt_device_id) DO NOTHING`,
+     ON CONFLICT (mqtt_device_id) DO UPDATE
+       SET status = 'pending', deleted_at = NULL, tenant_id = EXCLUDED.tenant_id,
+           online = true, last_seen = NOW()
+       WHERE devices.status = 'deleted'`,
     [tenantInfo.id, deviceId]
   ).then((res) => {
-    // Set bootstrap credentials (mqtt_username + shared password hash)
-    if (BOOTSTRAP_HASH) {
-      mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
-        .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
-    }
-    // Notify WS clients about new pending device
     if (res.rowCount > 0) {
+      // New device: set bootstrap credentials (setBootstrapCredentials is a no-op if hash exists)
+      if (BOOTSTRAP_HASH) {
+        mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
+          .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
+      }
       emitter.emit('pending_device', { deviceId, action: 'added' });
     }
   }).catch(err => {
@@ -1092,6 +1098,24 @@ async function offlineDetector() {
       tenantSlug: state._tenantSlug, deviceId, online: false,
       lastSeen: new Date(state._lastSeen).toISOString(),
     });
+  }
+}
+
+// ── Periodic: Soft-delete cleanup (every hour) ───────────
+// Hard-deletes device records that have been soft-deleted for more than 7 days.
+// After 7 days the device's credentials are useless — bootstrap fallback will
+// handle re-discovery if the device ever reconnects again.
+
+async function softDeleteCleanup() {
+  try {
+    const res = await db.query(
+      `DELETE FROM devices WHERE status = 'deleted' AND deleted_at < NOW() - INTERVAL '7 days'`
+    );
+    if (res.rowCount > 0) {
+      logger.info({ count: res.rowCount }, 'Soft-deleted device cleanup: hard-deleted expired records');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Soft-delete cleanup failed');
   }
 }
 
