@@ -31,10 +31,10 @@
   let activeTab = 'chart'
   $: tabs = [
     { id: 'chart',   label: $t('device.tab_chart') },
+    { id: 'energy',  label: $t('device.tab_energy') },
     { id: 'params',  label: $t('device.tab_params') },
     { id: 'alarms',  label: $t('device.tab_alarms') },
     { id: 'service', label: $t('device.tab_service') },
-    { id: 'energy',  label: $t('device.tab_energy') },
   ]
 
   // ── Edit modal state ──
