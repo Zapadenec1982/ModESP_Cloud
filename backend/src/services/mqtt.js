@@ -137,7 +137,6 @@ async function start(log) {
   timers.push(setInterval(flushEvents,            1000));       // batch events every 1s
   timers.push(setInterval(stateMapMonitor,        60000));      // log stateMap stats every 60s
   timers.push(setInterval(softDeleteCleanup,      3_600_000));  // purge soft-deleted devices every hour
-  timers.push(setInterval(checkMissingDevices,    300_000));    // auto-recover missing devices every 5 min
 }
 
 function isConnected() { return connected; }
@@ -1117,41 +1116,6 @@ async function softDeleteCleanup() {
     }
   } catch (err) {
     logger.error({ err }, 'Soft-delete cleanup failed');
-  }
-}
-
-// ── Periodic: Auto-recover missing devices (every 5 min) ──
-// Devices that have been active but offline for >60 min are likely reflashed/reset.
-// Reset their DB credentials to bootstrap so they can reconnect as pending.
-
-async function checkMissingDevices() {
-  if (!BOOTSTRAP_HASH) return;
-  try {
-    const { rows } = await db.query(
-      `UPDATE devices
-       SET mqtt_password_hash = $1,
-           status = 'pending',
-           tenant_id = $2
-       WHERE status = 'active'
-         AND online = false
-         AND last_seen < NOW() - INTERVAL '60 minutes'
-         AND mqtt_password_hash IS DISTINCT FROM $1
-       RETURNING mqtt_device_id`,
-      [BOOTSTRAP_HASH, db.SYSTEM_TENANT_ID]
-    );
-
-    if (rows.length > 0) {
-      for (const row of rows) {
-        deviceRegistry.set(row.mqtt_device_id, {
-          id: null, tenantId: db.SYSTEM_TENANT_ID, status: 'pending',
-        });
-        logger.info({ deviceId: row.mqtt_device_id },
-          'Missing device auto-reset to pending with bootstrap credentials');
-      }
-      await loadRegistries();
-    }
-  } catch (err) {
-    logger.error({ err }, 'checkMissingDevices failed');
   }
 }
 
