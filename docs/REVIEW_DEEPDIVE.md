@@ -19,11 +19,14 @@
 | — | Frontend double-`.data` (бейджі+toast) | ✅ Виправлено — `App.svelte`, `Dashboard.svelte`, `Tenants.svelte` |
 | Infra | telemetry-partition тихий auth-fail | ✅ Виправлено — `User=postgres`, drop `-U` |
 | Infra | `.gitignore` `.bin`/CSV | ✅ Виправлено |
-| P1-3/6 | міграційний раннер + дубль 017 | ⏳ Заплановано |
+| P1-3/6 | міграційний раннер + дубль 017 | ✅ Виправлено — `src/scripts/migrate.js` (`npm run migrate`, `schema_migrations`, `--baseline`/`--dry-run`); `017_energy`→`019` |
+| P1-5 | delete без транзакції | ✅ Виправлено — три cascade-delete обгорнуто в `db.transaction()` |
 | P1-4 | WS token в URL | ⏳ Заплановано |
-| P1-5 | delete без транзакції | ⏳ Заплановано |
 | P1-9/10 | firmware-URL scoping / підпис | ⏳ Заплановано (P1-10 потребує firmware Secure Boot v2 — підтвердити) |
 | P2/P3 | див. нижче | ⏳ |
+
+> **Деплой раннера на існуючий prod:** один раз виконати `npm run migrate -- --baseline`
+> (запише наявні міграції як застосовані без виконання), далі `npm run migrate` для нових.
 
 > **Примітка:** `api.js:396` typo з первинного звіту **не підтвердився** (там вже коректний `/devices`).
 > Інтеграційні vitest-набори потребують тестову БД на :5433 — прогнати після `docker compose up -d postgres-test`.
