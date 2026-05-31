@@ -21,8 +21,9 @@
 | Infra | `.gitignore` `.bin`/CSV | ✅ Виправлено |
 | P1-3/6 | міграційний раннер + дубль 017 | ✅ Виправлено — `src/scripts/migrate.js` (`npm run migrate`, `schema_migrations`, `--baseline`/`--dry-run`); `017_energy`→`019` |
 | P1-5 | delete без транзакції | ✅ Виправлено — три cascade-delete обгорнуто в `db.transaction()` |
-| P1-4 | WS token в URL | ⏳ Заплановано |
-| P1-9/10 | firmware-URL scoping / підпис | ⏳ Заплановано (P1-10 потребує firmware Secure Boot v2 — підтвердити) |
+| P1-4 | WS token в URL | ✅ Виправлено — one-time ticket через `GET /api/ws-ticket`; legacy URL-token deprecated |
+| P1-9 | firmware-URL не scoped + reuse JWT_SECRET | ✅ Виправлено — HMAC прив'язаний до device_id, окремий `FIRMWARE_URL_SECRET`, повний digest |
+| P1-10 | немає підпису прошивки | ⏳ Потребує firmware Secure Boot v2 (`D:\ModESP_v4`) — підтвердити enablement |
 | P2/P3 | див. нижче | ⏳ |
 
 > **Деплой раннера на існуючий prod:** один раз виконати `npm run migrate -- --baseline`
