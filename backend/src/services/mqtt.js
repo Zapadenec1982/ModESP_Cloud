@@ -932,6 +932,11 @@ async function autoReassignDevice(deviceId, tenantId) {
  * (no DB / stateMap / WS write).
  */
 function isTopicTenantAuthorized(deviceId, tenantSlug) {
+  // Cold start: the registry may not be loaded yet (refreshRegistries is async and
+  // MQTT messages can arrive first). Don't drop legitimate traffic before we can
+  // judge it — validation resumes once the registry is populated.
+  if (deviceRegistry.size === 0) return true;
+
   // 'pending' is the legitimate bootstrap / discovery / stuck namespace (SYSTEM tenant)
   if (tenantSlug === 'pending') return true;
 
