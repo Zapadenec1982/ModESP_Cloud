@@ -172,15 +172,18 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
     const deviceUuid = rows[0].id;
     const deviceMqttId = rows[0].mqtt_device_id;
 
-    // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK)
-    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-    // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
-    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    // Delete the device itself
-    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK).
+    // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    await db.transaction(async (client) => {
+      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
+      await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+      await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+      // Delete the device itself
+      await client.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    });
 
     // Clean up in-memory state + refresh registries immediately
     mqttSvc.removeDeviceState(deviceMqttId);
@@ -350,18 +353,21 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     // and appear in Pending if it comes back online after deletion.
     // Related data (telemetry, alarms, events) is deleted immediately.
     // The device record is hard-deleted after 7 days by the cleanup job in mqtt.js.
-    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    await db.query(
-      `UPDATE devices
-       SET status = 'deleted', deleted_at = NOW(),
-           tenant_id = $1, name = NULL, comment = NULL
-       WHERE id = $2`,
-      [db.SYSTEM_TENANT_ID, deviceUuid]
-    );
+    // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    await db.transaction(async (client) => {
+      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+      await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+      await client.query(
+        `UPDATE devices
+         SET status = 'deleted', deleted_at = NOW(),
+             tenant_id = $1, name = NULL, comment = NULL
+         WHERE id = $2`,
+        [db.SYSTEM_TENANT_ID, deviceUuid]
+      );
+    });
 
     mqttSvc.removeDeviceState(deviceMqttId);
     await mqttSvc.refreshRegistries();
@@ -408,18 +414,21 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
         const deviceUuid = rows[0].id;
         const deviceMqttId = rows[0].mqtt_device_id;
 
-        await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-        await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-        await db.query(
-          `UPDATE devices
-           SET status = 'deleted', deleted_at = NOW(),
-               tenant_id = $1, name = NULL, comment = NULL
-           WHERE id = $2`,
-          [db.SYSTEM_TENANT_ID, deviceUuid]
-        );
+        // Atomic per device so a mid-sequence failure can't leave a half-deleted row.
+        await db.transaction(async (client) => {
+          await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+          await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+          await client.query(
+            `UPDATE devices
+             SET status = 'deleted', deleted_at = NOW(),
+                 tenant_id = $1, name = NULL, comment = NULL
+             WHERE id = $2`,
+            [db.SYSTEM_TENANT_ID, deviceUuid]
+          );
+        });
 
         mqttSvc.removeDeviceState(deviceMqttId);
         deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
