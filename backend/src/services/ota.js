@@ -36,7 +36,7 @@ function shutdown() {
 // ── Send OTA to a single device ──────────────────────────
 
 async function sendOtaToDevice(tenantSlug, deviceId, firmware) {
-  const url = FIRMWARE_ORIGIN + firmwareUrl.generateSignedUrl(firmware.filename);
+  const url = FIRMWARE_ORIGIN + firmwareUrl.generateSignedUrl(firmware.filename, deviceId);
   const payload = {
     url,
     version:  firmware.version,
