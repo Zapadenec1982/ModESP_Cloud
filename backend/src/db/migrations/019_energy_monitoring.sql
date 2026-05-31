@@ -1,4 +1,4 @@
--- Migration 017: Energy Monitoring
+-- Migration 019: Energy Monitoring  (renamed from 017 to resolve a duplicate 017 number)
 -- Equipment model profiles with rated power values for estimated energy calculation.
 -- Forward-compatible with real energy sensors via energy_source flag.
 
