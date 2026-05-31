@@ -2,7 +2,7 @@
 -- Preserves tenant context across token refresh (multi-tenant users)
 
 ALTER TABLE refresh_tokens
-  ADD COLUMN tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+  ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
 
 -- Backfill existing tokens with user's default tenant_id
 UPDATE refresh_tokens rt
