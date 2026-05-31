@@ -24,7 +24,25 @@
 | P1-4 | WS token в URL | ✅ Виправлено — one-time ticket через `GET /api/ws-ticket`; legacy URL-token deprecated |
 | P1-9 | firmware-URL не scoped + reuse JWT_SECRET | ✅ Виправлено — HMAC прив'язаний до device_id, окремий `FIRMWARE_URL_SECRET`, повний digest |
 | P1-10 | немає підпису прошивки | ⏳ Потребує firmware Secure Boot v2 (`D:\ModESP_v4`) — підтвердити enablement |
-| P2/P3 | див. нижче | ⏳ |
+| **P2/P3** | див. нижче | 🟡 Частково (гілка `fix/review-p2-p3`) |
+
+### P2/P3 — статус
+
+✅ **Виправлено** (гілка `fix/review-p2-p3`):
+- БД: ідемпотентність `010/013/schema.sql`; soft-delete read-фільтр (`devices.js`); `ota_jobs` cleanup при delete.
+- **Telegram cross-tenant leak**: partial UNIQUE на `users(telegram_id)` (міграція 020) + 23505-backstop.
+- MQTT: `stateSweeper` (евікція stale stateMap + prune aux maps).
+- Backend: dead-param у OTA rollout; параметризація `LIMIT`.
+- Infra: dev-порти на `127.0.0.1` + required `POSTGRES_PASSWORD`; nginx rate-limit zone у `conf.d`; hardening backup/partition systemd-юнітів.
+- Frontend: розумніший WS-reconnect на 1006 (без зайвого refresh); прибрано no-op ternary.
+
+⏳ **Свідомо відкладено** (причина):
+- Паралельний notification fan-out (`push.js`) — файл активно редагується незакоміченою email-фічею; робити зараз = мердж-конфлікт. Після мержу email.
+- OTA `authorize()` middleware-рефактор — inline-перевірки працюють (ota.test green); рефактор ризикує technician device-access nuance. Косметика, не баг.
+- `resolveDeviceRef()` helper (евристика `id.length>8`) — рефактор ~10 місць із різним tenant/superadmin контекстом; ризик регресії > вигода без точкових тестів.
+- httpOnly refresh-cookie + CSP — велика зміна auth-флоу (backend cookie + frontend), окремий епік.
+- Optimistic command echo QoS — поведінкова зміна, потребує узгодження з firmware.
+- god-files split (`devices.js`/`mqtt.js`), `DATABASE.md` regen, CI SAST/secret-scan, `device_models` compound FK, telemetry parent-level unique — більші/документаційні задачі для окремих PR.
 
 > **Деплой раннера на існуючий prod:** один раз виконати `npm run migrate -- --baseline`
 > (запише наявні міграції як застосовані без виконання), далі `npm run migrate` для нових.
