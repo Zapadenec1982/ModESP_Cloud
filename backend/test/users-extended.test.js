@@ -49,12 +49,12 @@ describe('Users Extended', () => {
     const testAdmin = await createUser(tenant.id, {
       role: 'admin',
       email: 'changepw@usersext.test',
-      password: 'OldPass123!',
+      password: 'OldPass123!Secure',
     });
     const res = await request(app)
       .put('/api/users/me')
       .set(authHeader(testAdmin, tenant.id))
-      .send({ password: 'NewPass456!', old_password: 'OldPass123!' });
+      .send({ password: 'NewPass456!Secure', old_password: 'OldPass123!Secure' });
 
     expect(res.status).toBe(200);
   });
