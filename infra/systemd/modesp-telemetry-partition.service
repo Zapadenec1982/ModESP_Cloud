@@ -9,4 +9,8 @@ Type=oneshot
 #  socket was rejected by peer auth and the partition was never created —
 #  telemetry INSERTs would start failing on the 1st of an uncovered month.)
 User=postgres
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 ExecStart=/usr/bin/psql -d modesp_cloud -c "SELECT create_telemetry_partition(EXTRACT(YEAR FROM NOW() + INTERVAL '2 months')::INT, EXTRACT(MONTH FROM NOW() + INTERVAL '2 months')::INT)"
