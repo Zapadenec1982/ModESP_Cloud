@@ -10,11 +10,11 @@ services:
     container_name: modesp-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-modesp_cloud}
       POSTGRES_USER: ${POSTGRES_USER:-modesp_cloud}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
@@ -30,7 +30,7 @@ services:
     container_name: modesp-mosquitto
     restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "127.0.0.1:1883:1883"
     volumes:
       - ./infra/dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
@@ -46,7 +46,7 @@ services:
     image: postgres:16-alpine
     container_name: modesp-postgres-test
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       POSTGRES_DB: modesp_cloud_test
       POSTGRES_USER: modesp_cloud
