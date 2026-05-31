@@ -158,7 +158,7 @@
 
     try {
       const res = await deleteTenant(tenant.id)
-      const moved = res?.data?.tenant?.movedDevices || 0
+      const moved = res?.tenant?.movedDevices || 0
       let successMsg = $t('tenants.tenant_deleted').replace('{0}', tenant.name)
       if (moved > 0) successMsg += ` (${moved} ${$t('tenants.devices_moved_to_system')})`
       toast.success(successMsg)
