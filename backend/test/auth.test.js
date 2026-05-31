@@ -160,7 +160,7 @@ describe('Auth & RBAC', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(viewer, tenant.id))
-      .send({ email: 'new@test.com', password: 'Test1234!', role: 'viewer' });
+      .send({ email: 'new@test.com', password: 'Test1234!Secure', role: 'viewer' });
 
     expect(res.status).toBe(403);
   });
@@ -169,7 +169,7 @@ describe('Auth & RBAC', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(admin, tenant.id))
-      .send({ email: 'created-by-admin@test.com', password: 'Test1234!', role: 'viewer' });
+      .send({ email: 'created-by-admin@test.com', password: 'Test1234!Secure', role: 'viewer' });
 
     expect([200, 201]).toContain(res.status);
   });
