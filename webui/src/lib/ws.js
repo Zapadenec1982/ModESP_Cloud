@@ -13,6 +13,7 @@ let socket = null;
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 const MAX_DELAY = 30000;
+let consecutiveAbnormal = 0;   // count of back-to-back 1006 closes
 
 /** @type {Set<string>} */
 const activeSubscriptions = new Set();
@@ -50,6 +51,7 @@ export async function connect() {
     console.log('[WS] Connected');
     wsConnected.set(true);
     reconnectDelay = 1000;
+    consecutiveAbnormal = 0;
     // Re-subscribe to all active subscriptions
     for (const deviceId of activeSubscriptions) {
       socket.send(JSON.stringify({ action: 'subscribe', device_id: deviceId }));
@@ -72,18 +74,22 @@ export async function connect() {
   socket.onclose = (event) => {
     wsConnected.set(false);
 
-    // Server rejects WS handshake with 401 → browser sees code 1006 (abnormal)
-    // Also handle explicit auth codes: 4401, 1008
+    // Explicit auth-rejection codes always escalate to a token refresh.
     const isAuthCode = event.code === 4401 || event.code === 1008;
-    const isAbnormal = event.code === 1006 && get(authEnabled) && getAccessToken();
-    if (isAuthCode || isAbnormal) {
-      console.log('[WS] Auth failed (code:', event.code, '), refreshing token before reconnect');
+    // 1006 (abnormal) fires for ordinary network blips, server restarts and laptop
+    // sleep — not just auth rejection. Don't burn a token refresh + /users/me on the
+    // first one; only escalate after several back-to-back 1006s (likely a stale token).
+    if (event.code === 1006) consecutiveAbnormal++; else consecutiveAbnormal = 0;
+    const staleTokenLikely = consecutiveAbnormal >= 3 && get(authEnabled) && getAccessToken();
+
+    if (isAuthCode || staleTokenLikely) {
+      console.log('[WS] Auth failed (code:', event.code, ', streak:', consecutiveAbnormal, '), refreshing token');
+      consecutiveAbnormal = 0;
       handleAuthReconnect();
       return;
     }
 
-    // For clean disconnects (1000, 1001), just reconnect — proactive refresh
-    // in api.js ensures our token stays fresh
+    // Otherwise just reconnect — proactive refresh in api.js keeps the token fresh.
     console.log('[WS] Disconnected (code:', event.code, '), reconnecting in', reconnectDelay, 'ms');
     scheduleReconnect();
   };
