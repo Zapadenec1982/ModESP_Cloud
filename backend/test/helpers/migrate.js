@@ -13,10 +13,14 @@ const MIGRATIONS_DIR = path.join(__dirname, '../../src/db/migrations');
 async function applySchema(pool) {
   // 1. Schema
   let schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
-  // Remove telemetry partitions (not needed for tests, and dates may be past)
+  // Remove telemetry partitions (not needed for tests, and dates may be past).
+  // Strip both the partition tables AND their indexes — otherwise a CREATE INDEX
+  // on a removed partition fails with 42P01 (undefined_table).
   schema = schema.replace(/CREATE TABLE telemetry_\d{4}_\d{2} PARTITION OF[\s\S]*?;/g, '');
-  // Create a catch-all default partition for tests
+  schema = schema.replace(/CREATE (?:UNIQUE )?INDEX [^;]*?\bON telemetry_\d{4}_\d{2}[^;]*;/g, '');
+  // Create a catch-all default partition for tests (+ its dedup index for ON CONFLICT)
   schema += `\nCREATE TABLE IF NOT EXISTS telemetry_default PARTITION OF telemetry DEFAULT;\n`;
+  schema += `CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_default_unique ON telemetry_default (tenant_id, device_id, channel, time);\n`;
   await pool.query(schema);
 
   // 2. Migrations (sorted by number)
