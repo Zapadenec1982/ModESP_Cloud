@@ -4,7 +4,7 @@
  * In dev mode, Vite proxies /ws → ws://localhost:3000/ws.
  */
 
-import { getAccessToken, restoreSession } from './api.js';
+import { getAccessToken, restoreSession, getWsTicket } from './api.js';
 import { wsConnected, authEnabled } from './stores.js';
 import { get } from 'svelte/store';
 
@@ -23,7 +23,7 @@ const listeners = new Map();
 /**
  * Connect to the WebSocket server.
  */
-export function connect() {
+export async function connect() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
     return;
   }
@@ -31,10 +31,17 @@ export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let url = `${proto}//${location.host}/ws`;
 
-  // Append JWT token if available (for AUTH_ENABLED mode)
-  const token = getAccessToken();
-  if (token) {
-    url += `?token=${encodeURIComponent(token)}`;
+  // Auth: fetch a short-lived one-time ticket over authenticated REST and pass
+  // THAT in the URL — never the JWT (which would leak into logs/Referer).
+  if (get(authEnabled)) {
+    try {
+      const { ticket } = await getWsTicket();
+      url += `?ticket=${encodeURIComponent(ticket)}`;
+    } catch (e) {
+      console.warn('[WS] Failed to obtain ticket; will retry', e);
+      scheduleReconnect();
+      return;
+    }
   }
 
   socket = new WebSocket(url);

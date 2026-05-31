@@ -330,6 +330,12 @@ if (AUTH_ENABLED) {
   // All other /api routes require JWT
   app.use('/api', authenticate);
 
+  // One-time WS ticket (P1-4) — issued over authenticated REST so the JWT
+  // never travels in the WS URL query string (logs/Referer leak).
+  app.get('/api/ws-ticket', (req, res) => {
+    res.json({ data: { ticket: wsSvc.issueWsTicket(req.user) } });
+  });
+
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
