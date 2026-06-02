@@ -271,6 +271,12 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
   // Skip retained messages for unknown devices (prevents phantom devices after deletion)
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId); // reset unknown-with-tenant to pending
+    return;
+  }
+
   // Ensure stateMap entry exists
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -355,6 +361,12 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   // Skip retained messages for unknown devices
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId);
+    return;
+  }
+
   let state = stateMap.get(deviceId);
   if (!state) {
     const tenantInfo = resolveTenant(tenantSlug);
@@ -417,6 +429,12 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
   // Skip retained messages for unknown devices
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId);
+    return;
+  }
+
   let state = stateMap.get(deviceId);
   if (!state) {
     const tenantInfo = resolveTenant(tenantSlug);
@@ -468,11 +486,15 @@ const MIN_EPOCH = 1700000000;       // ~2023-11-14, filter out uptime-based time
 const MAX_BACKFILL_AGE = 90 * 86400; // 90 days
 
 function resolveBackfillTenant(tenantSlug, deviceId) {
-  // Prefer real tenant from stateMap (device may publish via 'pending' topic)
+  // Prefer real tenant from stateMap (device may publish via 'pending' topic).
+  // stateMap._tenantId is only set after a tenant-authorized state/status/heartbeat,
+  // so trusting it here is safe.
   const state = stateMap.get(deviceId);
   if (state && state._tenantId && state._tenantId !== db.SYSTEM_TENANT_ID) {
     return { id: state._tenantId, active: true };
   }
+  // No trusted stateMap tenant — fall back to the topic slug, but validate it (P0-1)
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) return null;
   return resolveTenant(tenantSlug);
 }
 
@@ -901,6 +923,43 @@ async function autoReassignDevice(deviceId, tenantId) {
 }
 
 // ── Tenant resolution ─────────────────────────────────────
+
+/**
+ * P0-1 defense-in-depth: verify a device is authorized to publish under the
+ * tenant slug taken from the MQTT topic. The broker (go-auth) ACL is the primary
+ * control; this is a Node-side backstop so a misconfigured ACL cannot cause
+ * cross-tenant data attribution. Returns false → caller MUST drop the message
+ * (no DB / stateMap / WS write).
+ */
+function isTopicTenantAuthorized(deviceId, tenantSlug) {
+  // Cold start: the registry may not be loaded yet (refreshRegistries is async and
+  // MQTT messages can arrive first). Don't drop legitimate traffic before we can
+  // judge it — validation resumes once the registry is populated.
+  if (deviceRegistry.size === 0) return true;
+
+  // 'pending' is the legitimate bootstrap / discovery / stuck namespace (SYSTEM tenant)
+  if (tenantSlug === 'pending') return true;
+
+  // Unknown tenant slug — never attribute data to it (was silently mapped to SYSTEM)
+  const expected = tenantRegistry.get(tenantSlug);
+  if (!expected) {
+    logger.warn({ deviceId, tenantSlug }, 'Unknown tenant slug on topic — dropping message');
+    return false;
+  }
+
+  const reg = deviceRegistry.get(deviceId);
+  // Unknown device under a real tenant — don't attribute; ensureDevice resets it to pending
+  if (!reg) return false;
+
+  if (reg.tenantId !== expected.id) {
+    logger.warn(
+      { deviceId, tenantSlug, expectedTenant: reg.tenantId, topicTenant: expected.id },
+      'Device-tenant mismatch on topic — dropping message (possible cross-tenant spoofing)'
+    );
+    return false;
+  }
+  return true;
+}
 
 function resolveTenant(slug) {
   if (slug === 'pending') {

@@ -4,5 +4,9 @@ After=postgresql.service
 
 [Service]
 Type=oneshot
-User=modesp
-ExecStart=/usr/bin/psql -U modesp_cloud -d modesp_cloud -c "SELECT create_telemetry_partition(EXTRACT(YEAR FROM NOW() + INTERVAL '2 months')::INT, EXTRACT(MONTH FROM NOW() + INTERVAL '2 months')::INT)"
+# Run as the postgres OS user so peer auth over the local socket succeeds.
+# (OS user "modesp" != DB role "modesp_cloud", so -U modesp_cloud over the
+#  socket was rejected by peer auth and the partition was never created —
+#  telemetry INSERTs would start failing on the 1st of an uncovered month.)
+User=postgres
+ExecStart=/usr/bin/psql -d modesp_cloud -c "SELECT create_telemetry_partition(EXTRACT(YEAR FROM NOW() + INTERVAL '2 months')::INT, EXTRACT(MONTH FROM NOW() + INTERVAL '2 months')::INT)"

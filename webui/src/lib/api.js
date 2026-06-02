@@ -389,6 +389,14 @@ export async function checkAuthEnabled() {
   }
 }
 
+// ── WebSocket ────────────────────────────────────────────
+
+// Short-lived one-time ticket for the WS handshake (P1-4). Issued over an
+// authenticated REST call so the JWT never travels in the WS URL.
+export function getWsTicket() {
+  return request('/ws-ticket'); // → { ticket }
+}
+
 // ── Devices ──────────────────────────────────────────────
 
 export function getDevices(params = {}) {

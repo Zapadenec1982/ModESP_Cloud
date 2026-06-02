@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, expect, beforeAll, afterAll } = require('vitest');
+// describe/it/expect/beforeAll/afterAll are global (vitest config: globals: true)
 const request  = require('supertest');
 const fs       = require('fs');
 const path     = require('path');
@@ -15,6 +15,7 @@ const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
   || path.join(__dirname, '../firmware');
 const TEST_FILENAME = 'test_device_1.0.0_1700000000000.bin';
 const TEST_FILEPATH = path.join(firmwareDir, TEST_FILENAME);
+const TEST_DEVICE = 'A4CF12';
 
 describe('Firmware Download (signed URLs)', () => {
   beforeAll(async () => {
@@ -31,7 +32,7 @@ describe('Firmware Download (signed URLs)', () => {
   });
 
   it('returns 200 for valid signed URL', async () => {
-    const signedPath = generateSignedUrl(TEST_FILENAME);
+    const signedPath = generateSignedUrl(TEST_FILENAME, TEST_DEVICE);
     const res = await request(app).get(signedPath);
 
     expect(res.status).toBe(200);
@@ -41,7 +42,7 @@ describe('Firmware Download (signed URLs)', () => {
 
   it('returns 403 for expired signature', async () => {
     // Generate URL and manually make it expired
-    const signedPath = generateSignedUrl(TEST_FILENAME);
+    const signedPath = generateSignedUrl(TEST_FILENAME, TEST_DEVICE);
     const url = new URL(signedPath, 'http://localhost');
     url.searchParams.set('expires', '1000000000'); // year ~2001
 
@@ -51,8 +52,8 @@ describe('Firmware Download (signed URLs)', () => {
   });
 
   it('returns 403 for tampered signature', async () => {
-    const signedPath = generateSignedUrl(TEST_FILENAME);
-    const tamperedPath = signedPath.replace(/sig=[a-f0-9]+/, 'sig=00000000000000000000000000000000');
+    const signedPath = generateSignedUrl(TEST_FILENAME, TEST_DEVICE);
+    const tamperedPath = signedPath.replace(/sig=[a-f0-9]+/, 'sig=' + '0'.repeat(64));
 
     const res = await request(app).get(tamperedPath);
     expect(res.status).toBe(403);
@@ -60,7 +61,7 @@ describe('Firmware Download (signed URLs)', () => {
   });
 
   it('returns 400 for path traversal attempt', async () => {
-    const signedPath = generateSignedUrl('../etc/passwd');
+    const signedPath = generateSignedUrl('../etc/passwd', TEST_DEVICE);
     const res = await request(app).get(signedPath);
 
     expect(res.status).toBe(400);
@@ -74,7 +75,7 @@ describe('Firmware Download (signed URLs)', () => {
   });
 
   it('returns 404 for non-existent file with valid signature', async () => {
-    const signedPath = generateSignedUrl('nonexistent_file.bin');
+    const signedPath = generateSignedUrl('nonexistent_file.bin', TEST_DEVICE);
     const res = await request(app).get(signedPath);
 
     expect(res.status).toBe(404);
