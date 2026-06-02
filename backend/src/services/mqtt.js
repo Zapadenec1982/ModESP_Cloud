@@ -136,6 +136,7 @@ async function start(log) {
   timers.push(setInterval(refreshRegistries,      REGISTRY_REFRESH));
   timers.push(setInterval(flushEvents,            1000));       // batch events every 1s
   timers.push(setInterval(stateMapMonitor,        60000));      // log stateMap stats every 60s
+  timers.push(setInterval(stateSweeper,           3_600_000));  // evict stale in-memory state hourly
   timers.push(setInterval(softDeleteCleanup,      3_600_000));  // purge soft-deleted devices every hour
 }
 
@@ -1129,6 +1130,35 @@ function stateMapMonitor() {
     { devices: stateMap.size, online: onlineCount, totalKeys, approxMb: `${approxMb}MB`, eventBuf: eventBuffer.length },
     'StateMap stats'
   );
+}
+
+// ── Periodic: evict stale in-memory state (prevents unbounded growth) ──
+
+const STATE_EVICT_TTL_MS = parseInt(process.env.STATE_EVICT_TTL_MS, 10) || 24 * 60 * 60 * 1000; // 24h
+
+function stateSweeper() {
+  const now = Date.now();
+  let evicted = 0;
+
+  for (const [deviceId, state] of stateMap) {
+    // Evict only long-offline devices no longer in the registry (deleted / churned
+    // pending ids). Registered devices are bounded by the DB row count, not a leak.
+    // last_state for known devices is already persisted, so dropping the in-memory
+    // copy is safe — it rehydrates on the next message.
+    if (state._online) continue;
+    if (now - state._lastSeen < STATE_EVICT_TTL_MS) continue;
+    if (deviceRegistry.has(deviceId)) continue;
+    stateMap.delete(deviceId);
+    backfillCounters.delete(deviceId);
+    evicted++;
+  }
+
+  // Prune expired auxiliary map entries (these only ever grew before).
+  for (const [slug, e] of discoveryCount) if (e.resetAt && now > e.resetAt) discoveryCount.delete(slug);
+  for (const [id, e]   of backfillCounters) if (e.reset && now > e.reset)    backfillCounters.delete(id);
+  for (const [id, ts]  of deletedDevices)  if (now - ts > DELETED_BLOCK_MS)  deletedDevices.delete(id);
+
+  if (evicted) logger.info({ evicted, remaining: stateMap.size }, 'StateMap sweep');
 }
 
 // ── Periodic: Offline detector (every 30s) ────────────────

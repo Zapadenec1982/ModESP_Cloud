@@ -84,7 +84,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
                     model, comment, manufactured_at, firmware_version,
                     online, status, last_seen, created_at
              FROM devices
-             WHERE tenant_id = $1`;
+             WHERE tenant_id = $1 AND status <> 'deleted'`;
       params = [req.tenantId];
     }
 
@@ -358,6 +358,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
       await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
       await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
       await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
       await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
       await client.query(
@@ -419,6 +420,7 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
           await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
           await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
           await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
           await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
           await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
           await client.query(

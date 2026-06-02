@@ -6,5 +6,10 @@ After=postgresql.service
 Type=oneshot
 User=modesp
 Group=modesp
+# Hardening — the script runs pg_dump/gpg/rsync/find with secrets in env.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
 ExecStart=/opt/modesp-cloud/infra/scripts/backup-postgres.sh
 EnvironmentFile=-/opt/modesp-cloud/infra/backup.env

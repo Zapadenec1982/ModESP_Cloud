@@ -130,11 +130,11 @@ async function createRollout(tenantId, tenantSlug, opts) {
   const firmware = fwRes.rows[0];
   let devRows;
   if (deviceIds && deviceIds.length > 0) {
-    const placeholders = deviceIds.map((_, i) => `$${i + 3}`).join(',');
+    const placeholders = deviceIds.map((_, i) => `$${i + 2}`).join(',');
     const devRes = await db.query(
       `SELECT mqtt_device_id, model FROM devices
        WHERE tenant_id = $1 AND status = 'active' AND mqtt_device_id IN (${placeholders})`,
-      [tenantId, 'active', ...deviceIds]
+      [tenantId, ...deviceIds]
     );
     devRows = devRes.rows;
   } else {

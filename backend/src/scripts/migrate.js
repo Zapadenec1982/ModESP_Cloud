@@ -17,6 +17,14 @@
  *                                                  #    prod DB already migrated by hand)
  *
  * CI: run against a clean DB to catch ordering / idempotency regressions.
+ *
+ * IMPORTANT — DDL ownership: migrations that CREATE/ALTER schema-owned tables
+ * must run as the table OWNER. On prod the app role (DB_USER) only has DML
+ * grants, so DDL fails with "must be owner of table". Run DDL migrations as the
+ * schema owner, e.g.:
+ *   sudo -u postgres psql -d <db> -f migrations/NNN.sql
+ *   sudo -u postgres psql -d <db> -c "INSERT INTO schema_migrations (id) VALUES ('NNN.sql')"
+ * or invoke this runner with DB_USER/DB_PASS of a role that owns the schema.
  */
 
 require('dotenv').config();

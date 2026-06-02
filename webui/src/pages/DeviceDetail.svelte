@@ -221,7 +221,7 @@
   function closeMqttCreds() { mqttCredsResult = null }
 
   async function handleMqttGenerate() {
-    if (!confirm($t(device.has_mqtt_credentials ? 'device.mqtt_rotate_confirm' : 'device.mqtt_rotate_confirm'))) return
+    if (!confirm($t('device.mqtt_rotate_confirm'))) return
     mqttCredsBusy = true
     try {
       const creds = await generateMqttCredentials(resolvedId)

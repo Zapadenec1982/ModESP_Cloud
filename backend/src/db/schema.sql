@@ -19,7 +19,8 @@ CREATE TABLE tenants (
 
 -- System tenant for pending devices (keeps "tenant_id in every query" rule)
 INSERT INTO tenants (id, name, slug, plan)
-VALUES ('00000000-0000-0000-0000-000000000000', 'System', '__system__', 'free');
+VALUES ('00000000-0000-0000-0000-000000000000', 'System', '__system__', 'free')
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- Devices

@@ -106,7 +106,8 @@ router.get('/:id/telemetry', checkDeviceAccess(), async (req, res, next) => {
     }
 
     const RAW_LIMIT = 10000;
-    sql += ` ORDER BY time ASC LIMIT ${RAW_LIMIT + 1}`;
+    sql += ` ORDER BY time ASC LIMIT $${params.length + 1}`;
+    params.push(RAW_LIMIT + 1);
 
     const { rows } = await db.query(sql, params);
     const truncated = rows.length > RAW_LIMIT;
