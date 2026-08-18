@@ -44,6 +44,7 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 
 ### Device Properties
 - Name, location, serial number, model, manufacturing date, free-text comments
+- Geographic coordinates (latitude/longitude) for the interactive fleet map
 - Firmware version and protocol version tracked via heartbeat
 - Real-time online/offline status (90-second heartbeat threshold)
 
@@ -304,6 +305,7 @@ Responsive Svelte SPA with dark/light theme and full i18n.
 | Page | Description |
 |------|-------------|
 | **Dashboard** | Fleet summary (online/total/alarms), device grid with search and filters |
+| **Map** | Interactive OpenStreetMap fleet map — live status markers, click-to-place coordinates, one-tap directions via Google Maps / Apple Maps |
 | **Device Detail** | Live state, telemetry charts, alarm history, event log, service records, controls |
 | **Alarms** | Alarm table with severity filters, CSV export |
 | **Firmware** | Upload, library, deploy modal, rollout monitor |
