@@ -35,7 +35,7 @@ describe('Users CRUD', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(admin, tenant.id))
-      .send({ email: 'new-user@users.test', password: 'Test1234!', role: 'viewer' });
+      .send({ email: 'new-user@users.test', password: 'SuperSecret2026!', role: 'viewer' });
 
     expect([200, 201]).toContain(res.status);
     expect(res.body.data.email).toBe('new-user@users.test');
@@ -72,7 +72,7 @@ describe('Users CRUD', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(viewer, tenant.id))
-      .send({ email: 'fail@users.test', password: 'Test1234!', role: 'viewer' });
+      .send({ email: 'fail@users.test', password: 'SuperSecret2026!', role: 'viewer' });
 
     expect(res.status).toBe(403);
   });
@@ -81,7 +81,7 @@ describe('Users CRUD', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(admin, tenant.id))
-      .send({ email: 'escalate@users.test', password: 'Test1234!', role: 'superadmin' });
+      .send({ email: 'escalate@users.test', password: 'SuperSecret2026!', role: 'superadmin' });
 
     // Should be rejected — admin cannot create superadmin
     expect([400, 403]).toContain(res.status);
@@ -91,7 +91,7 @@ describe('Users CRUD', () => {
     const res = await request(app)
       .post('/api/users')
       .set(authHeader(admin, tenant.id))
-      .send({ email: admin.email, password: 'Test1234!', role: 'viewer' });
+      .send({ email: admin.email, password: 'SuperSecret2026!', role: 'viewer' });
 
     expect([400, 409]).toContain(res.status);
   });

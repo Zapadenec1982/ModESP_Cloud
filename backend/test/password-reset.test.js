@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, expect, beforeAll, afterAll } = require('vitest');
+// globals: true in vitest.config.js
 const request = require('supertest');
 const { createTestApp } = require('./helpers/app');
 const { cleanDatabase, shutdownDb } = require('./helpers/setup');

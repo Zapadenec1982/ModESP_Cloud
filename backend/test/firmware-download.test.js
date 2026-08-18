@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, expect, beforeAll, afterAll } = require('vitest');
+// globals: true in vitest.config.js
 const request  = require('supertest');
 const fs       = require('fs');
 const path     = require('path');

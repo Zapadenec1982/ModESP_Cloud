@@ -54,7 +54,7 @@ describe('Users Extended', () => {
     const res = await request(app)
       .put('/api/users/me')
       .set(authHeader(testAdmin, tenant.id))
-      .send({ password: 'NewPass456!', old_password: 'OldPass123!' });
+      .send({ password: 'NewSecurePass2026!', old_password: 'OldPass123!' });
 
     expect(res.status).toBe(200);
   });
@@ -63,7 +63,7 @@ describe('Users Extended', () => {
     const res = await request(app)
       .put('/api/users/me')
       .set(authHeader(admin, tenant.id))
-      .send({ password: 'NewPass789!' });
+      .send({ password: 'NewSecurePass2026!' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');
