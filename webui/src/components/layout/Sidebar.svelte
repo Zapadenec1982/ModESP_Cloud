@@ -18,6 +18,7 @@
   $: navItems = [
     { section: $t('nav.sections.monitoring') },
     { path: '/',              icon: 'grid',     label: $t('nav.dashboard') },
+    { path: '/map',           icon: 'map-pin',  label: $t('nav.map') },
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
     { section: $t('nav.sections.management') },
     { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
