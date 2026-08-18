@@ -252,9 +252,58 @@ Breakdown:
 
 ---
 
-### 4.8 LOW: Naming Inconsistency (Confirmed)
+### 4.8 LOW: Naming Inconsistency (Confirmed, Count Corrected)
 
-`isSuperAdmin` vs `isSuperadmin` — confirmed in 11 occurrences across routes. Minor issue, ~15 min fix.
+`isSuperAdmin` vs `isSuperadmin` — the inconsistency is real, but the "11 occurrences" figure was wrong. Verified counts: **88 occurrences of `isSuperAdmin`** (51 backend + 37 webui) vs **37 of `isSuperadmin`** (backend only).
+
+- The split is clean per-file (lowercase-a in export.js, alarms.js, events.js, telemetry.js, fleet.js; capital-A elsewhere), except `devices.js` which mixes both variants in different handler scopes
+- **No cross-file risk:** every occurrence is a local variable or module-private function parameter. The only exported symbol (`isSuperAdmin` in webui `stores.js:54`) is consistently capital-A across all 6 importing pages
+- **Verdict: purely cosmetic.** Both variants compute the identical expression; a typo'd reference would throw `ReferenceError`, not silently bypass auth. Fix during other touches, not as standalone work
+
+### 4.9 MEDIUM-HIGH: Dead `req.log` — Silent Error Swallowing (NEW FINDING)
+
+**Discovered during verification — a genuine bug, not a style issue.**
+
+Error handlers in `users.js` log via optional chaining:
+
+```js
+req.log?.error?.({ err }, 'List users failed');
+```
+
+But `req.log` is **never assigned anywhere**: `pino-http` is not a dependency (only bare `pino`), no middleware sets `req.log`, and a grep for `req.log =` across `backend/src/` returns zero hits. The optional chain always short-circuits, so:
+
+- **19 error sites in `users.js` log absolutely nothing** — failures across the entire user-management surface are silently swallowed with a generic 500
+- **6 sites in `auth.js`** accidentally survive via a fallback (`|| console.error(...)`) — but log unstructured console output instead of pino JSON
+- **`firmware-download.js:58`** has no logging at all
+
+By contrast, the 57 routes using `next(err)` get proper structured logging through the global Express error handler (`index.js:348-351`).
+
+**Recommendation (pick one):**
+1. Replace all direct-500 sites with `next(err)` — routes inherit the global handler's pino logging (preferred, also fixes the style inconsistency)
+2. Or add `pino-http` middleware so `req.log` actually exists
+
+Effort: ~1-2 hours. Impact: restores error visibility for user management — currently a debugging blind spot in production.
+
+### 4.10 Frontend WebSocket Claims — Verified FALSE (with one new real bug)
+
+**Initial claim 1:** "WS client doesn't share token refresh events with API client — possible 401 during refresh window"
+
+**Verified: harmless by design.**
+- The WS client reads the token fresh from `getAccessToken()` at every (re)connect (`webui/src/lib/ws.js:35-38`) — there is no stale cached copy
+- The backend verifies JWT **only during the upgrade handshake** (`backend/src/services/ws.js:54-74`) and never re-validates a live socket — token expiry cannot drop an established connection
+- The auth-failure reconnect path (close codes 4401/1008) already refreshes the token *before* reconnecting, and `tryRefresh()` dedupes concurrent refreshes via a shared promise
+- Worst case is one extra round trip on an unlucky race — it self-heals
+
+**Initial claim 2:** "listeners Map not cleared on reconnect — memory leak"
+
+**Verified: FALSE.**
+- `on()` is never called from any reconnect path — only from component `onMount` bodies
+- All 6 call sites (App, Dashboard, DeviceDetail, Alarms, PendingDevices, TelemetryChart) pair registration with disposal in `onDestroy`
+- Storage is a `Set` (dedupes), key space is bounded by ~8 message types. Not clearing on reconnect is *correct* — clearing would break every mounted component's subscriptions
+
+**NEW real bug found in the same code path:** `handleAuthReconnect` (`webui/src/lib/ws.js:195`) calls `restoreSession()` instead of `tryRefresh()`. `restoreSession()` additionally does `GET /users/me` and calls `clearAuth()` on **any** failure (`api.js:350-368`) — wiping the refresh token from localStorage. A transient network blip or a backend 500 during a WS reconnect **silently logs the user out**. And when it fails, `ws.js:200-203` dead-ends with no navigation and no toast — the page sits disconnected with no feedback.
+
+**Recommendation:** use `tryRefresh()` semantics for WS recovery (only clear auth on a definitive 401 from the refresh endpoint), and surface a session-expired state when recovery fails. Effort: ~1 hour.
 
 ---
 
@@ -262,13 +311,13 @@ Breakdown:
 
 | Aspect | Score | Notes |
 |--------|-------|-------|
-| Error Handling | 8/10 | Consistent `{ error, message, status }` format, Zod validation |
-| Memory Management | 7/10 | 4/5 Maps well-managed; only stateMap needs TTL pruning |
+| Error Handling | 6/10 | Consistent response format & Zod validation, BUT dead `req.log` silently swallows errors in 19 users.js sites (see 4.9) |
+| Memory Management | 7/10 | 4/5 Maps well-managed; only stateMap needs TTL pruning; frontend listeners verified clean |
 | String Safety | 9/10 | Parameterized queries, Zod validation, no SQL injection |
 | Encapsulation | 6/10 | mqtt.js module globals are standard Node.js pattern, but testability suffers |
 | Naming | 7/10 | Strong overall; isSuperAdmin/isSuperadmin inconsistency |
 | Code Duplication | 7/10 | Exists but less severe than initially reported |
-| Magic Numbers | 6/10 | Core timings named; some hardcoded values in Express config |
+| Magic Numbers | 6/10 | All 5 flagged file:line refs verified accurate; none env-configurable despite the project already having a Tuning-section pattern in `.env.example` |
 | Function Sizes | 8/10 | Mostly reasonable; 2-3 functions could benefit from splitting |
 | TODO/FIXME | 10/10 | Zero found — clean, actively maintained codebase |
 | Test Infrastructure | 8/10 | Vitest + Supertest + factories well-configured |
@@ -281,38 +330,40 @@ Breakdown:
 
 | # | Task | Effort | Impact |
 |---|------|--------|--------|
-| 1 | Move `test_mqtt_logic.js` into Vitest framework | 30 min | Adds 19 tests to CI |
-| 2 | Reuse `buildDeviceWhere()` in 4 places in devices.js | 1 hr | Eliminates real duplication |
-| 3 | Create systemd timer for `cleanup-telemetry.js` | 1 hr | Closes operational gap |
-| 4 | Add `npm audit` to CI pipeline | 15 min | Security hygiene |
+| 1 | Fix dead `req.log`: switch direct-500 sites to `next(err)` (users.js ×19, auth.js ×6, firmware-download.js ×1) | 1-2 hrs | **Restores error logging** — currently silent failures |
+| 2 | Fix WS auth-reconnect: `tryRefresh()` instead of `restoreSession()`, surface session-expired state | 1 hr | Stops silent logouts on transient errors |
+| 3 | Move `test_mqtt_logic.js` into Vitest framework | 30 min | Adds 19 tests to CI |
+| 4 | Reuse `buildDeviceWhere()` in 4 places in devices.js | 1 hr | Eliminates real duplication |
+| 5 | Create systemd timer for `cleanup-telemetry.js` | 1 hr | Closes operational gap |
+| 6 | Add `npm audit` to CI pipeline | 15 min | Security hygiene |
 
 ### Short-Term (High Impact, Medium Effort)
 
 | # | Task | Effort | Impact |
 |---|------|--------|--------|
-| 5 | Add alarm detection integration tests | 4-5 hrs | Highest-risk untested logic |
-| 6 | Extract shared `resolveDevice()` to utility | 45 min | Eliminates true duplicate |
-| 7 | Add stateMap TTL pruning (offline >30 days) | 2 hrs | Prevents memory growth |
-| 8 | Fix `isSuperAdmin`/`isSuperadmin` casing | 15 min | Consistency |
-| 9 | Reduce CSV export LIMIT from 500k to 100k | 5 min | Aligns with other endpoints |
+| 7 | Add alarm detection integration tests | 4-5 hrs | Highest-risk untested logic |
+| 8 | Extract shared `resolveDevice()` to utility | 45 min | Eliminates true duplicate |
+| 9 | Add stateMap TTL pruning (offline >30 days) | 2 hrs | Prevents memory growth |
+| 10 | Normalize `isSuperadmin` → `isSuperAdmin` (37 sites, cosmetic — batch with other touches) | 30 min | Consistency |
+| 11 | Reduce CSV export LIMIT from 500k to 100k | 5 min | Aligns with other endpoints |
 
 ### Medium-Term (When Needed)
 
 | # | Task | Effort | Impact |
 |---|------|--------|--------|
-| 10 | Add WS subscribe() RBAC tests | 3 hrs | Tenant isolation verification |
-| 11 | Extract `deleteDeviceData()` helper | 30 min | DRY improvement |
-| 12 | Add mqtt.js/ws.js to coverage config | 15 min | Visibility |
-| 13 | Frontend component tests | 10+ hrs | Currently zero coverage |
-| 14 | Named constants for magic numbers | 1 hr | Readability |
+| 12 | Add WS subscribe() RBAC tests | 3 hrs | Tenant isolation verification |
+| 13 | Extract `deleteDeviceData()` helper | 30 min | DRY improvement |
+| 14 | Add mqtt.js/ws.js to coverage config | 15 min | Visibility |
+| 15 | Frontend component tests | 10+ hrs | Currently zero coverage |
+| 16 | Env-var tuning for hardcoded limits (rate limits, body size, export LIMIT) — extend existing `.env.example` Tuning section | 1 hr | Configurability |
 
 ### When Scaling Beyond 1k Users
 
 | # | Task | Effort | Impact |
 |---|------|--------|--------|
-| 15 | Redis pub/sub for WebSocket clustering | Days | Horizontal scaling |
-| 16 | Telemetry downsampling for long ranges | 4 hrs | Query performance |
-| 17 | Streaming exports with pg-cursor | 3 hrs | Memory optimization |
+| 17 | Redis pub/sub for WebSocket clustering | Days | Horizontal scaling |
+| 18 | Telemetry downsampling for long ranges | 4 hrs | Query performance |
+| 19 | Streaming exports with pg-cursor | 3 hrs | Memory optimization |
 
 ---
 
@@ -330,6 +381,13 @@ Transparency note — the initial automated review contained several overstated 
 | "WebSocket bottleneck — HIGH" | Architecturally true, but appropriate for current scale (<500 devices) |
 | "500k rows memory pressure" | Edge case; typical usage stays under 270k rows per export |
 | "TODO/FIXME comments found" | Zero found — initial claim was incorrect |
+| "WS token race → possible 401" | Harmless: token read fresh at each connect; backend never re-validates a live socket; auth-close path refreshes before reconnecting |
+| "Frontend listeners Map leak" | FALSE — all 6 call sites dispose in `onDestroy`; Set semantics dedupe; not clearing on reconnect is correct |
+| "isSuperAdmin casing — 11 occurrences" | Actually 88 vs 37; purely cosmetic, no cross-file contract at risk |
+
+**New bugs found during verification** (not in the initial review):
+1. **Dead `req.log`** — 19 error sites in `users.js` log nothing (section 4.9)
+2. **`restoreSession()` in WS reconnect** — transient errors silently log the user out (section 4.10)
 
 ---
 
@@ -337,9 +395,13 @@ Transparency note — the initial automated review contained several overstated 
 
 ModESP Cloud is a **well-engineered production platform** with strong security practices, clean architecture, and pragmatic design choices. The codebase is actively maintained (zero TODO debt) and the team has made sensible trade-offs for their current scale.
 
-**Top 3 genuinely impactful improvements:**
-1. **Bring mqtt.js tests into CI** — pure functions are tested but excluded from the pipeline
-2. **Add alarm detection integration tests** — highest-risk untested business logic
-3. **Automate telemetry cleanup** — script exists, just needs a systemd timer
+**Top genuinely impactful improvements (in order):**
+1. **Fix dead `req.log`** — 19 error sites in users.js currently log nothing; production failures there are invisible (section 4.9)
+2. **Fix WS auth-reconnect logout bug** — transient network errors silently wipe the user's session (section 4.10)
+3. **Bring mqtt.js tests into CI** — pure functions are tested but excluded from the pipeline
+4. **Add alarm detection integration tests** — highest-risk untested business logic
+5. **Automate telemetry cleanup** — script exists, just needs a systemd timer
+
+Notably, the two most concrete bugs (items 1-2) were found not by the initial broad review but during **verification of claims that turned out to be false or overstated** — a reminder that deep code-level verification catches what pattern-level scanning misses.
 
 The WebSocket scaling limitation, code duplication, and memory concerns are **real but appropriately deferred** for the project's current stage. The architecture supports incremental improvement without redesign.
