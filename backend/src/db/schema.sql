@@ -42,6 +42,8 @@ CREATE TABLE devices (
   status           VARCHAR(16)  NOT NULL DEFAULT 'pending',
   mqtt_username      VARCHAR(64),
   mqtt_password_hash VARCHAR(256),
+  latitude         DOUBLE PRECISION CHECK (latitude  >= -90  AND latitude  <= 90),   -- map page (migration 018)
+  longitude        DOUBLE PRECISION CHECK (longitude >= -180 AND longitude <= 180),  -- map page (migration 018)
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
   UNIQUE (tenant_id, mqtt_device_id)
