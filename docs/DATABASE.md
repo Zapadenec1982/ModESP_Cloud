@@ -44,6 +44,8 @@ CREATE TABLE devices (
   online           BOOLEAN      NOT NULL DEFAULT false,
   status           VARCHAR(16)  NOT NULL DEFAULT 'pending', -- pending | active | disabled
   mqtt_password_hash VARCHAR(256),                  -- bcrypt hash пароля MQTT
+  latitude         DOUBLE PRECISION,                -- геокоордината для карти (migration 018)
+  longitude        DOUBLE PRECISION,                -- геокоордината для карти (migration 018)
   created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
 
   UNIQUE (tenant_id, mqtt_device_id)
@@ -68,6 +70,10 @@ CREATE INDEX idx_devices_status        ON devices(status) WHERE status = 'pendin
 - `pending` — пристрій з'явився через auto-discovery, ще не призначений tenant
 - `active` — нормальна робота
 - `disabled` — вимкнений адміном
+
+**latitude / longitude** — координати пристрою для інтерактивної карти (сторінка «Карта»).
+NULL = пристрій не розміщено на карті. CHECK-обмеження: lat ∈ [-90, 90], lng ∈ [-180, 180].
+Задаються вручну через PATCH /devices/:id або кліком на карті.
 
 ### `users` — користувачі
 
@@ -265,3 +271,4 @@ $$ LANGUAGE plpgsql;
 - 2026-03-07 — Створено. Початкова схема.
 - 2026-03-07 — Оновлено. Нові колонки devices (mqtt_device_id, serial_number, last_state, status, mqtt_password_hash). State metadata registry. Уточнення щодо server-side семплування.
 - 2026-03-15 — Migration 016: password_reset_code + password_reset_expires колонки в users (admin-generated reset codes).
+- 2026-03-31 — Migration 018: latitude + longitude колонки в devices (інтерактивна карта пристроїв).

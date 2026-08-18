@@ -61,7 +61,10 @@ Ubuntu 24.04
 │   │   │       ├── 012_telegram_linking.sql
 │   │   │       ├── 013_refresh_token_tenant.sql
 │   │   │       ├── 014_push_subscriptions.sql
-│   │   │       └── 015_audit_log.sql
+│   │   │       ├── 015_audit_log.sql
+│   │   │       ├── 016_password_reset.sql
+│   │   │       ├── 017_energy_monitoring.sql
+│   │   │       └── 018_device_geo.sql
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration
