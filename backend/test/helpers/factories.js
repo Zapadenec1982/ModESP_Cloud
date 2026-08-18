@@ -64,9 +64,9 @@ async function createDevice(tenantId, overrides = {}) {
   const name = overrides.name || `Device ${mqttId}`;
 
   const { rows } = await db.query(
-    `INSERT INTO devices (tenant_id, mqtt_device_id, name, status, online)
-     VALUES ($1, $2, $3, 'active', false) RETURNING *`,
-    [tenantId, mqttId, name]
+    `INSERT INTO devices (tenant_id, mqtt_device_id, name, status, online, latitude, longitude)
+     VALUES ($1, $2, $3, 'active', false, $4, $5) RETURNING *`,
+    [tenantId, mqttId, name, overrides.latitude ?? null, overrides.longitude ?? null]
   );
   return rows[0];
 }
