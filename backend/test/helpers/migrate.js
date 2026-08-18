@@ -15,6 +15,8 @@ async function applySchema(pool) {
   let schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
   // Remove telemetry partitions (not needed for tests, and dates may be past)
   schema = schema.replace(/CREATE TABLE telemetry_\d{4}_\d{2} PARTITION OF[\s\S]*?;/g, '');
+  // Also remove per-partition indexes that reference the stripped partitions
+  schema = schema.replace(/CREATE UNIQUE INDEX \S+ ON telemetry_\d{4}_\d{2}[\s\S]*?;/g, '');
   // Create a catch-all default partition for tests
   schema += `\nCREATE TABLE IF NOT EXISTS telemetry_default PARTITION OF telemetry DEFAULT;\n`;
   await pool.query(schema);
