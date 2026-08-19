@@ -6,6 +6,7 @@ const pdfmake       = require('pdfmake/build/pdfmake');
 const vfs_fonts     = require('pdfmake/build/vfs_fonts');
 const db            = require('../services/db');
 const { checkDeviceAccess, filterDeviceAccess } = require('../middleware/device-access');
+const { isUuidFormat } = require('../lib/ids');
 
 // Register bundled Roboto fonts (includes Cyrillic glyphs)
 pdfmake.addVirtualFileSystem(vfs_fonts);
@@ -27,7 +28,7 @@ alarmRouter.use(exportLimiter);
 // ── Helpers ───────────────────────────────────────────────
 
 async function resolveDevice(id, tenantId, isSuperadmin) {
-  const isUuid = id.length > 8;
+  const isUuid = isUuidFormat(id);
   let where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
   const params = [id];
   if (!isSuperadmin && tenantId) {

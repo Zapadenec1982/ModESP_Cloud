@@ -69,6 +69,18 @@ describe('Device Access Control', () => {
     expect(res.body.data.id).toBe(device1.id);
   });
 
+  // Regression: middleware misdetected 9-16 char mqtt ids as UUIDs and 500ed
+  it('technician can access assigned device by 12-char mqtt_device_id', async () => {
+    const device = await createDevice(tenant.id, { mqttId: 'AE0000000005' });
+    await grantDeviceAccess(tech.id, device.id, admin.id);
+    const res = await request(app)
+      .get('/api/devices/AE0000000005')
+      .set(authHeader(tech, tenant.id));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(device.id);
+  });
+
   it('technician cannot access unassigned device', async () => {
     const res = await request(app)
       .get(`/api/devices/${device2.id}`)
