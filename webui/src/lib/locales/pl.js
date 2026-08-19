@@ -5,6 +5,7 @@ export default {
   // ── Navigation ──
   nav: {
     dashboard: 'Panel',
+    map: 'Mapa',
     alarms: 'Alarmy',
     pending: 'Rejestracja',
     notifications: 'Powiadomienia',
@@ -38,6 +39,27 @@ export default {
     audit_log: 'Dziennik audytu',
     audit_log_sub: 'Aktywność systemowa i zdarzenia bezpieczeństwa',
     device: 'Urządzenie',
+    map: 'Mapa',
+    map_sub: 'Lokalizacje urządzeń i trasy do nich',
+  },
+
+  // ── Map ──
+  map: {
+    load_failed: 'Nie udało się załadować urządzeń',
+    no_coords_hint: 'Żadne urządzenie nie zostało jeszcze umieszczone na mapie. Ustaw współrzędne, aby widzieć chłodziarki i wyznaczać trasy.',
+    without_coords: 'Bez współrzędnych ({0})',
+    place_on_map: 'Umieść na mapie',
+    placing_hint: 'Kliknij na mapie, aby umieścić „{0}"',
+    location_saved: 'Lokalizacja zapisana',
+    location_removed: 'Lokalizacja usunięta',
+    move: 'Przenieś',
+    remove_location: 'Usuń z mapy',
+    open_device: 'Otwórz urządzenie',
+    route_google: 'Trasa (Google Maps)',
+    route_apple: 'Trasa (Apple Maps)',
+    legend_online: 'Online',
+    legend_offline: 'Offline',
+    legend_alarm: 'Alarm',
   },
 
   // ── Common ──

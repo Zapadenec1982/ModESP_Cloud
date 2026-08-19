@@ -5,6 +5,7 @@ export default {
   // ── Navigation ──
   nav: {
     dashboard: 'Dashboard',
+    map: 'Map',
     alarms: 'Alarms',
     pending: 'Registration',
     notifications: 'Notifications',
@@ -38,6 +39,27 @@ export default {
     audit_log: 'Audit Log',
     audit_log_sub: 'System-wide activity and security events',
     device: 'Device',
+    map: 'Map',
+    map_sub: 'Device locations and routes to them',
+  },
+
+  // ── Map ──
+  map: {
+    load_failed: 'Failed to load devices',
+    no_coords_hint: 'No devices have been placed on the map yet. Set coordinates to see your refrigerators and get directions.',
+    without_coords: 'Without coordinates ({0})',
+    place_on_map: 'Place on map',
+    placing_hint: 'Click on the map to place "{0}"',
+    location_saved: 'Location saved',
+    location_removed: 'Location removed',
+    move: 'Move',
+    remove_location: 'Remove from map',
+    open_device: 'Open device',
+    route_google: 'Directions (Google Maps)',
+    route_apple: 'Directions (Apple Maps)',
+    legend_online: 'Online',
+    legend_offline: 'Offline',
+    legend_alarm: 'Alarm',
   },
 
   // ── Common ──

@@ -5,6 +5,7 @@ export default {
   // ── Navigation ──
   nav: {
     dashboard: 'Панель',
+    map: 'Карта',
     alarms: 'Аварії',
     pending: 'Очікування',
     notifications: 'Сповіщення',
@@ -38,6 +39,27 @@ export default {
     audit_log: 'Журнал аудиту',
     audit_log_sub: 'Системна активність та події безпеки',
     device: 'Пристрій',
+    map: 'Карта',
+    map_sub: 'Розташування пристроїв та маршрути до них',
+  },
+
+  // ── Map ──
+  map: {
+    load_failed: 'Не вдалося завантажити пристрої',
+    no_coords_hint: 'Жоден пристрій ще не розміщено на карті. Задайте координати, щоб бачити холодильники та прокладати маршрути.',
+    without_coords: 'Без координат ({0})',
+    place_on_map: 'Розмістити на карті',
+    placing_hint: 'Клікніть на карті, щоб розмістити «{0}»',
+    location_saved: 'Розташування збережено',
+    location_removed: 'Розташування видалено',
+    move: 'Перемістити',
+    remove_location: 'Прибрати з карти',
+    open_device: 'Відкрити пристрій',
+    route_google: 'Маршрут (Google Maps)',
+    route_apple: 'Маршрут (Apple Maps)',
+    legend_online: 'Онлайн',
+    legend_offline: 'Офлайн',
+    legend_alarm: 'Аварія',
   },
 
   // ── Common ──

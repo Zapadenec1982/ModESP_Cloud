@@ -5,6 +5,7 @@ export default {
   // ── Navigation ──
   nav: {
     dashboard: 'Übersicht',
+    map: 'Karte',
     alarms: 'Alarme',
     pending: 'Registrierung',
     notifications: 'Benachrichtigungen',
@@ -38,6 +39,27 @@ export default {
     audit_log: 'Aktivitätsprotokoll',
     audit_log_sub: 'Systemweite Aktivitäts- und Sicherheitsereignisse',
     device: 'Gerät',
+    map: 'Karte',
+    map_sub: 'Gerätestandorte und Routen',
+  },
+
+  // ── Map ──
+  map: {
+    load_failed: 'Geräte konnten nicht geladen werden',
+    no_coords_hint: 'Noch kein Gerät wurde auf der Karte platziert. Legen Sie Koordinaten fest, um Ihre Kühlgeräte zu sehen und Routen zu planen.',
+    without_coords: 'Ohne Koordinaten ({0})',
+    place_on_map: 'Auf Karte platzieren',
+    placing_hint: 'Klicken Sie auf die Karte, um „{0}" zu platzieren',
+    location_saved: 'Standort gespeichert',
+    location_removed: 'Standort entfernt',
+    move: 'Verschieben',
+    remove_location: 'Von Karte entfernen',
+    open_device: 'Gerät öffnen',
+    route_google: 'Route (Google Maps)',
+    route_apple: 'Route (Apple Maps)',
+    legend_online: 'Online',
+    legend_offline: 'Offline',
+    legend_alarm: 'Alarm',
   },
 
   // ── Common ──

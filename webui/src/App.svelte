@@ -44,6 +44,8 @@
   const routes = {
     '/':                Dashboard,
     '/device/:id':      DeviceDetail,
+    // Lazy-loaded: keeps Leaflet (~150 KB) out of the main bundle
+    '/map':             wrap({ asyncComponent: () => import('./pages/DeviceMap.svelte') }),
     '/alarms':          Alarms,
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
@@ -115,6 +117,7 @@
 
   const pageTitleKeys = {
     '/': 'pages.dashboard',
+    '/map': 'pages.map',
     '/alarms': 'pages.alarms',
     '/pending': 'pages.pending',
     '/firmware': 'pages.firmware',

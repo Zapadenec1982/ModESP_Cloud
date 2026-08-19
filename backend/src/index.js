@@ -27,7 +27,7 @@ const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const logger = pino({ level: process.env.NODE_ENV === 'production' ? 'info' : 'debug' });
 
-// ── Security guards ──────────────────────────────────────
+// ── Security guards ────────────────────────────────────
 if (!AUTH_ENABLED && process.env.NODE_ENV === 'production') {
   logger.fatal('AUTH_ENABLED=false is not allowed in production — exiting');
   process.exit(1);
@@ -40,7 +40,7 @@ if (AUTH_ENABLED) {
   }
 }
 
-// ── Express ───────────────────────────────────────────────
+// ── Express ───────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
 
@@ -64,7 +64,7 @@ app.use(helmet({
       defaultSrc:    ["'self'"],
       scriptSrc:     ["'self'"],
       styleSrc:      ["'self'", "'unsafe-inline'"], // Svelte inline styles
-      imgSrc:        ["'self'", "data:"],
+      imgSrc:        ["'self'", "data:", "https://tile.openstreetmap.org", "https://*.tile.openstreetmap.org"], // OSM tiles (map page)
       connectSrc:    ["'self'", "wss:", "ws:"],     // WebSocket
       fontSrc:       ["'self'"],
       objectSrc:     ["'none'"],
@@ -92,7 +92,7 @@ const registerLimiter = rateLimit({
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
 });
 
-// ── Health check (no auth / no tenant) ────────────────────
+// ── Health check (no auth / no tenant) ────────────────────────
 app.get('/api/health', async (_req, res) => {
   const dbOk   = await db.healthy();
   const mqttOk = mqttSvc.isConnected();
@@ -347,7 +347,7 @@ if (AUTH_ENABLED) {
   app.use('/api', tenantMw);
 }
 
-// ── Routes ────────────────────────────────────────────────
+// ── Routes ─────────────────────────────────────────────
 app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
@@ -380,7 +380,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'internal_error', message: 'Something went wrong', status: 500 });
 });
 
-// ── Bootstrap ─────────────────────────────────────────────
+// ── Bootstrap ───────────────────────────────────────────
 async function main() {
   // 1. DB
   db.init(logger);

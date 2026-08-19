@@ -111,7 +111,9 @@ Authorization: Bearer <access_token>
       "online": true,
       "last_seen": "2026-03-07T10:30:00Z",
       "alarm_active": false,
-      "air_temp": 4.5
+      "air_temp": 4.5,
+      "latitude": 50.4501,
+      "longitude": 30.5234
     }
   ]
 }
@@ -163,12 +165,15 @@ Authorization: Bearer <access_token>
   "power_overrides": {
     "compressor_watts": 500,
     "fan_watts": 90
-  }
+  },
+  "latitude": 50.4501,
+  "longitude": 30.5234
 }
 ```
 
 - `model_id` — прив'язка до профілю потужності з таблиці `device_models`
 - `power_overrides` — JSONB, індивідуальне перевизначення потужності для пристрою (перекриває значення з device_models)
+- `latitude` / `longitude` — координати для сторінки «Карта» (lat ∈ [-90, 90], lng ∈ [-180, 180]; `null` прибирає пристрій з карти)
 
 **Response 200:** оновлений пристрій (без state).
 
@@ -1222,3 +1227,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-03-10 — Device re-registration auto-reset: POST /devices/register auto-resets active devices to pending with bootstrap creds when they re-register (lost credentials recovery). POST /devices/:id/reset-pending manual reset endpoint.
 - 2026-03-15 — Phase 11: Events API (GET /devices/:id/events), HACCP Export (CSV telemetry/devices/alarms + PDF report), severity filter on GET /alarms (?severity=critical,warning), rate-limited export endpoints (10/min/user).
 - 2026-03-24 — Phase 13: Device Models CRUD (GET/POST/PATCH/DELETE /device-models), Energy summary (GET /devices/:id/energy/summary), PATCH /devices/:id accepts model_id and power_overrides.
+- 2026-03-31 — Device map: devices отримали latitude/longitude (migration 018); GET /devices, GET /devices/:id повертають координати; PATCH /devices/:id приймає latitude/longitude (null = прибрати з карти).

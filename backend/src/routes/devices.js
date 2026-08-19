@@ -71,6 +71,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
       sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
                     d.model, d.comment, d.manufactured_at, d.firmware_version,
                     d.online, d.status, d.last_seen, d.created_at,
+                    d.latitude, d.longitude,
                     t.slug AS tenant_slug, t.name AS tenant_name
              FROM devices d
              LEFT JOIN tenants t ON t.id = d.tenant_id
@@ -83,7 +84,8 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     } else {
       sql = `SELECT id, mqtt_device_id, name, location, serial_number,
                     model, comment, manufactured_at, firmware_version,
-                    online, status, last_seen, created_at
+                    online, status, last_seen, created_at,
+                    latitude, longitude
              FROM devices
              WHERE tenant_id = $1 AND status <> 'deleted'`;
       params = [req.tenantId];
@@ -148,7 +150,7 @@ router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
   }
 });
 
-// ── DELETE /api/devices/pending/:mqttId ────────────────────
+// ── DELETE /api/devices/pending/:mqttId ──────────────────────
 // Delete a pending device from the system (any admin).
 // Allows re-registration of the same device_id.
 router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next) => {
@@ -199,7 +201,7 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
   }
 });
 
-// ── POST /api/devices/:id/reset-pending ──────────────────
+// ── POST /api/devices/:id/reset-pending ─────────────────────
 // Reset a stuck device back to pending status with bootstrap credentials.
 // Use when device was assigned but failed to save new MQTT credentials.
 router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next) => {
@@ -288,7 +290,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
   }
 });
 
-// ── DELETE /api/devices/:id ───────────────────────────────
+// ── DELETE /api/devices/:id ─────────────────────────────────
 // Delete a device (admin: own tenant, superadmin: any).
 // Always hard-deletes. If the device reconnects, auto-discovery will re-create it as pending.
 // Sends MQTT reset commands first so the device reverts to bootstrap credentials.
@@ -380,7 +382,7 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
   }
 });
 
-// ── DELETE /api/devices/bulk ───────────────────────────────
+// ── DELETE /api/devices/bulk ─────────────────────────────────
 // Bulk delete devices (admin: own tenant, superadmin: any).
 router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
   try {
@@ -639,7 +641,7 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
   }
 });
 
-// ── POST /api/devices/pending/batch ───────────────────────
+// ── POST /api/devices/pending/batch ─────────────────────────
 // Batch registration via CSV file upload.
 // Assigns pending devices immediately; pre-registers unknown ones.
 const csvUpload = multer({
@@ -945,7 +947,7 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
   }
 });
 
-// ── GET /api/devices/:id ──────────────────────────────────
+// ── GET /api/devices/:id ────────────────────────────────────
 // Full device detail: DB record + live state from stateMap.
 router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
   try {
@@ -971,6 +973,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
       `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
               d.model, d.comment, d.manufactured_at, d.firmware_version, d.proto_version,
               d.online, d.status, d.last_seen, d.last_state, d.created_at,
+              d.latitude, d.longitude,
               d.mqtt_username, (d.mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials,
               d.tenant_id, t.slug AS tenant_slug,
               d.model_id, d.compressor_kw, d.evap_fan_kw, d.cond_fan_kw,
@@ -1033,7 +1036,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
   }
 });
 
-// ── POST /api/devices/:id/mqtt-credentials ────────────────
+// ── POST /api/devices/:id/mqtt-credentials ────────────────────
 // Generate or rotate MQTT credentials. Returns plaintext password once.
 // Attempts to send via MQTT for zero-touch; falls back to manual display.
 router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
@@ -1088,7 +1091,7 @@ router.post('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(
   }
 });
 
-// ── DELETE /api/devices/:id/mqtt-credentials ──────────────
+// ── DELETE /api/devices/:id/mqtt-credentials ──────────────────
 // Revoke MQTT credentials — device can no longer connect.
 router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
@@ -1116,7 +1119,7 @@ router.delete('/:id/mqtt-credentials', maybeAuthorize('admin'), checkDeviceAcces
   }
 });
 
-// ── PATCH /api/devices/:id ────────────────────────────────
+// ── PATCH /api/devices/:id ──────────────────────────────────
 // Update device properties (name, location, serial_number, model, comment, manufactured_at).
 const powerField = z.number().min(0).max(100).nullable().optional();
 
@@ -1133,6 +1136,8 @@ const updateDeviceSchema = z.object({
   cond_fan_kw:       powerField,
   defrost_heater_kw: powerField,
   standby_kw:        powerField,
+  latitude:          z.number().min(-90).max(90).nullable().optional(),
+  longitude:         z.number().min(-180).max(180).nullable().optional(),
 }).refine(data => Object.keys(data).length > 0, {
   message: 'At least one field is required',
 });
@@ -1153,7 +1158,7 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
 
     // Fetch current state for audit before/after
     const beforeRes = await db.query(
-      `SELECT id, name, location, serial_number, model, comment FROM devices WHERE ${where}`,
+      `SELECT id, name, location, serial_number, model, comment, latitude, longitude FROM devices WHERE ${where}`,
       whereParams
     );
     const beforeDevice = beforeRes.rows[0];
@@ -1173,7 +1178,8 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
        SET ${setClauses.join(', ')}
        WHERE ${shiftedWhere}
        RETURNING id, mqtt_device_id, name, location, serial_number,
-                 model, comment, manufactured_at, firmware_version, status, created_at`,
+                 model, comment, manufactured_at, firmware_version, status, created_at,
+                 latitude, longitude`,
       [...values, ...whereParams]
     );
 
@@ -1201,7 +1207,7 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
   }
 });
 
-// ── POST /api/devices/:id/command ─────────────────────────
+// ── POST /api/devices/:id/command ─────────────────────────────
 // Send a command to a device. Body: { key, value }
 router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
   try {
@@ -1266,7 +1272,7 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
   }
 });
 
-// ── POST /api/devices/:id/request-state ───────────────────
+// ── POST /api/devices/:id/request-state ───────────────────────
 // Ask device to republish all 48 state keys (clears ESP32 publish cache).
 router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) => {
   try {
@@ -1308,7 +1314,7 @@ router.post('/:id/request-state', checkDeviceAccess(), async (req, res, next) =>
   }
 });
 
-// ── GET /api/devices/:id/service-records ────────────────
+// ── GET /api/devices/:id/service-records ────────────────────
 // List service records for a device.
 router.get('/:id/service-records', checkDeviceAccess(), async (req, res, next) => {
   try {
@@ -1344,7 +1350,7 @@ router.get('/:id/service-records', checkDeviceAccess(), async (req, res, next) =
   }
 });
 
-// ── POST /api/devices/:id/service-records ───────────────
+// ── POST /api/devices/:id/service-records ───────────────────
 // Add a service record for a device.
 const serviceRecordSchema = z.object({
   service_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Must be YYYY-MM-DD'),
@@ -1421,7 +1427,7 @@ router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technic
   }
 });
 
-// ── POST /api/devices/:id/reassign ──────────────────────────
+// ── POST /api/devices/:id/reassign ──────────────────────────────
 // Move device to a different tenant (superadmin only).
 // Rotates MQTT credentials and sends _set_tenant command.
 router.post('/:id/reassign', async (req, res, next) => {
