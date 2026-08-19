@@ -43,6 +43,17 @@ describe('Devices CRUD', () => {
     expect(res.body.data.id).toBe(device.id);
   });
 
+  // Regression: 9-16 char mqtt ids used to be misdetected as UUIDs and 500
+  it('admin can get single device by 12-char mqtt_device_id', async () => {
+    const device = await createDevice(tenant.id, { mqttId: 'EE0000000002' });
+    const res = await request(app)
+      .get('/api/devices/EE0000000002')
+      .set(authHeader(admin, tenant.id));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.id).toBe(device.id);
+  });
+
   it('admin can update device metadata', async () => {
     const device = await createDevice(tenant.id, { name: 'Old Name' });
     const res = await request(app)

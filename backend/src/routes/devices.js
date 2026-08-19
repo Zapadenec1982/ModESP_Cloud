@@ -11,6 +11,7 @@ const mqttSvc    = require('../services/mqtt');
 const mqttAuth   = require('../services/mqtt-auth');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
+const { isUuidFormat } = require('../lib/ids');
 const stateMeta  = require('../config/state_meta.json');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
@@ -46,7 +47,7 @@ async function resolveRoutingSlug(mqttId, tenantId) {
  * Returns { where, params }.
  */
 function buildDeviceWhere(id, req) {
-  const isUuid = id.length > 8;
+  const isUuid = isUuidFormat(id);
   const field = isUuid ? 'id' : 'mqtt_device_id';
   const isSuperAdmin = req.user && req.user.role === 'superadmin';
   if (isSuperAdmin) {
@@ -204,7 +205,7 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
 router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     // Look up device
@@ -294,7 +295,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     let whereClause, params;
@@ -394,7 +395,7 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 
     for (const id of ids) {
       try {
-        const isUuid = id.length > 8;
+        const isUuid = isUuidFormat(id);
         let whereClause, params;
         if (isSuperAdmin) {
           whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
@@ -951,7 +952,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
     const { id } = req.params;
 
     // Support both UUID and mqtt_device_id
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     // Superadmin can view any device; regular users scoped to their tenant
@@ -1459,7 +1460,7 @@ router.post('/:id/reassign', async (req, res, next) => {
     }
 
     // Look up device (support both UUID and mqtt_device_id)
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const whereField = isUuid ? 'id' : 'mqtt_device_id';
     const deviceRes = await db.query(
       `SELECT d.id, d.mqtt_device_id, d.tenant_id, d.status, t.slug AS old_slug

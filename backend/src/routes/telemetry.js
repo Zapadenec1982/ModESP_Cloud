@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const db         = require('../services/db');
 const { checkDeviceAccess } = require('../middleware/device-access');
+const { isUuidFormat } = require('../lib/ids');
 
 const router = Router();
 
@@ -18,7 +19,7 @@ const VALID_BUCKETS  = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 8
  * Returns { mqttId, tenantId } or null if not found.
  */
 async function resolveDevice(id, tenantId, isSuperadmin) {
-  const isUuid = id.length > 8;
+  const isUuid = isUuidFormat(id);
   let where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
   const params = [id];
 

@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../services/db');
+const { isUuidFormat } = require('../lib/ids');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const MAX_DEVICE_FILTER = 500; // safety cap
@@ -73,7 +74,7 @@ function checkDeviceAccess() {
     if (!id) return next();
 
     try {
-      const isUuid = id.length > 8;
+      const isUuid = isUuidFormat(id);
       const deviceField = isUuid ? 'd.id' : 'd.mqtt_device_id';
 
       const { rows } = await db.query(

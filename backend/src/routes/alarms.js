@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const db         = require('../services/db');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
+const { isUuidFormat } = require('../lib/ids');
 
 const router = Router();
 
@@ -148,7 +149,7 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
     // Resolve mqtt_device_id — enforce tenant isolation
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     let where = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
     const devParams = [id];
