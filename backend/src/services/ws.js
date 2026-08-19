@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto  = require('crypto');
 const { WebSocketServer } = require('ws');
 const mqttSvc = require('./mqtt');
 const db      = require('./db');
@@ -39,6 +40,13 @@ function attach(server, log) {
 
   wss.on('connection', onConnection);
 
+  // Sweep expired one-time tickets periodically
+  ticketSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [t, e] of wsTickets) if (now > e.expires) wsTickets.delete(t);
+  }, WS_TICKET_TTL_MS);
+  if (ticketSweep.unref) ticketSweep.unref();
+
   // Listen to MQTT events
   mqttSvc.on('state_delta',       onStateDelta);
   mqttSvc.on('alarm',             onAlarm);
@@ -49,18 +57,53 @@ function attach(server, log) {
   logger.info('WebSocket server attached on /ws');
 }
 
-// ── JWT verification for WS handshake ────────────────────
+// ── One-time WS tickets (P1-4) ───────────────────────────
+// Short-lived single-use tickets, issued via authenticated REST (GET /api/ws-ticket),
+// so the long-lived JWT never travels in the WS URL query string (where it would leak
+// into nginx access logs / browser history / Referer).
+const WS_TICKET_TTL_MS = 30000;
+const wsTickets = new Map(); // ticket → { user, expires }
+let ticketSweep = null;
+
+function issueWsTicket(user) {
+  const ticket = crypto.randomBytes(32).toString('hex');
+  wsTickets.set(ticket, { user, expires: Date.now() + WS_TICKET_TTL_MS });
+  return ticket;
+}
+
+function consumeWsTicket(ticket) {
+  const entry = wsTickets.get(ticket);
+  if (!entry) return null;
+  wsTickets.delete(ticket);            // single-use
+  if (Date.now() > entry.expires) return null;
+  return entry.user;
+}
+
+// ── Auth verification for WS handshake ───────────────────
 
 function verifyWsClient(info, cb) {
   try {
     const reqUrl = new URL(info.req.url, 'http://localhost');
-    const token  = reqUrl.searchParams.get('token');
-    if (!token) {
-      cb(false, 401, 'Missing token');
+
+    // Preferred: one-time ticket (not the JWT) in the URL
+    const ticket = reqUrl.searchParams.get('ticket');
+    if (ticket) {
+      const user = consumeWsTicket(ticket);
+      if (!user) { cb(false, 401, 'Invalid or expired ticket'); return; }
+      info.req._user = user;
+      cb(true);
       return;
     }
+
+    // Legacy fallback: JWT in URL (deprecated — leaks into logs/Referer).
+    // Kept so an already-loaded old client keeps working during a rolling deploy.
+    const token = reqUrl.searchParams.get('token');
+    if (!token) {
+      cb(false, 401, 'Missing ticket');
+      return;
+    }
+    logger.warn('WS auth via legacy URL token — client should switch to /api/ws-ticket');
     const payload = verifyAccessToken(token);
-    // Attach user info to the request for onConnection
     info.req._user = {
       id:       payload.sub,
       email:    payload.email,
@@ -327,6 +370,7 @@ function sendJSON(ws, obj) {
  * Gracefully close all connections.
  */
 function shutdown() {
+  if (ticketSweep) { clearInterval(ticketSweep); ticketSweep = null; }
   if (wss) {
     for (const ws of wss.clients) {
       ws.close(1001, 'Server shutting down');
@@ -336,4 +380,4 @@ function shutdown() {
   }
 }
 
-module.exports = { attach, shutdown };
+module.exports = { attach, shutdown, issueWsTicket };

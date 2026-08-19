@@ -13,13 +13,13 @@ const firmwareDir = process.env.FIRMWARE_STORAGE_PATH
  * No JWT required — ESP32 devices fetch directly.
  */
 function firmwareDownload(req, res) {
-  const { file, expires, sig } = req.query;
+  const { file, device, expires, sig } = req.query;
 
   // Validate required params
-  if (!file || !expires || !sig) {
+  if (!file || !device || !expires || !sig) {
     return res.status(400).json({
       error: 'missing_params',
-      message: 'Required query params: file, expires, sig',
+      message: 'Required query params: file, device, expires, sig',
       status: 400,
     });
   }
@@ -33,8 +33,8 @@ function firmwareDownload(req, res) {
     });
   }
 
-  // Verify HMAC signature + expiry
-  if (!verifySignature(file, expires, sig)) {
+  // Verify HMAC signature (binds filename + device) + expiry
+  if (!verifySignature(file, device, expires, sig)) {
     return res.status(403).json({
       error: 'forbidden',
       message: 'Invalid or expired download link',

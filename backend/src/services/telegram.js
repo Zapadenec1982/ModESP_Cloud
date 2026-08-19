@@ -676,11 +676,26 @@ function setupCommands() {
         return;
       }
 
-      await db.query(
-        `UPDATE users SET telegram_id = $1, telegram_link_code = NULL, telegram_link_expires = NULL
-         WHERE id = $2`,
-        [chatId, user.id]
-      );
+      try {
+        await db.query(
+          `UPDATE users SET telegram_id = $1, telegram_link_code = NULL, telegram_link_expires = NULL
+           WHERE id = $2`,
+          [chatId, user.id]
+        );
+      } catch (err) {
+        // Race backstop: the partial unique index on users(telegram_id) rejects a
+        // concurrent /start that bound this chat to another account first (23505).
+        if (err.code === '23505') {
+          const { rows: ex } = await db.query(
+            'SELECT email FROM users WHERE telegram_id = $1', [chatId]
+          );
+          await bot.sendMessage(chatId,
+            `${t(chatId, 'link_other_user')} ${ex[0]?.email || ''}.\n${t(chatId, 'unlink_first')}`
+          );
+          return;
+        }
+        throw err;
+      }
 
       await bot.sendMessage(chatId,
         `${t(chatId, 'link_success')}\n\n${t(chatId, 'use_buttons')}`,

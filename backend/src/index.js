@@ -132,6 +132,10 @@ app.get('/api/vapid-public-key', (_req, res) => {
 // can authenticate the device. Admin then assigns tenant via WebUI.
 const bcrypt = require('bcrypt');
 let _bootstrapHash = null; // lazy-computed, cached
+// P0-2: how long an active device must be offline before the shared bootstrap key
+// is allowed to reset it to pending. A genuine factory-reset device cannot pass
+// go-auth and is therefore offline; this window blocks replayed-key abuse of live devices.
+const RESET_OFFLINE_GRACE_MS = parseInt(process.env.RESET_OFFLINE_GRACE_MS, 10) || 10 * 60 * 1000;
 
 app.post('/api/devices/register', registerLimiter, async (req, res) => {
   const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
@@ -179,7 +183,8 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
     // Check if device already exists
     const existing = await db.query(
       `SELECT mqtt_device_id, mqtt_username,
-              (mqtt_password_hash IS NOT NULL) AS has_creds, status
+              (mqtt_password_hash IS NOT NULL) AS has_creds, status,
+              online, last_seen
        FROM devices WHERE mqtt_device_id = $1`,
       [mqttDeviceId]
     );
@@ -201,6 +206,25 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
         });
       }
       if (dev.has_creds && dev.status === 'active') {
+        // P0-2 guard: a genuinely factory-reset device cannot authenticate to MQTT
+        // (go-auth rejects its erased unique creds), so it is necessarily OFFLINE.
+        // An online or recently-seen active device asking to reset with the SHARED
+        // bootstrap key is illegitimate (replayed key → credential-downgrade / DoS) —
+        // refuse and require an admin to run /api/devices/recover.
+        const lastSeenMs   = dev.last_seen ? new Date(dev.last_seen).getTime() : 0;
+        const offlineForMs = Date.now() - lastSeenMs;
+        if (dev.online || offlineForMs < RESET_OFFLINE_GRACE_MS) {
+          logger.warn(
+            { device_id: mqttDeviceId, online: dev.online, offlineForMs },
+            'Bootstrap reset refused: active device still online/recent — requires admin recover'
+          );
+          return res.status(409).json({
+            error: 'device_active',
+            message: 'Device is active and online; credential reset requires admin action',
+            status: 409,
+          });
+        }
+        // Offline beyond the grace window → legitimate factory-reset recovery, proceed.
         // Active device re-registering → it lost its provisioned credentials.
         // Reset to pending with bootstrap creds so it can reconnect.
         await db.query(
@@ -305,6 +329,12 @@ if (AUTH_ENABLED) {
 
   // All other /api routes require JWT
   app.use('/api', authenticate);
+
+  // One-time WS ticket (P1-4) — issued over authenticated REST so the JWT
+  // never travels in the WS URL query string (logs/Referer leak).
+  app.get('/api/ws-ticket', (req, res) => {
+    res.json({ data: { ticket: wsSvc.issueWsTicket(req.user) } });
+  });
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));

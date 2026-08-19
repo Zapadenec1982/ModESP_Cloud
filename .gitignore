@@ -38,3 +38,10 @@ D*build_output.log
 test_ota.js
 /package.json
 /package-lock.json
+
+# Firmware binaries — belong in OTA storage / object store, never in git
+*.bin
+backend/firmware/*
+
+# Data exports / provisioning CSVs
+*.csv

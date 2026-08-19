@@ -11,6 +11,7 @@ const mqttSvc    = require('../services/mqtt');
 const mqttAuth   = require('../services/mqtt-auth');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
+const { isUuidFormat } = require('../lib/ids');
 const stateMeta  = require('../config/state_meta.json');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
@@ -46,7 +47,7 @@ async function resolveRoutingSlug(mqttId, tenantId) {
  * Returns { where, params }.
  */
 function buildDeviceWhere(id, req) {
-  const isUuid = id.length > 8;
+  const isUuid = isUuidFormat(id);
   const field = isUuid ? 'id' : 'mqtt_device_id';
   const isSuperAdmin = req.user && req.user.role === 'superadmin';
   if (isSuperAdmin) {
@@ -86,7 +87,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
                     online, status, last_seen, created_at,
                     latitude, longitude
              FROM devices
-             WHERE tenant_id = $1`;
+             WHERE tenant_id = $1 AND status <> 'deleted'`;
       params = [req.tenantId];
     }
 
@@ -174,15 +175,18 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
     const deviceUuid = rows[0].id;
     const deviceMqttId = rows[0].mqtt_device_id;
 
-    // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK)
-    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-    // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
-    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    // Delete the device itself
-    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK).
+    // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    await db.transaction(async (client) => {
+      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
+      await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+      await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+      // Delete the device itself
+      await client.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    });
 
     // Clean up in-memory state + refresh registries immediately
     mqttSvc.removeDeviceState(deviceMqttId);
@@ -203,7 +207,7 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
 router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     // Look up device
@@ -238,41 +242,30 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     const deviceMqttId = rows[0].mqtt_device_id;
     const oldTenantSlug = rows[0].tenant_slug || 'pending';
 
-    // Get bootstrap password
-    const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
-    if (!bootstrapKey) {
-      return res.status(503).json({
-        error: 'not_configured',
-        message: 'Bootstrap password not configured',
-        status: 503,
-      });
-    }
-
-    // ── Step 1: Send MQTT commands BEFORE changing DB credentials ──
-    // Device is still connected with old credentials on old tenant topic.
-    // Send bootstrap creds + pending tenant so it can reconnect after DB change.
+    // ── Step 1: Tell device to switch to pending namespace ──
+    // We do NOT send _set_mqtt_creds — device keeps its current NVS credentials.
+    // This is intentional: if the device is offline, it comes back with its old
+    // unique credentials which still match the DB hash (we don't overwrite it).
+    // If the device is online, it receives _set_tenant and reconnects to the
+    // pending namespace with its current credentials — auth still passes.
     let mqttSent = false;
     try {
-      mqttSvc.sendJsonCommand(oldTenantSlug, deviceMqttId, '_set_mqtt_creds', {
-        user: `device_${deviceMqttId}`,
-        pass: bootstrapKey,
-      });
       mqttSvc.sendCommand(oldTenantSlug, deviceMqttId, '_set_tenant', 'pending', { qos: 1 });
       mqttSent = true;
     } catch (err) {
-      req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset commands failed (device may be offline)');
+      req.log?.warn?.({ err, deviceMqttId }, 'MQTT reset command failed (device may be offline)');
     }
 
-    // ── Step 2: Update DB — move to SYSTEM tenant, restore bootstrap creds ──
-    const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
-
+    // ── Step 2: Update DB — move to SYSTEM tenant, keep existing credentials ──
+    // mqtt_password_hash is intentionally NOT updated: device must be able to
+    // reconnect with its current credentials (online or offline scenario).
     await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
-             mqtt_username = $2, mqtt_password_hash = $3
-         WHERE id = $4`,
-        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, bootstrapHash, deviceUuid]
+             mqtt_username = $2
+         WHERE id = $3`,
+        [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, deviceUuid]
       );
 
       // Clear per-device RBAC
@@ -304,7 +297,7 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
 router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     let whereClause, params;
@@ -359,13 +352,26 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       }
     }
 
-    // Hard delete: clear all related data + device record
-    await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-    await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-    await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+    // Soft delete: keep device record + credentials so the device can reconnect
+    // and appear in Pending if it comes back online after deletion.
+    // Related data (telemetry, alarms, events) is deleted immediately.
+    // The device record is hard-deleted after 7 days by the cleanup job in mqtt.js.
+    // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    await db.transaction(async (client) => {
+      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+      await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+      await client.query(
+        `UPDATE devices
+         SET status = 'deleted', deleted_at = NOW(),
+             tenant_id = $1, name = NULL, comment = NULL
+         WHERE id = $2`,
+        [db.SYSTEM_TENANT_ID, deviceUuid]
+      );
+    });
 
     mqttSvc.removeDeviceState(deviceMqttId);
     await mqttSvc.refreshRegistries();
@@ -391,7 +397,7 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 
     for (const id of ids) {
       try {
-        const isUuid = id.length > 8;
+        const isUuid = isUuidFormat(id);
         let whereClause, params;
         if (isSuperAdmin) {
           whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
@@ -412,12 +418,22 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
         const deviceUuid = rows[0].id;
         const deviceMqttId = rows[0].mqtt_device_id;
 
-        await db.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-        await db.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
-        await db.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
-        await db.query(`DELETE FROM devices WHERE id = $1`, [deviceUuid]);
+        // Atomic per device so a mid-sequence failure can't leave a half-deleted row.
+        await db.transaction(async (client) => {
+          await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
+          await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
+          await client.query(
+            `UPDATE devices
+             SET status = 'deleted', deleted_at = NOW(),
+                 tenant_id = $1, name = NULL, comment = NULL
+             WHERE id = $2`,
+            [db.SYSTEM_TENANT_ID, deviceUuid]
+          );
+        });
 
         mqttSvc.removeDeviceState(deviceMqttId);
         deleted.push({ id: deviceUuid, mqtt_device_id: deviceMqttId });
@@ -436,7 +452,60 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
   }
 });
 
-// ── POST /api/devices/pending/:mqttId/assign ──────────────────
+// ── POST /api/devices/recover ─────────────────────────────
+// Force-recover a device that is stuck (wrong credentials in NVS, factory-reset, etc.)
+// Upserts the device as pending with bootstrap credentials so it can reconnect.
+// Use when: device was factory-reset AND was previously soft-deleted (edge case).
+router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const { mqtt_device_id } = req.body;
+    if (!mqtt_device_id || typeof mqtt_device_id !== 'string' || !/^[A-F0-9]{6}$/.test(mqtt_device_id)) {
+      return res.status(400).json({
+        error: 'validation_failed',
+        message: 'mqtt_device_id must be a 6-char hex string (e.g. C7B0E9)',
+        status: 400,
+      });
+    }
+
+    const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
+    if (!bootstrapKey) {
+      return res.status(503).json({
+        error: 'not_configured',
+        message: 'Bootstrap password not configured',
+        status: 503,
+      });
+    }
+
+    const bootstrapHash = await bcrypt.hash(bootstrapKey, 12);
+
+    // Upsert: if device exists (even if deleted), reset to pending with bootstrap creds.
+    // If device doesn't exist at all, create it fresh.
+    await db.query(
+      `INSERT INTO devices (tenant_id, mqtt_device_id, status, mqtt_username, mqtt_password_hash, online, last_seen)
+       VALUES ($1, $2, 'pending', $3, $4, false, NOW())
+       ON CONFLICT (mqtt_device_id) DO UPDATE
+         SET status = 'pending', deleted_at = NULL,
+             tenant_id = EXCLUDED.tenant_id,
+             mqtt_username = EXCLUDED.mqtt_username,
+             mqtt_password_hash = EXCLUDED.mqtt_password_hash`,
+      [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash]
+    );
+
+    await mqttSvc.refreshRegistries();
+
+    res.json({
+      data: {
+        mqtt_device_id,
+        status: 'pending',
+        message: 'Device recovery initiated. It will appear in Pending Devices when it reconnects with bootstrap credentials.',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/devices/pending/:mqttId/assign ──────────────
 // Assign a pending device to the current tenant.
 // Body: { name: string, location?: string }
 const assignDeviceSchema = z.object({
@@ -885,7 +954,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
     const { id } = req.params;
 
     // Support both UUID and mqtt_device_id
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
     // Superadmin can view any device; regular users scoped to their tenant
@@ -1397,7 +1466,7 @@ router.post('/:id/reassign', async (req, res, next) => {
     }
 
     // Look up device (support both UUID and mqtt_device_id)
-    const isUuid = id.length > 8;
+    const isUuid = isUuidFormat(id);
     const whereField = isUuid ? 'id' : 'mqtt_device_id';
     const deviceRes = await db.query(
       `SELECT d.id, d.mqtt_device_id, d.tenant_id, d.status, t.slug AS old_slug

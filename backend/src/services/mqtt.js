@@ -130,12 +130,14 @@ async function start(log) {
   });
 
   // ── Periodic timers ──
-  timers.push(setInterval(telemetrySampler, TELEMETRY_INTERVAL));
-  timers.push(setInterval(stateWriter,      STATE_CHECK_MS));
-  timers.push(setInterval(offlineDetector,   OFFLINE_CHECK_MS));
-  timers.push(setInterval(refreshRegistries, REGISTRY_REFRESH));
-  timers.push(setInterval(flushEvents,       1000));           // batch events every 1s
-  timers.push(setInterval(stateMapMonitor,   60000));          // log stateMap stats every 60s
+  timers.push(setInterval(telemetrySampler,       TELEMETRY_INTERVAL));
+  timers.push(setInterval(stateWriter,            STATE_CHECK_MS));
+  timers.push(setInterval(offlineDetector,        OFFLINE_CHECK_MS));
+  timers.push(setInterval(refreshRegistries,      REGISTRY_REFRESH));
+  timers.push(setInterval(flushEvents,            1000));       // batch events every 1s
+  timers.push(setInterval(stateMapMonitor,        60000));      // log stateMap stats every 60s
+  timers.push(setInterval(stateSweeper,           3_600_000));  // evict stale in-memory state hourly
+  timers.push(setInterval(softDeleteCleanup,      3_600_000));  // purge soft-deleted devices every hour
 }
 
 function isConnected() { return connected; }
@@ -270,6 +272,12 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
   // Skip retained messages for unknown devices (prevents phantom devices after deletion)
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId); // reset unknown-with-tenant to pending
+    return;
+  }
+
   // Ensure stateMap entry exists
   let state = stateMap.get(deviceId);
   if (!state) {
@@ -354,6 +362,12 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   // Skip retained messages for unknown devices
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId);
+    return;
+  }
+
   let state = stateMap.get(deviceId);
   if (!state) {
     const tenantInfo = resolveTenant(tenantSlug);
@@ -416,6 +430,12 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
   // Skip retained messages for unknown devices
   if (isRetained && !stateMap.has(deviceId) && !deviceRegistry.has(deviceId)) return;
 
+  // P0-1: reject cross-tenant / unknown-tenant publishes before attributing any data
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) {
+    if (!isRetained) ensureDevice(tenantSlug, deviceId);
+    return;
+  }
+
   let state = stateMap.get(deviceId);
   if (!state) {
     const tenantInfo = resolveTenant(tenantSlug);
@@ -467,11 +487,15 @@ const MIN_EPOCH = 1700000000;       // ~2023-11-14, filter out uptime-based time
 const MAX_BACKFILL_AGE = 90 * 86400; // 90 days
 
 function resolveBackfillTenant(tenantSlug, deviceId) {
-  // Prefer real tenant from stateMap (device may publish via 'pending' topic)
+  // Prefer real tenant from stateMap (device may publish via 'pending' topic).
+  // stateMap._tenantId is only set after a tenant-authorized state/status/heartbeat,
+  // so trusting it here is safe.
   const state = stateMap.get(deviceId);
   if (state && state._tenantId && state._tenantId !== db.SYSTEM_TENANT_ID) {
     return { id: state._tenantId, active: true };
   }
+  // No trusted stateMap tenant — fall back to the topic slug, but validate it (P0-1)
+  if (!isTopicTenantAuthorized(deviceId, tenantSlug)) return null;
   return resolveTenant(tenantSlug);
 }
 
@@ -737,9 +761,12 @@ const deletedDevices = new Map(); // deviceId → deleteTimestamp
 const DELETED_BLOCK_MS = 30_000; // 30 seconds (enough for retained messages to pass)
 
 function ensureDevice(tenantSlug, deviceId) {
-  if (deviceRegistry.has(deviceId)) return;
+  const regEntry = deviceRegistry.get(deviceId);
 
-  // Block re-creation of recently deleted devices (retained MQTT messages)
+  // Active or pending device — already handled, nothing to do
+  if (regEntry && regEntry.status !== 'deleted') return;
+
+  // Block re-creation right after any deletion (retained MQTT messages flood window)
   const deletedAt = deletedDevices.get(deviceId);
   if (deletedAt) {
     if (Date.now() - deletedAt < DELETED_BLOCK_MS) return;
@@ -783,16 +810,18 @@ function ensureDevice(tenantSlug, deviceId) {
   db.query(
     `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
      VALUES ($1, $2, 'pending', true, NOW())
-     ON CONFLICT (mqtt_device_id) DO NOTHING`,
+     ON CONFLICT (mqtt_device_id) DO UPDATE
+       SET status = 'pending', deleted_at = NULL, tenant_id = EXCLUDED.tenant_id,
+           online = true, last_seen = NOW()
+       WHERE devices.status = 'deleted'`,
     [tenantInfo.id, deviceId]
   ).then((res) => {
-    // Set bootstrap credentials (mqtt_username + shared password hash)
-    if (BOOTSTRAP_HASH) {
-      mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
-        .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
-    }
-    // Notify WS clients about new pending device
     if (res.rowCount > 0) {
+      // New device: set bootstrap credentials (setBootstrapCredentials is a no-op if hash exists)
+      if (BOOTSTRAP_HASH) {
+        mqttAuth.setBootstrapCredentials(deviceId, BOOTSTRAP_HASH)
+          .catch(err => logger.error({ err, deviceId }, 'Failed to set bootstrap credentials'));
+      }
       emitter.emit('pending_device', { deviceId, action: 'added' });
     }
   }).catch(err => {
@@ -895,6 +924,43 @@ async function autoReassignDevice(deviceId, tenantId) {
 }
 
 // ── Tenant resolution ─────────────────────────────────────
+
+/**
+ * P0-1 defense-in-depth: verify a device is authorized to publish under the
+ * tenant slug taken from the MQTT topic. The broker (go-auth) ACL is the primary
+ * control; this is a Node-side backstop so a misconfigured ACL cannot cause
+ * cross-tenant data attribution. Returns false → caller MUST drop the message
+ * (no DB / stateMap / WS write).
+ */
+function isTopicTenantAuthorized(deviceId, tenantSlug) {
+  // Cold start: the registry may not be loaded yet (refreshRegistries is async and
+  // MQTT messages can arrive first). Don't drop legitimate traffic before we can
+  // judge it — validation resumes once the registry is populated.
+  if (deviceRegistry.size === 0) return true;
+
+  // 'pending' is the legitimate bootstrap / discovery / stuck namespace (SYSTEM tenant)
+  if (tenantSlug === 'pending') return true;
+
+  // Unknown tenant slug — never attribute data to it (was silently mapped to SYSTEM)
+  const expected = tenantRegistry.get(tenantSlug);
+  if (!expected) {
+    logger.warn({ deviceId, tenantSlug }, 'Unknown tenant slug on topic — dropping message');
+    return false;
+  }
+
+  const reg = deviceRegistry.get(deviceId);
+  // Unknown device under a real tenant — don't attribute; ensureDevice resets it to pending
+  if (!reg) return false;
+
+  if (reg.tenantId !== expected.id) {
+    logger.warn(
+      { deviceId, tenantSlug, expectedTenant: reg.tenantId, topicTenant: expected.id },
+      'Device-tenant mismatch on topic — dropping message (possible cross-tenant spoofing)'
+    );
+    return false;
+  }
+  return true;
+}
 
 function resolveTenant(slug) {
   if (slug === 'pending') {
@@ -1066,6 +1132,35 @@ function stateMapMonitor() {
   );
 }
 
+// ── Periodic: evict stale in-memory state (prevents unbounded growth) ──
+
+const STATE_EVICT_TTL_MS = parseInt(process.env.STATE_EVICT_TTL_MS, 10) || 24 * 60 * 60 * 1000; // 24h
+
+function stateSweeper() {
+  const now = Date.now();
+  let evicted = 0;
+
+  for (const [deviceId, state] of stateMap) {
+    // Evict only long-offline devices no longer in the registry (deleted / churned
+    // pending ids). Registered devices are bounded by the DB row count, not a leak.
+    // last_state for known devices is already persisted, so dropping the in-memory
+    // copy is safe — it rehydrates on the next message.
+    if (state._online) continue;
+    if (now - state._lastSeen < STATE_EVICT_TTL_MS) continue;
+    if (deviceRegistry.has(deviceId)) continue;
+    stateMap.delete(deviceId);
+    backfillCounters.delete(deviceId);
+    evicted++;
+  }
+
+  // Prune expired auxiliary map entries (these only ever grew before).
+  for (const [slug, e] of discoveryCount) if (e.resetAt && now > e.resetAt) discoveryCount.delete(slug);
+  for (const [id, e]   of backfillCounters) if (e.reset && now > e.reset)    backfillCounters.delete(id);
+  for (const [id, ts]  of deletedDevices)  if (now - ts > DELETED_BLOCK_MS)  deletedDevices.delete(id);
+
+  if (evicted) logger.info({ evicted, remaining: stateMap.size }, 'StateMap sweep');
+}
+
 // ── Periodic: Offline detector (every 30s) ────────────────
 
 async function offlineDetector() {
@@ -1092,6 +1187,24 @@ async function offlineDetector() {
       tenantSlug: state._tenantSlug, deviceId, online: false,
       lastSeen: new Date(state._lastSeen).toISOString(),
     });
+  }
+}
+
+// ── Periodic: Soft-delete cleanup (every hour) ───────────
+// Hard-deletes device records that have been soft-deleted for more than 7 days.
+// After 7 days the device's credentials are useless — bootstrap fallback will
+// handle re-discovery if the device ever reconnects again.
+
+async function softDeleteCleanup() {
+  try {
+    const res = await db.query(
+      `DELETE FROM devices WHERE status = 'deleted' AND deleted_at < NOW() - INTERVAL '7 days'`
+    );
+    if (res.rowCount > 0) {
+      logger.info({ count: res.rowCount }, 'Soft-deleted device cleanup: hard-deleted expired records');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Soft-delete cleanup failed');
   }
 }
 

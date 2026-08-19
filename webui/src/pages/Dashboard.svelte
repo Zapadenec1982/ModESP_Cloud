@@ -55,7 +55,7 @@
     deleting = true
     try {
       const res = await deleteDevicesBulk([...selected])
-      toast.success($t('dashboard.bulk_deleted').replace('{0}', String(res?.data?.deleted || selected.size)))
+      toast.success($t('dashboard.bulk_deleted').replace('{0}', String(res?.deleted ?? selected.size)))
       selected = new Set()
       await load()
     } catch (err) {

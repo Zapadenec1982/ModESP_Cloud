@@ -65,12 +65,11 @@
         getDevices(),
         getAlarms({ active: true })
       ])
-      if (devRes?.data) {
-        pendingCount = devRes.data.filter(d => d.status === 'pending').length
-      }
-      if (almRes?.data) {
-        alarmCount = almRes.data.length
-      }
+      // request() already unwraps { data }, so these are arrays. Guard both shapes.
+      const devices = Array.isArray(devRes) ? devRes : (devRes?.data ?? [])
+      const alarms = Array.isArray(almRes) ? almRes : (almRes?.data ?? [])
+      pendingCount = devices.filter(d => d.status === 'pending').length
+      alarmCount = alarms.length
     } catch (e) {
       // silent — sidebar badges are non-critical
     }

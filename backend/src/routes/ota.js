@@ -45,7 +45,7 @@ router.post('/deploy', async (req, res, next) => {
     }
 
     const result = await otaSvc.deploySingle(
-      req.tenantId, tRes.rows[0].slug, firmware_id, device_id, req.userId
+      req.tenantId, tRes.rows[0].slug, firmware_id, device_id, req.user?.id ?? null
     );
 
     // Audit: OTA deploy details
@@ -54,7 +54,7 @@ router.post('/deploy', async (req, res, next) => {
     res.status(201).json({ data: result });
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message, message: err.message, status: err.status });
+      return res.status(err.status).json({ error: err.code || 'ota_error', message: err.message, status: err.status });
     }
     next(err);
   }
@@ -85,7 +85,7 @@ router.post('/rollout', authorize('admin'), async (req, res, next) => {
       batchSize:        batch_size,
       batchIntervalS:   batch_interval_s,
       failThresholdPct: fail_threshold_pct,
-      userId:           req.userId,
+      userId:           req.user?.id ?? null,
     });
 
     // Audit: rollout details
@@ -94,7 +94,7 @@ router.post('/rollout', authorize('admin'), async (req, res, next) => {
     res.status(201).json({ data: result });
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message, message: err.message, status: err.status });
+      return res.status(err.status).json({ error: err.code || 'ota_error', message: err.message, status: err.status });
     }
     next(err);
   }
@@ -207,7 +207,7 @@ router.post('/rollouts/:id/pause', authorize('admin'), async (req, res, next) =>
     res.json({ data: result });
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message, message: err.message, status: err.status });
+      return res.status(err.status).json({ error: err.code || 'ota_error', message: err.message, status: err.status });
     }
     next(err);
   }
@@ -220,7 +220,7 @@ router.post('/rollouts/:id/resume', authorize('admin'), async (req, res, next) =
     res.json({ data: result });
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message, message: err.message, status: err.status });
+      return res.status(err.status).json({ error: err.code || 'ota_error', message: err.message, status: err.status });
     }
     next(err);
   }
@@ -233,7 +233,7 @@ router.post('/rollouts/:id/cancel', authorize('admin'), async (req, res, next) =
     res.json({ data: result });
   } catch (err) {
     if (err.status) {
-      return res.status(err.status).json({ error: err.message, message: err.message, status: err.status });
+      return res.status(err.status).json({ error: err.code || 'ota_error', message: err.message, status: err.status });
     }
     next(err);
   }

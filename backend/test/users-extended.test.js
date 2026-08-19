@@ -49,12 +49,12 @@ describe('Users Extended', () => {
     const testAdmin = await createUser(tenant.id, {
       role: 'admin',
       email: 'changepw@usersext.test',
-      password: 'OldPass123!',
+      password: 'OldPass123!Secure',
     });
     const res = await request(app)
       .put('/api/users/me')
       .set(authHeader(testAdmin, tenant.id))
-      .send({ password: 'NewSecurePass2026!', old_password: 'OldPass123!' });
+      .send({ password: 'NewPass456!Secure', old_password: 'OldPass123!Secure' });
 
     expect(res.status).toBe(200);
   });
@@ -63,7 +63,7 @@ describe('Users Extended', () => {
     const res = await request(app)
       .put('/api/users/me')
       .set(authHeader(admin, tenant.id))
-      .send({ password: 'NewSecurePass2026!' });
+      .send({ password: 'NewPass789!' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');

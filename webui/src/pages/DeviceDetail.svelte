@@ -15,7 +15,7 @@
   import ParameterEditor from '../components/device/ParameterEditor.svelte'
   import TelemetryChart from '../components/TelemetryChart.svelte'
   import AlarmHistory from '../components/AlarmHistory.svelte'
-  import StateView from '../components/StateView.svelte'
+
   import EnergyTab from '../components/device/EnergyTab.svelte'
 
   // svelte-spa-router passes route params via `params` prop
@@ -31,11 +31,10 @@
   let activeTab = 'chart'
   $: tabs = [
     { id: 'chart',   label: $t('device.tab_chart') },
+    { id: 'energy',  label: $t('device.tab_energy') },
     { id: 'params',  label: $t('device.tab_params') },
     { id: 'alarms',  label: $t('device.tab_alarms') },
     { id: 'service', label: $t('device.tab_service') },
-    { id: 'energy',  label: $t('device.tab_energy') },
-    { id: 'state',   label: $t('device.tab_state') },
   ]
 
   // ── Edit modal state ──
@@ -222,7 +221,7 @@
   function closeMqttCreds() { mqttCredsResult = null }
 
   async function handleMqttGenerate() {
-    if (!confirm($t(device.has_mqtt_credentials ? 'device.mqtt_rotate_confirm' : 'device.mqtt_rotate_confirm'))) return
+    if (!confirm($t('device.mqtt_rotate_confirm'))) return
     mqttCredsBusy = true
     try {
       const creds = await generateMqttCredentials(resolvedId)
@@ -561,8 +560,6 @@
         </div>
       {:else if activeTab === 'energy'}
         <EnergyTab deviceId={device.mqtt_device_id} {device} />
-      {:else if activeTab === 'state'}
-        <StateView state={$liveState} />
       {/if}
     </div>
   {/if}

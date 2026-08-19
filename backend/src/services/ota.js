@@ -36,7 +36,7 @@ function shutdown() {
 // ── Send OTA to a single device ──────────────────────────
 
 async function sendOtaToDevice(tenantSlug, deviceId, firmware) {
-  const url = FIRMWARE_ORIGIN + firmwareUrl.generateSignedUrl(firmware.filename);
+  const url = FIRMWARE_ORIGIN + firmwareUrl.generateSignedUrl(firmware.filename, deviceId);
   const payload = {
     url,
     version:  firmware.version,
@@ -58,7 +58,7 @@ async function deploySingle(tenantId, tenantSlug, firmwareId, deviceId, userId) 
     'SELECT * FROM firmwares WHERE tenant_id = $1 AND id = $2',
     [tenantId, firmwareId]
   );
-  if (fwRes.rows.length === 0) throw Object.assign(new Error('Firmware not found'), { status: 404 });
+  if (fwRes.rows.length === 0) throw Object.assign(new Error('Firmware not found'), { status: 404, code: 'firmware_not_found' });
   const firmware = fwRes.rows[0];
 
   // Check device exists and is active
@@ -66,14 +66,14 @@ async function deploySingle(tenantId, tenantSlug, firmwareId, deviceId, userId) 
     "SELECT mqtt_device_id, model FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2 AND status = 'active'",
     [tenantId, deviceId]
   );
-  if (devRes.rows.length === 0) throw Object.assign(new Error('Device not found or not active'), { status: 404 });
+  if (devRes.rows.length === 0) throw Object.assign(new Error('Device not found or not active'), { status: 404, code: 'device_not_found' });
   const device = devRes.rows[0];
 
   // Board compatibility check
   if (firmware.board_type && device.model && firmware.board_type !== device.model) {
     throw Object.assign(
       new Error(`Board mismatch: firmware targets "${firmware.board_type}", device is "${device.model}"`),
-      { status: 400 }
+      { status: 400, code: 'board_mismatch' }
     );
   }
   if (firmware.board_type && !device.model) {
@@ -86,7 +86,7 @@ async function deploySingle(tenantId, tenantSlug, firmwareId, deviceId, userId) 
      WHERE tenant_id = $1 AND device_id = $2 AND status IN ('queued', 'sent')`,
     [tenantId, deviceId]
   );
-  if (active.rows.length > 0) throw Object.assign(new Error('Device already has an active OTA job'), { status: 409 });
+  if (active.rows.length > 0) throw Object.assign(new Error('Device already has an active OTA job'), { status: 409, code: 'ota_in_progress' });
 
   // Capture pre-OTA firmware version for change detection
   const preVersionRes = await db.query(
@@ -124,17 +124,17 @@ async function createRollout(tenantId, tenantSlug, opts) {
     'SELECT * FROM firmwares WHERE tenant_id = $1 AND id = $2',
     [tenantId, firmwareId]
   );
-  if (fwRes.rows.length === 0) throw Object.assign(new Error('Firmware not found'), { status: 404 });
+  if (fwRes.rows.length === 0) throw Object.assign(new Error('Firmware not found'), { status: 404, code: 'firmware_not_found' });
 
   // Resolve device list
   const firmware = fwRes.rows[0];
   let devRows;
   if (deviceIds && deviceIds.length > 0) {
-    const placeholders = deviceIds.map((_, i) => `$${i + 3}`).join(',');
+    const placeholders = deviceIds.map((_, i) => `$${i + 2}`).join(',');
     const devRes = await db.query(
       `SELECT mqtt_device_id, model FROM devices
        WHERE tenant_id = $1 AND status = 'active' AND mqtt_device_id IN (${placeholders})`,
-      [tenantId, 'active', ...deviceIds]
+      [tenantId, ...deviceIds]
     );
     devRows = devRes.rows;
   } else {
