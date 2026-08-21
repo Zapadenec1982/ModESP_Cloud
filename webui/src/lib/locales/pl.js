@@ -650,6 +650,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    load_failed: 'Nie udało się załadować danych wykresu',
+    retry: 'Ponów',
   },
 
   // ── Audit Log ──
