@@ -677,16 +677,25 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
       return;
     }
     // Alarm cleared — await DB before emitting to avoid race condition
-    logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
+    let cleared;
     try {
-      await db.query(
+      ({ rowCount: cleared } = await db.query(
         `UPDATE alarms SET active = false, cleared_at = NOW()
          WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
         [tenantInfo.id, deviceId, alarmCode]
-      );
+      ));
     } catch (err) {
+      // Never announce a clear we failed to persist — the alarm row is still
+      // active = true, so the UI reading it would contradict the broadcast.
       logger.error({ err, deviceId, alarmCode }, 'Failed to clear alarm');
+      return;
     }
+    // Firmware republishes every alarm key as false on each state update, so most
+    // calls here close nothing. Announcing them anyway sent a "cleared" push and a
+    // WebSocket broadcast per state update, which rate-limited the Telegram bot
+    // (429) and drowned out the clears that carried real information.
+    if (cleared === 0) return;
+    logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
     emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
   }
 }
