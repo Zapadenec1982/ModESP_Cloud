@@ -31,6 +31,15 @@
  *   status='active' inside a real tenant and publishes under the tenant prefix
  *   from the first connection — it never passes through `modesp/v1/pending/`.
  *
+ *   That last sentence is why assigned_at is written NULL on BOTH paths below.
+ *   ACL branch 3 (migration 022) hands an active device its pending prefix while
+ *   `assigned_at IS NOT NULL AND (last_seen IS NULL OR last_seen <= assigned_at)`.
+ *   These rows are created with last_seen NULL and re-set to NULL on every re-run,
+ *   so without an explicit NULL stamp — and the migration's one-time backfill does
+ *   stamp every active row — they would hold the pending grant open indefinitely,
+ *   for a device that was never on that prefix and has no deadlock to break. NULL
+ *   assigned_at keeps branch 3 off entirely for the demo fleet.
+ *
  * PREREQUISITE
  *   src/scripts/seed-demo.js must have been run first. This script never
  *   creates sites, it only looks them up, and it aborts before touching a
@@ -993,14 +1002,14 @@ async function main() {
         INSERT INTO devices (
           tenant_id, mqtt_device_id, status, name, location, model, serial_number,
           comment, site_id, mqtt_username, mqtt_password_hash, online,
-          deleted_at, latitude, longitude, last_state, last_seen,
+          deleted_at, latitude, longitude, last_state, last_seen, assigned_at,
           model_id, compressor_kw, evap_fan_kw, cond_fan_kw,
           defrost_heater_kw, standby_kw
         )
         SELECT $1::uuid, $2::varchar, 'active', $3::varchar, $4::varchar, $5::varchar,
                $6::varchar, $7::text, s.id, $9::varchar, $10::varchar, false,
                NULL::timestamptz, NULL::double precision, NULL::double precision,
-               NULL::jsonb, NULL::timestamptz,
+               NULL::jsonb, NULL::timestamptz, NULL::timestamptz,
                NULL::uuid, NULL::numeric, NULL::numeric, NULL::numeric,
                NULL::numeric, NULL::numeric
           FROM sites s
@@ -1022,6 +1031,7 @@ async function main() {
           longitude          = NULL,
           last_state         = NULL,
           last_seen          = NULL,
+          assigned_at        = NULL,
           model_id           = NULL,
           compressor_kw      = NULL,
           evap_fan_kw        = NULL,

@@ -10,6 +10,7 @@ mqttSvc.removeDeviceState = () => {};
 mqttSvc.sendCommand = async () => {};
 mqttSvc.sendJsonCommand = async () => {};
 mqttSvc.clearPendingRetained = async () => {};
+mqttSvc.setPendingTenantHint = () => {};
 mqttSvc.isConnected = () => true;
 mqttSvc.getDeviceState = () => null;
 mqttSvc.getDeviceMeta = () => null;
