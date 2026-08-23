@@ -919,3 +919,331 @@ export function getEnergySummary(deviceId, from, to) {
   const qs = params.toString();
   return request(`/devices/${deviceId}/energy/summary${qs ? '?' + qs : ''}`);
 }
+
+// ── Geo: query-string helper ─────────────────────────────
+
+/**
+ * `{ a: 1, b: '', c: null }` → `?a=1`.
+ * `new URLSearchParams(obj)` would serialise `undefined`/`null` as the literal
+ * strings "undefined"/"null", and the geo endpoints validate their parameters
+ * strictly — `?region=undefined` is a filter that matches nothing, `?from=null`
+ * is a 400.
+ */
+function geoQuery(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    const str = Array.isArray(value) ? value.join(',') : String(value);
+    if (str.trim() === '') continue;
+    qs.set(key, str);
+  }
+  const query = qs.toString();
+  return query ? `?${query}` : '';
+}
+
+// ── Sites (торгові точки) ────────────────────────────────
+
+/**
+ * GET /api/sites — every site the caller can see, with per-site device counters
+ * already narrowed to the caller's RBAC.
+ * @param {{search?, country_code?, region?, city?, tenant_id?}} params
+ */
+export function getSites(params = {}) {
+  return request(`/sites${geoQuery(params)}`);
+}
+
+/** GET /api/sites/:id — one site plus its device list. */
+export function getSite(id) {
+  return request(`/sites/${id}`);
+}
+
+/**
+ * POST /api/sites (admin). With an address but no pin the backend geocodes
+ * inline, best effort — a geocoder outage never blocks the creation.
+ */
+export function createSite(data) {
+  return request('/sites', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** PATCH /api/sites/:id (admin) — any subset of the editable fields. */
+export function updateSite(id, data) {
+  return request(`/sites/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * DELETE /api/sites/:id (admin). Without `force` a site that still holds devices
+ * answers 409 `site_has_devices` (with `device_count` in the error body) so the
+ * UI can warn before re-sending; `force` detaches them instead.
+ */
+export function deleteSite(id, { force = false } = {}) {
+  return request(`/sites/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' });
+}
+
+/**
+ * POST /api/sites/:id/geocode (admin) — force a re-geocode.
+ * requestFull: `meta.geocoder` is 'ok' | 'disabled' | 'failed', which is the only
+ * way the UI can say WHY nothing moved instead of silently no-oping.
+ */
+export function geocodeSite(id) {
+  return requestFull(`/sites/${id}/geocode`, { method: 'POST' });
+}
+
+/**
+ * GET /api/sites/geocode-status (admin) — { pending, geocoded, failed }.
+ * requestFull: `meta.geocoder_enabled` / `meta.bulk_enabled` /
+ * `meta.sweep_in_progress` drive the progress panel and the sweep button.
+ */
+export function getGeocodeStatus() {
+  return requestFull('/sites/geocode-status');
+}
+
+/**
+ * POST /api/sites/geocode-pending (admin) — background sweep over sites that
+ * still have no position. Answers `{ queued, reason? }`; `reason` is
+ * 'bulk_disabled' or 'sweep_in_progress' when nothing was queued.
+ */
+export function geocodePendingSites({ retryFailed = false } = {}) {
+  return request(`/sites/geocode-pending${retryFailed ? '?retry_failed=true' : ''}`, {
+    method: 'POST',
+  });
+}
+
+// ── Site weather (Open-Meteo, ENV-gated) ─────────────────
+
+/**
+ * GET /api/sites/:id/weather — current conditions + hourly forecast.
+ * requestFull: `data` is null whenever the feature is off or the answer is
+ * unusable, and only `meta.weather` ('disabled' | 'no_coordinates' |
+ * 'unavailable') tells those three apart.
+ */
+export function getSiteWeather(id, { hours } = {}) {
+  return requestFull(`/sites/${id}/weather${geoQuery({ hours })}`);
+}
+
+/**
+ * GET /api/sites/:id/weather/history — recorded outdoor conditions.
+ * requestFull: `meta.truncated` says the row cap was hit, so the chart can label
+ * a partial period instead of drawing it as complete.
+ */
+export function getSiteWeatherHistory(id, { from, to } = {}) {
+  return requestFull(`/sites/${id}/weather/history${geoQuery({ from, to })}`);
+}
+
+// ── Nearest technicians (Part 2 §7.4) ────────────────────
+
+/**
+ * GET /api/sites/:id/nearest-technicians — staff with a home base, closest first.
+ * requestFull: `meta.routing` is 'osrm' or null, which is what decides whether
+ * the drive-time column means anything.
+ */
+export function getNearestTechnicians(id, { limit } = {}) {
+  return requestFull(`/sites/${id}/nearest-technicians${geoQuery({ limit })}`);
+}
+
+// ── Public status links (Part 2 §7.7) ────────────────────
+
+/** GET /api/sites/:id/public-links (admin) — metadata only, never the token. */
+export function getSitePublicLinks(id) {
+  return request(`/sites/${id}/public-links`);
+}
+
+/**
+ * POST /api/sites/:id/public-links (admin).
+ * The raw token comes back in `data.token` exactly ONCE — only its sha256 is
+ * stored, so a link the admin does not copy here can never be recovered.
+ */
+export function createSitePublicLink(id, { label, expires_in_days } = {}) {
+  return request(`/sites/${id}/public-links`, {
+    method: 'POST',
+    body: JSON.stringify({ label, expires_in_days }),
+  });
+}
+
+/** DELETE /api/sites/:id/public-links/:linkId (admin) — revoke, not erase. */
+export function revokeSitePublicLink(id, linkId) {
+  return request(`/sites/${id}/public-links/${linkId}`, { method: 'DELETE' });
+}
+
+/**
+ * GET /api/public/site — the unauthenticated status page.
+ *
+ * Deliberately a bare fetch and NOT request(): that helper attaches the Bearer
+ * token, runs the refresh chain and calls navigate() on 401 — all of which are
+ * wrong for a page a logged-out visitor opens. The token travels in the
+ * X-Site-Token header rather than the path, so it appears in no server log and
+ * in no Referer; the shareable URL keeps it in the hash fragment, which browsers
+ * never send.
+ *
+ * Unknown, revoked and expired tokens all answer an identical 404 by design.
+ */
+export async function getPublicSite(token) {
+  const res = await fetch(`${BASE}/public/site`, {
+    headers: { 'Content-Type': 'application/json', 'X-Site-Token': token },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+// ── Geocoding proxy (Nominatim, server-side only) ────────
+//
+// The browser never calls Nominatim directly — one identifying User-Agent, one
+// rate limiter and one cache live on the backend, as its usage policy requires.
+// `webui/src/lib/geo.js` carries its own copies of these two calls so the lazily
+// loaded map components stay self-contained; these are the wrappers for pages
+// that already import from this module.
+
+/**
+ * GET /api/geo/search — free-text address autocomplete.
+ * requestFull: `meta.enabled` is false when GEOCODER_PROVIDER is unset, which is
+ * what lets the UI hide the autocomplete instead of showing a box that never
+ * answers — an empty `data` alone cannot distinguish that from "no matches".
+ */
+export function geoSearch(q, { limit } = {}) {
+  return requestFull(`/geo/search${geoQuery({ q, limit })}`);
+}
+
+/**
+ * GET /api/geo/reverse — coordinates to a structured address.
+ * requestFull: `meta.enabled`, same reason as geoSearch().
+ */
+export function geoReverse(lat, lon) {
+  return requestFull(`/geo/reverse${geoQuery({ lat, lon })}`);
+}
+
+// ── Fleet map ────────────────────────────────────────────
+
+/**
+ * GET /api/map/devices — one GeoJSON Feature per site, kept deliberately thin.
+ * requestFull: `meta.ungeocoded_devices` is the "без координат" counter and
+ * `meta.truncated` flags a clipped result — neither is inside `data`.
+ */
+export function getMapDevices(params = {}) {
+  return requestFull(`/map/devices${geoQuery(params)}`);
+}
+
+/**
+ * GET /api/map/filters — the option lists for the filter bar.
+ * `tenants` is present only for a superadmin and `users` only for admin+, so
+ * every consumer must tolerate a missing key.
+ */
+export function getMapFilters(params = {}) {
+  return request(`/map/filters${geoQuery(params)}`);
+}
+
+/**
+ * GET /api/map/alarm-heatmap — `[[lat, lon, weight], …]`, aggregated in SQL.
+ * requestFull: `meta.max_weight` is load-bearing — L.heatLayer normalises against
+ * its `max` option and without the real one every dataset renders as one blob.
+ */
+export function getAlarmHeatmap(params = {}) {
+  return requestFull(`/map/alarm-heatmap${geoQuery(params)}`);
+}
+
+/**
+ * GET /api/map/isochrones — coverage polygons around a point.
+ * requestFull: `meta.approximate` is the visible "approximate" badge. Without an
+ * ORS key the backend returns straight-line rings, and a planning decision must
+ * never rest on a circle the user believes is a drive-time polygon.
+ * @param {{lat:number, lon:number, minutes?:number[]|string}} params
+ */
+export function getIsochrones({ lat, lon, minutes } = {}) {
+  return requestFull(`/map/isochrones${geoQuery({ lat, lon, minutes })}`);
+}
+
+/**
+ * POST /api/map/route — service-round planning, max 25 stops.
+ * requestFull: with OSRM unset or unreachable the backend still answers 200 with
+ * a nearest-neighbour order, `legs: null` and `meta.optimized: false` — that flag
+ * is what makes the UI label the result "orientation only, not drive-time
+ * optimised" instead of presenting a guess as a plan.
+ */
+export function planRoute({ site_ids, start = null, roundtrip = false } = {}) {
+  const body = { site_ids: site_ids || [] };
+  if (start) body.start = start;
+  if (roundtrip) body.roundtrip = true;
+  return requestFull('/map/route', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// ── Geo statistics ───────────────────────────────────────
+
+/**
+ * GET /api/stats/geo — the fleet's numbers cut by country / region / city / site.
+ * requestFull: `meta.totals` is the footer row and `meta.group_by` / `meta.from`
+ * / `meta.to` are what the page echoes back; `request()` would drop all of them.
+ * A metric the backend could not compute cheaply comes back as null — render an
+ * em dash, never a zero.
+ */
+export function getGeoStats(params = {}) {
+  return requestFull(`/stats/geo${geoQuery(params)}`);
+}
+
+/**
+ * GET /api/stats/geo/export.csv — the same query, rendered server-side, so the
+ * file can never disagree with the screen.
+ */
+export function exportGeoStatsCsv(params = {}) {
+  const groupBy = params.group_by || 'country';
+  const fname = `geo_stats_${groupBy}_${new Date().toISOString().slice(0, 10)}.csv`;
+  return downloadFile(`/stats/geo/export.csv${geoQuery(params)}`, fname);
+}
+
+// ── Site-level access grants (user_sites) ────────────────
+
+/** GET /api/users/:id/sites (admin) — sites granted to one user. */
+export function getUserSites(userId) {
+  return request(`/users/${userId}/sites`);
+}
+
+/**
+ * POST /api/users/:id/sites (admin) — grant one site. The site is validated
+ * against the TARGET user's tenant, so a grant can never cross a tenant boundary.
+ */
+export function grantUserSite(userId, siteId) {
+  return request(`/users/${userId}/sites`, {
+    method: 'POST',
+    body: JSON.stringify({ site_id: siteId }),
+  });
+}
+
+/** DELETE /api/users/:id/sites/:siteId (admin) — revoke one site. */
+export function revokeUserSite(userId, siteId) {
+  return request(`/users/${userId}/sites/${siteId}`, { method: 'DELETE' });
+}
+
+// ── Own profile (home base, any role) ────────────────────
+//
+// /api/users is mounted behind authorize('admin'), so a technician cannot reach
+// PUT /api/users/me at all — /api/profile is the self-service half of §7.4.
+
+/** GET /api/profile — { id, email, role, base_latitude, base_longitude, base_address }. */
+export function getProfile() {
+  return request('/profile');
+}
+
+/**
+ * PATCH /api/profile — home base only. `base_latitude` and `base_longitude` must
+ * be sent (or cleared) together: a half-set base would place the technician on
+ * the prime meridian.
+ */
+export function updateProfile(data) {
+  return request('/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}

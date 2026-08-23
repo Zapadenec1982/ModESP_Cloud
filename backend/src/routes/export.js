@@ -19,7 +19,7 @@ const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const exportLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
-  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip),
   message: { error: 'rate_limited', message: 'Too many export requests. Try again in a minute.' },
 });
 deviceRouter.use(exportLimiter);

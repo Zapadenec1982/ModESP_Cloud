@@ -10,6 +10,7 @@ mqttSvc.removeDeviceState = () => {};
 mqttSvc.sendCommand = async () => {};
 mqttSvc.sendJsonCommand = async () => {};
 mqttSvc.clearPendingRetained = async () => {};
+mqttSvc.setPendingTenantHint = () => {};
 mqttSvc.isConnected = () => true;
 mqttSvc.getDeviceState = () => null;
 mqttSvc.getDeviceMeta = () => null;
@@ -43,6 +44,28 @@ otaSvc.cancelRollout = async () => ({ status: 'cancelled' });
 const pushSvc = require('../../src/services/push');
 pushSvc.testSend = async () => ({ ok: true, message: 'test stub' });
 
+// Stub the third-party geo services. All three already read as disabled with no
+// env set, so this is belt-and-braces: routes/devices.js now requires geocode
+// for the CSV-import site backfill, and a CI box that happens to export
+// GEOCODER_* / WEATHER_PROVIDER / OSRM_URL would otherwise make the device
+// suites hit Nominatim, Open-Meteo or OSRM for real.
+const geocodeSvc = require('../../src/services/geocode');
+geocodeSvc.isEnabled = () => false;
+geocodeSvc.isBulkEnabled = () => false;
+geocodeSvc.search = async () => [];
+geocodeSvc.reverse = async () => null;
+geocodeSvc.geocode = async () => null;
+geocodeSvc.resolveAddress = async () => ({ status: geocodeSvc.OUTCOME.DISABLED, result: null });
+
+const weatherSvc = require('../../src/services/weather');
+weatherSvc.isEnabled = () => false;
+weatherSvc.timezoneFor = async () => null;
+weatherSvc.siteWeather = async () => null;
+
+const routingSvc = require('../../src/services/routing');
+routingSvc.isEnabled = () => false;
+routingSvc.isochronesEnabled = () => false;
+
 const express = require('express');
 const pino = require('pino');
 const { authenticate, authorize, requireSuperadmin } = require('../../src/middleware/auth');
@@ -63,6 +86,12 @@ function createTestApp() {
 
   // Auth routes (public)
   app.use('/api/auth', require('../../src/routes/auth'));
+
+  // Public site status page — UNAUTHENTICATED by design, and therefore mounted
+  // in the same position it holds in src/index.js: above the JWT gate. Kept here
+  // so any suite using this helper exercises the real order; public-site.test.js
+  // asserts it answers without an Authorization header.
+  app.use('/api/public', require('../../src/routes/public'));
 
   // JWT gate
   app.use('/api', authenticate);

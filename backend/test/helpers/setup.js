@@ -27,8 +27,14 @@ async function cleanDatabase() {
   // Disable audit immutability trigger temporarily
   await db.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
 
+  // geocode_cache is listed explicitly because it is the one new table with no
+  // foreign key — TRUNCATE ... CASCADE reaches sites, user_sites,
+  // weather_observations and site_public_links through tenants/users/devices,
+  // but a cached geocoder response would otherwise survive into the next test
+  // file and turn a stubbed provider miss into a silent cache hit.
   await db.query(`
     TRUNCATE TABLE
+      geocode_cache,
       audit_log,
       notification_log,
       notification_subscribers,

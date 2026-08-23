@@ -2,11 +2,19 @@
 
 ## Current Status
 
-**Production deployed ✅ — 14 phases complete, ESP32 connected via MQTT+TLS**
+**Production deployed ✅ — 15 phases complete, ESP32 connected via MQTT+TLS**
 
-Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity), Energy Monitoring.
+Completed: Cloud Foundation, REST API, WebSocket, WebUI, Push Notifications (FCM+Telegram+WebPush), Auth (JWT), History & Analytics, Fleet OTA, i18n (UA/EN), Per-Device RBAC, Scalability, Dynamic MQTT Auth (go-auth), Tenant Management, Multi-Tenant Users, Telegram Bot Redesign, Audit Logging, Test Infrastructure (130+ tests), Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity), Energy Monitoring, Sites & Geographic Intelligence.
 
-**Next: Phase 14 — Fleet Benchmarking + Anomaly Detection**
+**Next: Phase 15 — Fleet Benchmarking + Anomaly Detection**
+
+---
+
+## Production Blockers
+
+Items that must be closed before the platform serves paying customers — independent of the feature phases below.
+
+- [ ] **Purchase or self-host the third-party geo services.** Nominatim (geocoding), Open-Meteo (weather), OSRM (routing), OpenRouteService (isochrones) and the OpenStreetMap tile server are all used under their free / non-commercial terms for the demo deployment. ModESP Cloud is a commercial product, so each one needs a paid plan or a self-hosted instance. Checklist and per-service options: `docs/THIRD_PARTY_LICENSING.md`
 
 ---
 
@@ -142,11 +150,26 @@ Estimated energy consumption based on equipment model power profiles.
 - Energy tab on Device Detail page + energy channel on telemetry chart
 - Forward-compatible: reserved `equipment.energy_kwh` MQTT key for CT clamp sensors (auto-detect metered vs estimated)
 
+### Phase 14: Sites & Geographic Intelligence ✅ (2026-08-23)
+Trade points as first-class objects — and everything a service organisation actually does with a map.
+
+- `sites` table (migration 021): country / region / city / street address / postal code per trade point, backfilled from `devices.location`; `devices.site_id` links devices to sites, and per-device coordinates stay an optional override on top of the site's
+- Server-side geocoding proxy (Nominatim): serialized 1 req/s pacer, two-lane priority queue (interactive over bulk), persistent cache with separate lifetimes for hits and misses, and a country sanity check that rejects a result contradicting the requested country
+- Fleet map rebuilt: clustered site markers, full filter bar (country / region / city / site / model / firmware / status / user / bbox), alarm heatmap layer, coverage isochrones labelled as approximate without an ORS key
+- Geo Analytics page: country → region → city → site drill-down with device, alarm, temperature, uptime, energy and service-visit metrics, plus CSV export
+- Service round planner: OSRM travelling-salesman ordering, route polyline, per-leg distance/duration, Google Maps hand-off — degrades to nearest-neighbour ordering when no routing server is configured
+- Nearest technicians to a site by home base (`users.base_latitude` / `base_longitude`), enriched with real driving time when routing is available; technicians edit their own base via `/api/profile`
+- Outdoor weather per site (Open-Meteo) with 395-day history, outdoor-temperature overlay on the telemetry chart, and automatic IANA timezone per site from the same response
+- Site-level RBAC (`user_sites`): grant a whole site instead of individual devices; effective access is the union with `user_devices`, tenant-scoped on both sides
+- Public read-only site status links (`site_public_links`): token stored only as sha256, delivered in a request header, mandatory expiry, revocable, and an indistinguishable 404 for revoked / expired / unknown
+- CSV import extended with `site_name`, `country`, `region`, `city`, `address_line`
+- All four external services are ENV-gated, called server-side only, and degrade to a working disabled state — see `docs/THIRD_PARTY_LICENSING.md`
+
 ---
 
 ## Upcoming Phases
 
-### Phase 14: Fleet Benchmarking + Anomaly Detection
+### Phase 15: Fleet Benchmarking + Anomaly Detection
 **Goal:** Compare similar equipment, automatically detect anomalies.
 **Timeline:** 2-3 weeks
 
@@ -160,7 +183,7 @@ Estimated energy consumption based on equipment model power profiles.
 
 ---
 
-### Phase 15: Webhooks + API Platform
+### Phase 16: Webhooks + API Platform
 **Goal:** External integrations — CMMS, ERP, automation.
 **Timeline:** 1.5-2 weeks
 
@@ -174,7 +197,7 @@ Estimated energy consumption based on equipment model power profiles.
 
 ---
 
-### Phase 16: Advanced Reporting + PWA
+### Phase 17: Advanced Reporting + PWA
 **Goal:** Printable reports for customers, mobile experience.
 **Timeline:** 2-3 weeks
 
@@ -188,7 +211,7 @@ Estimated energy consumption based on equipment model power profiles.
 
 ---
 
-### Phase 17: Maintenance Recommendations
+### Phase 18: Maintenance Recommendations
 **Goal:** Automatic maintenance recommendations based on data.
 **Timeline:** 1.5-2 weeks
 
@@ -201,7 +224,7 @@ Estimated energy consumption based on equipment model power profiles.
 
 ---
 
-### Phase 18: Tenant Self-Service + Billing
+### Phase 19: Tenant Self-Service + Billing
 **Goal:** SaaS business model — customers register and pay independently.
 **Timeline:** 4-6 weeks
 
@@ -224,15 +247,15 @@ Estimated energy consumption based on equipment model power profiles.
 ## Visual Roadmap
 
 ```
-2026 Q2 (Apr-May)                  Q3 (Jun-Aug)                   Q4 (Sep+)
+2026 Q3 (Sep)                      Q4 (Oct-Dec)                   2027 Q1
 ──────────────────────────────────────────────────────────────────────────────
- Phase 14: Benchmarking             Phase 15: Webhooks + API      Phase 18: Self-Service
+ Phase 15: Benchmarking             Phase 16: Webhooks + API      Phase 19: Self-Service
  └── 2-3 weeks                     └── 1.5-2 weeks              └── 4-6 weeks
 
-                                    Phase 16: Reports + PWA
+                                    Phase 17: Reports + PWA
                                     └── 2-3 weeks
 
-                                    Phase 17: Recommendations
+                                    Phase 18: Recommendations
                                     └── 1.5-2 weeks
 ──────────────────────────────────────────────────────────────────────────────
 ```
@@ -248,29 +271,34 @@ Estimated energy consumption based on equipment model power profiles.
 | Deep edge integration | 48 state + 60 command keys, direct control | Axiom (read-only) |
 | Fleet OTA with rollback | Board-type validation, batch rollout, auto-pause | Monnit (basic OTA) |
 | Zero-touch auto-discovery | Pending → assign → auto-reconnect | None |
-| Per-device RBAC | user_devices M:N, not just per-site | None (all per-site) |
+| Per-device **and** per-site RBAC | user_devices M:N plus per-site grants, access is the union of both | Competitors offer per-site only |
 | M:N multi-tenant users | Technician serves multiple customers | None |
 | Self-hosted | Full data control, ~$20/mo on VPS | Monnit Enterprise (expensive) |
 | HACCP Export | CSV + PDF with Cyrillic, regulatory-ready | SmartSense, Monnit |
 | Energy Monitoring | Estimated kWh from power profiles, CT clamp ready | Axiom, KLATU, SmartSense |
+| Geo analytics drill-down | Country → region → city → site with alarms, uptime, kWh and service visits | Axiom (site list only) |
+| Outdoor weather overlay | Outdoor temperature as a second series on the telemetry chart, per site | None |
+| Public customer status link | Read-only per-site page, hashed token, mandatory expiry, revocable | SmartSense (account required) |
+| Service round planner | TSP-optimised visiting order + phone hand-off, degrades without a routing server | None |
 
 ### Feature Gaps (upcoming)
 
 | Gap | Who Already Has It | Phase |
 |-----|-------------------|-------|
-| Equipment Health Score | SmartSense, KLATU | Phase 14 |
-| Anomaly detection | Axiom, KLATU | Phase 14 |
-| Fleet benchmarking | Axiom, SmartSense | Phase 14 |
-| Webhooks / API | Monnit, Tive, SmartSense | Phase 15 |
-| Scheduled reports | Monnit, SmartSense | Phase 16 |
-| Mobile PWA | SmartSense, Monnit | Phase 16 |
-| Maintenance recommendations | KLATU, SmartSense | Phase 17 |
-| SaaS self-service | All cloud competitors | Phase 18 |
+| Equipment Health Score | SmartSense, KLATU | Phase 15 |
+| Anomaly detection | Axiom, KLATU | Phase 15 |
+| Fleet benchmarking | Axiom, SmartSense | Phase 15 |
+| Webhooks / API | Monnit, Tive, SmartSense | Phase 16 |
+| Scheduled reports | Monnit, SmartSense | Phase 17 |
+| Mobile PWA | SmartSense, Monnit | Phase 17 |
+| Maintenance recommendations | KLATU, SmartSense | Phase 18 |
+| SaaS self-service | All cloud competitors | Phase 19 |
 
 ---
 
 ## Changelog
 
+- 2026-08-23 — Phase 14 complete: Sites & Geographic Intelligence (sites + geocoding, fleet map with clustering/heatmap/isochrones, geo analytics, service round planner, outdoor weather, site-level RBAC, public status links). Upcoming phases renumbered 14-18 → 15-19. Third-party geo licensing added as a production blocker.
 - 2026-03-25 — Phase 12 complete: Bulk Device Import (CSV upload with drag-drop, template, batch assign).
 - 2026-03-24 — Phase 13 complete: Energy Monitoring (estimated kWh, device models, cost calculation, energy tab).
 - 2026-03-15 — Revision: merged ROADMAP + ROADMAP_NEXT, renumbered phases 12-18, removed internal details. Split into EN + UA versions.

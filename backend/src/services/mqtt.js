@@ -142,6 +142,7 @@ async function start(log) {
   timers.push(setInterval(stateMapMonitor,        60000));      // log stateMap stats every 60s
   timers.push(setInterval(stateSweeper,           3_600_000));  // evict stale in-memory state hourly
   timers.push(setInterval(softDeleteCleanup,      3_600_000));  // purge soft-deleted devices every hour
+  timers.push(setInterval(rearmPendingGrant,      3_600_000));  // re-open the pending grant for relapsed devices
 }
 
 function isConnected() { return connected; }
@@ -821,11 +822,14 @@ function ensureDevice(tenantSlug, deviceId) {
   logger.info({ tenantSlug, deviceId }, 'Auto-discovery: new device');
 
   db.query(
+    // assigned_at = NULL keeps the column's invariant ("NULL while pending or deleted",
+    // migration 022) locally true here rather than relying on the delete handlers having
+    // nulled it on the way in.
     `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
      VALUES ($1, $2, 'pending', true, NOW())
      ON CONFLICT (mqtt_device_id) DO UPDATE
        SET status = 'pending', deleted_at = NULL, tenant_id = EXCLUDED.tenant_id,
-           online = true, last_seen = NOW()
+           online = true, last_seen = NOW(), assigned_at = NULL
        WHERE devices.status = 'deleted'`,
     [tenantInfo.id, deviceId]
   ).then((res) => {
@@ -853,13 +857,34 @@ function recordAssign(deviceId) {
 const resettingDevices = new Set();
 
 /**
+ * Devices with a RETAINED rescue command sitting on their pending prefix, and how many
+ * rescue rounds each has taken. Cleared as soon as the device is seen under a real
+ * tenant slug (the rescue landed) — see checkStuckDevice.
+ * @type {Map<string, number>}
+ */
+const pendingRescues = new Map();
+/** Stop re-publishing the rescue after this many rounds; the retained copy stays put. */
+const RESCUE_MAX_ATTEMPTS = 3;
+
+/**
  * Detect devices stuck in "pending" namespace after a failed assign.
  * If deviceRegistry says device is active in a non-SYSTEM tenant,
- * but it's still publishing as "pending", auto-reassign by sending
- * the correct credentials and tenant slug to the device.
+ * but it's still publishing as "pending", auto-reassign by re-sending
+ * the tenant slug to the device.
  */
 function checkStuckDevice(tenantSlug, deviceId) {
-  if (tenantSlug !== 'pending') return;
+  if (tenantSlug !== 'pending') {
+    // The device is publishing under a real tenant slug: the rescue landed (or it never
+    // needed one). Drop the attempt counter. The retained hint on the pending prefix is
+    // deliberately left in place — it already names this tenant, which is exactly what a
+    // relapsed device would need to be told, and blanking it would deliver an empty
+    // _set_tenant to anyone still subscribed there. See setPendingTenantHint.
+    if (pendingRescues.has(deviceId)) {
+      pendingRescues.delete(deviceId);
+      logger.info({ deviceId, tenantSlug }, 'Stuck device recovered — rescue retries stopped');
+    }
+    return;
+  }
   if (resettingDevices.has(deviceId)) return; // already processing
 
   // Skip during startup — retained messages from old topics trigger false positives
@@ -889,7 +914,45 @@ function checkStuckDevice(tenantSlug, deviceId) {
   }
 }
 
-/** Re-send credentials and tenant slug to a stuck device so it reconnects properly */
+/**
+ * Re-send the tenant slug to a stuck device so it reconnects on its own prefix.
+ *
+ * The command goes to the PENDING prefix, which the broker only lets a stuck
+ * (status='active', never-checked-in) device subscribe to because of the self-closing
+ * grant in migration 022 — see infra/mosquitto/mosquitto.conf, ACL branch 3. Before
+ * that grant existed this rescue was silently denied by the very rule that caused the
+ * fault.
+ *
+ * WHY IT IS PUBLISHED RETAINED
+ *   A stuck device's SUBSCRIBE to modesp/v1/pending/<id>/cmd/+ was refused (SUBACK
+ *   0x80) at the moment it connected. mosquitto does not store a refused subscription,
+ *   and opening the ACL afterwards does not retroactively create one. So the device's
+ *   PUBLISHES resume — which is what makes checkStuckDevice fire at all — while it is
+ *   still not subscribed to anything. A plain QoS-1 publish with no matching
+ *   subscription is dropped by the broker: the rescue would log success and deliver
+ *   nothing. Retained, the command waits on the topic and is delivered the moment the
+ *   device reconnects and its SUBSCRIBE is finally granted. It is later OVERWRITTEN
+ *   (never blanked) by whichever flow next changes where the device belongs — see
+ *   setPendingTenantHint for why blanking a retained cmd topic is not an option.
+ *
+ * WHY IT NO LONGER ROTATES CREDENTIALS
+ *   This used to call mqttAuth.provisionDevice() on BOTH paths, writing a fresh bcrypt
+ *   hash to the DB and only then publishing the plaintext. If that publish was not
+ *   delivered — the normal case, per the paragraph above — the DB held a password the
+ *   device did not have. Nothing broke until the next reconnect, at which point
+ *   auth_opt_pg_userquery's priority-1 row (the device's own hash) matched, the
+ *   bootstrap fallback was never reached, and the device was refused forever: strictly
+ *   WORSE than the deadlock it was rescuing, because it could no longer even connect.
+ *   A stuck device is by definition authenticating fine — it is publishing — so its
+ *   credentials are correct and must not be touched. All it is missing is the tenant.
+ *   A device still on the SHARED bootstrap credentials is logged for an operator to
+ *   rotate deliberately (POST /api/devices/recover, or scripts/provision-mqtt-creds.js);
+ *   the rescue itself stays non-destructive.
+ *
+ * This function deliberately does NOT stamp devices.assigned_at: it never writes status
+ * or tenant_id, so the stamp written by the original assign is still the right reference
+ * point, and the grant stays open on its own until the rescue actually lands.
+ */
 async function autoReassignDevice(deviceId, tenantId) {
   // Look up tenant slug
   let tenantSlug = null;
@@ -901,39 +964,44 @@ async function autoReassignDevice(deviceId, tenantId) {
     return;
   }
 
-  // Get existing credentials from DB (or provision new ones)
+  const attempts = pendingRescues.get(deviceId) || 0;
+  if (attempts >= RESCUE_MAX_ATTEMPTS) {
+    // Give up re-publishing — the retained command from the earlier rounds is still on
+    // the topic, so delivery can still happen; what is broken is on the device side.
+    // recordAssign re-arms the ASSIGN_GRACE_MS throttle so this does not run (and log)
+    // on every single message the device publishes; the escalation is logged once.
+    recordAssign(deviceId);
+    if (attempts === RESCUE_MAX_ATTEMPTS) {
+      pendingRescues.set(deviceId, attempts + 1);  // sentinel: log the give-up only once
+      logger.error(
+        { deviceId, tenantSlug, attempts },
+        'Stuck device did not recover after repeated rescues — needs a manual reset to pending'
+      );
+    }
+    return;
+  }
+
   const { rows } = await db.query(
-    `SELECT mqtt_username, mqtt_password_hash FROM devices WHERE mqtt_device_id = $1`,
-    [deviceId]
+    `SELECT mqtt_password_hash FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2`,
+    [tenantId, deviceId]
   );
   if (!rows.length) return;
 
-  const existing = rows[0];
-  let username = existing.mqtt_username;
-  let password = null;
-
-  // If device has bootstrap credentials, provision new unique ones
-  if (username === `device_${deviceId}` && BOOTSTRAP_HASH && existing.mqtt_password_hash === BOOTSTRAP_HASH) {
-    const creds = await mqttAuth.provisionDevice(tenantId, deviceId);
-    username = creds.username;
-    password = creds.password;
-    logger.info({ deviceId }, 'Auto-reassign: provisioned new credentials');
-  } else {
-    // Device already has unique credentials but lost its tenant.
-    // Re-provision so we have the plaintext password to send.
-    const creds = await mqttAuth.provisionDevice(tenantId, deviceId);
-    username = creds.username;
-    password = creds.password;
+  if (BOOTSTRAP_HASH && rows[0].mqtt_password_hash === BOOTSTRAP_HASH) {
+    logger.warn(
+      { deviceId, tenantSlug },
+      'Stuck device is still on the SHARED bootstrap credentials — rescue does not rotate them; ' +
+      'rotate deliberately once the device is back under its tenant'
+    );
   }
 
-  // Send credentials first (device saves but does NOT reconnect)
-  sendJsonCommand('pending', deviceId, '_set_mqtt_creds', { user: username, pass: password });
+  // Tenant slug only: the device saves it and reconnects with the credentials it
+  // already holds. Retained so a device that is not currently subscribed still gets it.
+  sendCommand('pending', deviceId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
 
-  // Then send tenant slug (device saves + reconnects with new credentials)
-  sendCommand('pending', deviceId, '_set_tenant', tenantSlug, { qos: 1 });
-
+  pendingRescues.set(deviceId, attempts + 1);
   recordAssign(deviceId);
-  logger.info({ deviceId, tenantSlug }, 'Auto-reassigned stuck device to tenant');
+  logger.info({ deviceId, tenantSlug, attempt: attempts + 1 }, 'Auto-reassigned stuck device to tenant');
 }
 
 // ── Tenant resolution ─────────────────────────────────────
@@ -1078,6 +1146,13 @@ async function stateWriter() {
       tenantId: state._tenantId,
       lastState: JSON.stringify(lastState),
       online:    state._online,
+      // The OBSERVED time we last heard from the device, in seconds — never NOW().
+      // null when we have no observation at all (a state map entry rehydrated from the
+      // DB at startup, dirtied by a command echo): the UPDATE then leaves last_seen
+      // untouched rather than inventing a check-in. See the UPDATE below.
+      lastSeenSec: state._lastSeen > 0 && Number.isFinite(state._lastSeen)
+        ? state._lastSeen / 1000
+        : null,
       state,      // ref for marking clean after success
     });
   }
@@ -1093,16 +1168,28 @@ async function stateWriter() {
     let idx = 1;
 
     for (const item of chunk) {
-      placeholders.push(`($${idx}::uuid, $${idx+1}, $${idx+2}::jsonb, $${idx+3}::boolean)`);
-      values.push(item.tenantId, item.deviceId, item.lastState, item.online);
-      idx += 4;
+      placeholders.push(
+        `($${idx}::uuid, $${idx+1}, $${idx+2}::jsonb, $${idx+3}::boolean, $${idx+4}::double precision)`
+      );
+      values.push(item.tenantId, item.deviceId, item.lastState, item.online, item.lastSeenSec);
+      idx += 5;
     }
 
     try {
+      // last_seen carries the OBSERVED timestamp (state._lastSeen, set only when a
+      // message from the device is processed), never NOW(). NOW() made last_seen mean
+      // "the last time anything marked this row dirty", which several admin-side paths
+      // do without the device saying a word — updateDeviceStateMap on reassign, and
+      // sendCommand's optimistic echo. That silently closed migration 022's self-closing
+      // ACL grant (last_seen > assigned_at) for a device that had never checked in,
+      // leaving it denied on BOTH prefixes with no way back. GREATEST keeps the column
+      // monotonic so a late-flushing batch can never walk it backwards, and ignores a
+      // NULL v.seen, so "no observation" means "leave last_seen exactly as it is".
       await db.query(
         `UPDATE devices AS d
-         SET last_state = v.ls, online = v.ol, last_seen = NOW()
-         FROM (VALUES ${placeholders.join(', ')}) AS v(tid, mid, ls, ol)
+         SET last_state = v.ls, online = v.ol,
+             last_seen = GREATEST(d.last_seen, to_timestamp(v.seen))
+         FROM (VALUES ${placeholders.join(', ')}) AS v(tid, mid, ls, ol, seen)
          WHERE d.tenant_id = v.tid AND d.mqtt_device_id = v.mid`,
         values
       );
@@ -1221,6 +1308,61 @@ async function softDeleteCleanup() {
   }
 }
 
+// ── Periodic: Re-arm the pending grant for long-silent devices (every hour) ──
+//
+// Migration 022's grant closes the instant last_seen passes assigned_at, and nothing
+// re-opens it: the three assign paths in routes/devices.js are the only writers of
+// assigned_at, and autoReassignDevice cannot help because it only runs for a device
+// that can ALREADY publish on the pending prefix.
+//
+// That leaves one hole — the relapse. A device that checked in once (grant closed) and
+// then reverted to the pending prefix (failed NVS persist, reboot into a stale config)
+// is denied its tenant prefix by ACL branch 1 and the pending prefix by branch 3. No
+// message reaches the backend, so checkStuckDevice never fires, and recovery needs a
+// manual per-device reset. This job closes that hole by re-stamping assigned_at for an
+// active device that has been silent far longer than any healthy device ever is.
+//
+// Exposure: identical to the main grant — the device gets modesp/v1/pending/<its own
+// id> and nothing else, and anything it publishes there is attributed to the SYSTEM
+// tenant. It never reaches another device or another tenant's namespace. The tradeoff
+// is availability (a relapsed device heals itself) against a wider-open grant for
+// equipment that is simply switched off for a season. Set ASSIGN_REARM_HOURS=0 to
+// disable if that tradeoff is not wanted on a given deployment.
+//
+// The WHERE clause only touches rows whose grant is currently CLOSED, so a row is
+// re-stamped at most once per silence episode, and never for a device that is talking.
+
+const ASSIGN_REARM_HOURS = (() => {
+  const raw = parseInt(process.env.ASSIGN_REARM_HOURS, 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 24;
+})();
+
+async function rearmPendingGrant() {
+  if (ASSIGN_REARM_HOURS === 0) return;
+  try {
+    const res = await db.query(
+      `UPDATE devices
+          SET assigned_at = NOW()
+        WHERE status = 'active'
+          AND deleted_at IS NULL
+          AND assigned_at IS NOT NULL
+          AND last_seen IS NOT NULL
+          AND last_seen > assigned_at
+          AND last_seen < NOW() - make_interval(hours => $1::int)
+        RETURNING mqtt_device_id`,
+      [ASSIGN_REARM_HOURS]
+    );
+    if (res.rowCount > 0) {
+      logger.warn(
+        { count: res.rowCount, hours: ASSIGN_REARM_HOURS, devices: res.rows.map(r => r.mqtt_device_id) },
+        'Re-armed the pending-namespace ACL grant for long-silent active devices'
+      );
+    }
+  } catch (err) {
+    logger.error({ err }, 'Pending-grant re-arm failed');
+  }
+}
+
 // ── Periodic: Registry refresh (every 60s) ────────────────
 
 async function refreshRegistries() {
@@ -1231,6 +1373,12 @@ async function refreshRegistries() {
   const now = Date.now();
   for (const [id, ts] of recentAssigns) {
     if (now - ts > ASSIGN_GRACE_MS * 2) recentAssigns.delete(id);
+  }
+
+  // Drop rescue bookkeeping for devices that no longer exist (deleted / hard-purged).
+  // Their retained command, if any, was already retracted by removeDeviceState.
+  for (const id of pendingRescues.keys()) {
+    if (!deviceRegistry.has(id)) pendingRescues.delete(id);
   }
 }
 
@@ -1284,7 +1432,7 @@ async function loadPowerProfiles() {
 async function bootstrapStateMap() {
   try {
     const { rows } = await db.query(
-      `SELECT d.mqtt_device_id, d.tenant_id, d.last_state, d.online,
+      `SELECT d.mqtt_device_id, d.tenant_id, d.last_state, d.online, d.last_seen,
               t.slug AS tenant_slug
        FROM devices d
        LEFT JOIN tenants t ON t.id = d.tenant_id
@@ -1295,7 +1443,9 @@ async function bootstrapStateMap() {
       const state = {
         _tenantId:    row.tenant_id,
         _tenantSlug:  row.tenant_slug || 'pending',
-        _lastSeen:    Date.now(),
+        // Seed from the DB, not Date.now(): stateWriter now persists this value, so a
+        // restart must not invent a check-in the device never made.
+        _lastSeen:    row.last_seen ? new Date(row.last_seen).getTime() : 0,
         _online:      false,    // will be set to true by status/heartbeat
         _dirty:       false,    // data is already in DB
         _lastDbWrite: Date.now(),
@@ -1404,12 +1554,18 @@ function getDeviceRoutingSlug(deviceId, dbSlug) {
  * @param {string} deviceId
  * @param {string} key     e.g. "thermostat.setpoint"
  * @param {*}      value   scalar value
+ * @param {{qos?: number, retain?: boolean}} [opts]
+ *   retain: only for configuration commands that must survive until the device is able
+ *   to subscribe (the assign flow's _set_tenant, and autoReassignDevice's rescue). A
+ *   retained command is replayed on every future subscribe, so whoever sets it is
+ *   responsible for keeping it TRUE — overwrite it via setPendingTenantHint, never blank
+ *   it, because the empty payload that drops a retained message is itself delivered.
  */
-function sendCommand(tenantSlug, deviceId, key, value, { qos = 0 } = {}) {
+function sendCommand(tenantSlug, deviceId, key, value, { qos = 0, retain = false } = {}) {
   if (!client || !connected) throw new Error('MQTT not connected');
   const topic = `modesp/v1/${tenantSlug}/${deviceId}/cmd/${key}`;
-  client.publish(topic, String(value), { qos });
-  logger.info({ tenantSlug, deviceId, key, value, qos }, 'Command sent');
+  client.publish(topic, String(value), { qos, retain });
+  logger.info({ tenantSlug, deviceId, key, value, qos, retain }, 'Command sent');
 
   // Optimistic echo: update stateMap and broadcast via WebSocket
   // so the UI immediately reflects the sent value
@@ -1452,17 +1608,33 @@ function requestFullState(tenantSlug, deviceId) {
 
 /**
  * Update stateMap metadata for a device after tenant reassignment.
+ *
+ * Deliberately a NO-OP for a device we are currently observing on the 'pending' prefix.
+ * The state map records where the device ACTUALLY is, not where the DB says it should
+ * be; handleState/handleStatus re-point it from the topic on the device's very next
+ * message. Re-pointing it from an admin action instead had two consequences for a
+ * device that had not moved yet: getDeviceRoutingSlug would send its commands to a
+ * tenant prefix it is not subscribed to, and the batched writer would match the row's
+ * new tenant_id and stamp last_seen — closing migration 022's self-closing ACL grant
+ * without the device ever having checked in, which denies it BOTH prefixes permanently.
+ *
  * @param {string} deviceId  mqtt_device_id (e.g. "F27FCD")
  * @param {string} newTenantId  UUID
  * @param {string} newTenantSlug
  */
 function updateDeviceStateMap(deviceId, newTenantId, newTenantSlug) {
   const state = stateMap.get(deviceId);
-  if (state) {
-    state._tenantId = newTenantId;
-    state._tenantSlug = newTenantSlug;
-    state._dirty = true;
+  if (!state) return;
+  if (state._tenantSlug === 'pending') {
+    logger?.info?.(
+      { deviceId, newTenantSlug },
+      'Reassign: device is still observed on the pending prefix — leaving stateMap alone'
+    );
+    return;
   }
+  state._tenantId = newTenantId;
+  state._tenantSlug = newTenantSlug;
+  state._dirty = true;
 }
 
 /**
@@ -1494,6 +1666,44 @@ function removeDeviceState(deviceId) {
   if (tenantSlug && tenantSlug !== 'pending') {
     clearRetainedForTenant(tenantSlug, deviceId);
   }
+
+  // The row is going back to (or staying in) the pending namespace — reset-pending,
+  // delete, bulk delete, bootstrap re-register. Repoint the retained hint so a
+  // reconnecting device is told 'pending' rather than replaying its old tenant.
+  setPendingTenantHint(deviceId, 'pending');
+}
+
+/**
+ * Point the retained `_set_tenant` on a device's PENDING prefix at the tenant it now
+ * belongs to. The rescue in autoReassignDevice writes it; every path that changes where
+ * a device belongs must rewrite it, because a retained message is replayed on EVERY
+ * future subscribe — a stale `_set_tenant <old slug>` would drag a freshly reset device
+ * straight back into the tenant it was just taken out of.
+ *
+ * IT IS OVERWRITTEN, NEVER CLEARED. The MQTT way to drop a retained message is to
+ * publish an empty payload, and the broker still delivers that empty payload to anyone
+ * currently subscribed. On a topic under cmd/ that means handing a listening device an
+ * empty `_set_tenant` — a command whose effect on the firmware we do not control and
+ * must not gamble on. Writing the correct slug is idempotent for a device that already
+ * has it and is the right instruction for one that does not, so there is no case where
+ * clearing is better. The cost is one retained message per device, which is also a
+ * useful property: a device that relapses onto the pending prefix is told where it
+ * belongs the moment it subscribes.
+ *
+ * @param {string} deviceId    mqtt_device_id
+ * @param {string} tenantSlug  the slug the device should be on; 'pending' when it has
+ *                             been reset, deleted, or recovered.
+ */
+function setPendingTenantHint(deviceId, tenantSlug) {
+  pendingRescues.delete(deviceId);   // also re-arms the rescue attempt counter
+  if (!client || !connected) return;
+  if (!tenantSlug) throw new Error('setPendingTenantHint requires a tenant slug');
+  client.publish(
+    `modesp/v1/pending/${deviceId}/cmd/_set_tenant`,
+    String(tenantSlug),
+    { retain: true, qos: 0 }
+  );
+  logger?.info?.({ deviceId, tenantSlug }, 'Pending-prefix tenant hint updated (retained)');
 }
 
 /**
@@ -1504,6 +1714,12 @@ function removeDeviceState(deviceId) {
 function clearPendingRetained(deviceId) {
   if (!client || !connected) return;
   const prefix = `modesp/v1/pending/${deviceId}`;
+
+  // Any outstanding rescue is void once the caller is clearing this prefix. Only the
+  // in-memory bookkeeping is dropped here — the retained `cmd/_set_tenant` hint is
+  // rewritten by whoever changed the device's tenant, never blanked. See
+  // setPendingTenantHint.
+  pendingRescues.delete(deviceId);
 
   // Clear status and heartbeat retained messages
   client.publish(`${prefix}/status`, '', { retain: true, qos: 0 });
@@ -1551,7 +1767,7 @@ module.exports = {
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
-  getBootstrapHash, recordAssign, clearPendingRetained,
+  getBootstrapHash, recordAssign, clearPendingRetained, setPendingTenantHint,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

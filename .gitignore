@@ -45,3 +45,12 @@ backend/firmware/*
 
 # Data exports / provisioning CSVs
 *.csv
+
+# Emulator fleet credentials — PLAINTEXT MQTT passwords for the 120 demo
+# devices, written by backend/src/scripts/provision-demo-fleet.js.
+# The glob also covers the emulator-fleet.<stamp>.bak.csv files that script
+# leaves behind: it never deletes a predecessor (it is the only copy of the
+# plaintext for every password the run did not itself generate), it renames it.
+# Covered by *.csv above; named explicitly so it survives any future narrowing
+# of that rule. Never commit these files, not even with `git add -f`.
+backend/src/scripts/demo-data/emulator-fleet*.csv

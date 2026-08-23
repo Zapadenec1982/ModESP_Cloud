@@ -9,6 +9,7 @@ const bcrypt     = require('bcrypt');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const mqttAuth   = require('../services/mqtt-auth');
+const geocodeSvc = require('../services/geocode');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
@@ -56,6 +57,32 @@ function buildDeviceWhere(id, req) {
   return { where: `${field} = $1 AND tenant_id = $2`, params: [id, req.tenantId] };
 }
 
+// ── Site join (devices ↔ sites) ───────────────────────────
+// The `s.tenant_id = d.tenant_id` predicate is MANDATORY on every devices↔sites
+// join in the codebase. There is deliberately no composite FK on
+// (tenant_id, site_id) — five code paths move a device to another tenant, and a
+// composite FK would turn each of them into a runtime 23503. The join predicate
+// is what guarantees a stale cross-tenant site_id resolves to NULLs instead of
+// leaking another tenant's address.
+const SITE_JOIN = `LEFT JOIN sites s ON s.id = d.site_id AND s.tenant_id = d.tenant_id`;
+
+// Site columns exposed on the device payloads.
+//
+// site_id comes from `s.id`, not `d.site_id`, so the block is self-consistent:
+// a non-null site_id always arrives with a readable site_name. A device carrying a
+// site_id the join cannot reach (another tenant's site, left behind by a tenant
+// move) reports the whole block as NULL instead of an id with no site behind it.
+//
+// NOTE: d.latitude / d.longitude stay RAW here — never COALESCE'd with the site
+// coordinates. The fleet map computes its "без координат" list from
+// `latitude == null` and clears a device position by PATCHing {latitude: null},
+// so a COALESCE'd alias would make both look broken. The COALESCE belongs in
+// /api/map/devices, nowhere else.
+const SITE_COLUMNS = `s.id AS site_id,
+              s.name AS site_name, s.city AS site_city, s.region AS site_region,
+              s.country AS site_country,
+              s.latitude AS site_latitude, s.longitude AS site_longitude`;
+
 // ── GET /api/devices ──────────────────────────────────────
 // List devices. Superadmin sees ALL active devices cross-tenant.
 // Admin/tech/viewer see only their tenant (+ per-device RBAC for non-admin).
@@ -72,9 +99,11 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
                     d.model, d.comment, d.manufactured_at, d.firmware_version,
                     d.online, d.status, d.last_seen, d.created_at,
                     d.latitude, d.longitude,
+                    ${SITE_COLUMNS},
                     t.slug AS tenant_slug, t.name AS tenant_name
              FROM devices d
              LEFT JOIN tenants t ON t.id = d.tenant_id
+             ${SITE_JOIN}
              WHERE d.status = 'active'`;
       params = [];
       if (filterTenant) {
@@ -82,23 +111,27 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
         sql += ` AND d.tenant_id = $${params.length}`;
       }
     } else {
-      sql = `SELECT id, mqtt_device_id, name, location, serial_number,
-                    model, comment, manufactured_at, firmware_version,
-                    online, status, last_seen, created_at,
-                    latitude, longitude
-             FROM devices
-             WHERE tenant_id = $1 AND status <> 'deleted'`;
+      // Aliased as `d` (it used to be unaliased): the sites join brings a second
+      // `id` column into scope, so every reference must be qualified.
+      sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
+                    d.model, d.comment, d.manufactured_at, d.firmware_version,
+                    d.online, d.status, d.last_seen, d.created_at,
+                    d.latitude, d.longitude,
+                    ${SITE_COLUMNS}
+             FROM devices d
+             ${SITE_JOIN}
+             WHERE d.tenant_id = $1 AND d.status <> 'deleted'`;
       params = [req.tenantId];
     }
 
     // Per-device RBAC: non-admin users see only assigned devices
     if (req.deviceFilter) {
       const idx = params.length + 1;
-      sql += ` AND ${isSuperadmin ? 'd.' : ''}id = ANY($${idx})`;
+      sql += ` AND d.id = ANY($${idx})`;
       params.push(req.deviceFilter);
     }
 
-    sql += ` ORDER BY ${isSuperadmin ? 'd.' : ''}name NULLS LAST, ${isSuperadmin ? 'd.' : ''}mqtt_device_id`;
+    sql += ` ORDER BY d.name NULLS LAST, d.mqtt_device_id`;
 
     const { rows } = await db.query(sql, params);
 
@@ -128,12 +161,18 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 // List pending (unassigned) devices — from SYSTEM tenant.
 router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
+    // Pending devices live in the SYSTEM tenant, which owns no sites, so the
+    // joined columns are always NULL here. They are selected anyway so the
+    // pending row has the same shape as an assigned one — and the join predicate
+    // makes a stale site_id resolve to NULL instead of another tenant's address.
     const { rows } = await db.query(
-      `SELECT id, mqtt_device_id, firmware_version, online, last_seen, created_at,
-              name, serial_number, location, model
-       FROM devices
-       WHERE tenant_id = $1 AND status = 'pending'
-       ORDER BY created_at DESC`,
+      `SELECT d.id, d.mqtt_device_id, d.firmware_version, d.online, d.last_seen, d.created_at,
+              d.name, d.serial_number, d.location, d.model,
+              ${SITE_COLUMNS}
+       FROM devices d
+       ${SITE_JOIN}
+       WHERE d.tenant_id = $1 AND d.status = 'pending'
+       ORDER BY d.created_at DESC`,
       [db.SYSTEM_TENANT_ID]
     );
 
@@ -212,15 +251,20 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
-    // Look up device
+    // Look up device.
+    // Qualify with `d.` — the lookup below joins `tenants t`, which also has an
+    // `id` column, so a bare `id = $1` is ambiguous and Postgres rejects the whole
+    // statement. That made reset-pending return 500 for any UUID route param while
+    // still working when addressed by mqtt_device_id — which is why it went
+    // unnoticed: the UI addresses devices by their mqtt id.
     let whereClause, params;
     if (isSuperAdmin) {
-      whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+      whereClause = isUuid ? 'd.id = $1' : 'd.mqtt_device_id = $1';
       params = [id];
     } else {
       whereClause = isUuid
-        ? 'id = $1 AND tenant_id = $2'
-        : 'mqtt_device_id = $1 AND tenant_id = $2';
+        ? 'd.id = $1 AND d.tenant_id = $2'
+        : 'd.mqtt_device_id = $1 AND d.tenant_id = $2';
       params = [id, req.tenantId];
     }
 
@@ -265,7 +309,9 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
       await client.query(
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
-             mqtt_username = $2
+             mqtt_username = $2,
+             site_id = NULL,
+             assigned_at = NULL
          WHERE id = $3`,
         [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, deviceUuid]
       );
@@ -369,7 +415,9 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
       await client.query(
         `UPDATE devices
          SET status = 'deleted', deleted_at = NOW(),
-             tenant_id = $1, name = NULL, comment = NULL
+             tenant_id = $1, name = NULL, comment = NULL,
+             site_id = NULL,
+             assigned_at = NULL
          WHERE id = $2`,
         [db.SYSTEM_TENANT_ID, deviceUuid]
       );
@@ -431,7 +479,9 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
           await client.query(
             `UPDATE devices
              SET status = 'deleted', deleted_at = NOW(),
-                 tenant_id = $1, name = NULL, comment = NULL
+                 tenant_id = $1, name = NULL, comment = NULL,
+                 site_id = NULL,
+                 assigned_at = NULL
              WHERE id = $2`,
             [db.SYSTEM_TENANT_ID, deviceUuid]
           );
@@ -489,9 +539,17 @@ router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
          SET status = 'pending', deleted_at = NULL,
              tenant_id = EXCLUDED.tenant_id,
              mqtt_username = EXCLUDED.mqtt_username,
-             mqtt_password_hash = EXCLUDED.mqtt_password_hash`,
+             mqtt_password_hash = EXCLUDED.mqtt_password_hash,
+             site_id = NULL,
+             assigned_at = NULL`,
       [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash]
     );
+
+    // The device is back to pending; a retained `_set_tenant <old slug>` left by
+    // autoReassignDevice would otherwise be replayed on its next subscribe and undo this.
+    try {
+      mqttSvc.setPendingTenantHint(mqtt_device_id, 'pending');
+    } catch (_) { /* MQTT may be unavailable — the DB reset still stands */ }
 
     await mqttSvc.refreshRegistries();
 
@@ -589,8 +647,14 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     let sentTenant = false;
     try {
       // 2. Send tenant (firmware saves + reconnects with new credentials)
-      // QoS 1 for reliability — this is a critical configuration command
-      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+      // QoS 1 for reliability — this is a critical configuration command.
+      // RETAINED: the DB is about to flip this row to 'active', which revokes the
+      // device's pending prefix everywhere except migration 022's self-closing grant.
+      // A non-retained publish is dropped outright if the device is not subscribed at
+      // this instant, which is precisely the failure this whole change exists to fix.
+      // Retained, the instruction waits on the topic and is delivered on the device's
+      // next subscribe. It is overwritten, never blanked — see setPendingTenantHint.
+      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
       sentTenant = true;
     } catch (err) {
       // MQTT might be disconnected — device will get the command on reconnect
@@ -604,7 +668,9 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
            mqtt_username = $2, mqtt_password_hash = $3,
            name = COALESCE($4, name), location = COALESCE($5, location),
            model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
-           comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at)
+           comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at),
+           site_id = NULL,
+           assigned_at = NOW()
        WHERE id = $10`,
       [targetTenantId, newUsername, hash, name || null, location || null,
        model || null, serial_number || null, comment || null, manufactured_at || null, rows[0].id]
@@ -657,6 +723,8 @@ const csvUpload = multer({
 });
 
 // Header aliases: export format → internal name
+// (unlisted headers are lower-cased with spaces → underscores, so "Site Name"
+//  already normalizes to site_name and needs no alias)
 const CSV_HEADER_ALIASES = {
   'device id':       'mqtt_device_id',
   'device_id':       'mqtt_device_id',
@@ -664,8 +732,12 @@ const CSV_HEADER_ALIASES = {
   'manufactured':    'manufactured_at',
   'manufacture date':'manufactured_at',
   'manufactured at': 'manufactured_at',
+  'site':            'site_name',
+  'address':         'address_line',
 };
 
+// maxLen for the site columns mirrors the sites DDL in 021_sites.sql — a longer
+// value must fail CSV validation, not blow up mid-import with a 22001.
 const CSV_FIELDS = {
   mqtt_device_id:   { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
   name:             { required: true,  maxLen: 100 },
@@ -674,6 +746,12 @@ const CSV_FIELDS = {
   model:            { required: false, maxLen: 100 },
   comment:          { required: false, maxLen: 500 },
   manufactured_at:  { required: false, pattern: /^(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})$/, maxLen: 10 },
+  // Site (торгова точка) columns — all optional, all ignored unless site_name is set
+  site_name:        { required: false, maxLen: 256 },
+  country:          { required: false, maxLen: 64 },
+  region:           { required: false, maxLen: 128 },
+  city:             { required: false, maxLen: 128 },
+  address_line:     { required: false, maxLen: 256 },
 };
 
 const MAX_BATCH_ROWS = 200;
@@ -745,6 +823,171 @@ function validateCsvRows(rows) {
   return errors;
 }
 
+// ── CSV import: sites (торгові точки) ─────────────────────
+// Optional site_name / country / region / city / address_line columns. A row whose
+// site_name is unknown creates the site; geocoding is fire-and-forget so a 200-row
+// import never waits on a 1 req/s geocoder.
+
+// geo_source flips to 'failed' after this many fruitless attempts (mirrors routes/sites.js)
+const GEO_FAIL_AFTER_ATTEMPTS = 3;
+
+// Columns read back from `sites` whenever the import touches one
+const IMPORT_SITE_COLUMNS = `id, tenant_id, name, country_code, country, region, city,
+                             address_line, postal_code, latitude, longitude, geo_source`;
+
+function csvField(row, field) {
+  return (row[field] || '').trim() || null;
+}
+
+function truncate(value, maxLen) {
+  const s = (value === undefined || value === null) ? '' : String(value).trim();
+  if (!s) return null;
+  return s.slice(0, maxLen);
+}
+
+/**
+ * Split the free-text `country` column: a bare 2-letter value is an ISO 3166-1
+ * alpha-2 code ("UA"), anything longer is a country name ("Україна", "Poland").
+ * The code matters — geocode.js refuses a result whose country contradicts it.
+ */
+function splitCountry(value) {
+  if (!value) return { country_code: null, country: null };
+  return /^[A-Za-z]{2}$/.test(value)
+    ? { country_code: value.toUpperCase(), country: null }
+    : { country_code: null, country: truncate(value, CSV_FIELDS.country.maxLen) };
+}
+
+/**
+ * Find (case/whitespace-insensitively, matching uq_sites_tenant_name) or create the
+ * site named in a CSV row. Existing sites are linked as-is and never modified: an
+ * import must not silently overwrite an address an admin curated by hand.
+ *
+ * @returns {Promise<{ site: object, created: boolean }|null>} null only if the row lost
+ *          a race and the site vanished again — the device is then imported without one.
+ */
+async function findOrCreateImportSite(tenantId, siteName, address) {
+  const select = `SELECT ${IMPORT_SITE_COLUMNS} FROM sites
+                   WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2::text))`;
+
+  const found = await db.query(select, [tenantId, siteName]);
+  if (found.rows.length > 0) return { site: found.rows[0], created: false };
+
+  const inserted = await db.query(
+    `INSERT INTO sites (tenant_id, name, country_code, country, region, city, address_line)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT DO NOTHING
+     RETURNING ${IMPORT_SITE_COLUMNS}`,
+    [tenantId, truncate(siteName, CSV_FIELDS.site_name.maxLen),
+     address.country_code, address.country, address.region, address.city, address.address_line]
+  );
+  if (inserted.rows.length > 0) return { site: inserted.rows[0], created: true };
+
+  // Concurrent import inserted the same name first — read it back.
+  const again = await db.query(select, [tenantId, siteName]);
+  return again.rows.length > 0 ? { site: again.rows[0], created: false } : null;
+}
+
+/**
+ * Fire-and-forget geocode of a freshly imported site. Never awaited by the request
+ * handler and never rejects: a geocoder outage must not fail a CSV import.
+ * Honours GEOCODER_BULK_ENABLED — when bulk geocoding is off the site simply stays
+ * geo_source='none' for the operator to geocode by hand from the Sites page.
+ */
+async function geocodeImportedSite(site, log) {
+  try {
+    const out = (await geocodeSvc.resolveAddress({
+      name:         site.name,
+      address_line: site.address_line,
+      city:         site.city,
+      region:       site.region,
+      postal_code:  site.postal_code,
+      country:      site.country,
+      country_code: site.country_code,
+    }, { lane: 'bulk' })) || {};
+
+    // BUSY means the queue was full or the wait budget expired while the job keeps
+    // running — not the address's fault, so it must not count as an attempt.
+    if (out.status === geocodeSvc.OUTCOME.DISABLED || out.status === geocodeSvc.OUTCOME.BUSY) return;
+
+    if (out.status === geocodeSvc.OUTCOME.OK && out.result) {
+      const addr = out.result.address || {};
+      // A mangled query fails silently and confidently — corrupted Cyrillic once
+      // resolved to French departments with high importance and no error. Never
+      // store coordinates that contradict the country the CSV named.
+      const want = (site.country_code || '').trim().toUpperCase();
+      const got  = (addr.country_code || '').trim().toUpperCase();
+      if (want && got && want !== got) {
+        await recordImportGeocodeFailure(site, `country_mismatch:${got}`, log);
+        return;
+      }
+
+      await db.query(
+        `UPDATE sites
+            SET latitude      = $1,
+                longitude     = $2,
+                geo_source    = 'geocoded',
+                geo_precision = $3,
+                geocoded_at   = NOW(),
+                osm_type      = $4,
+                osm_id        = $5,
+                country_code  = COALESCE(NULLIF(btrim(country_code), ''), $6),
+                country       = COALESCE(NULLIF(btrim(country), ''), $7),
+                region        = COALESCE(NULLIF(btrim(region), ''), $8),
+                city          = COALESCE(NULLIF(btrim(city), ''), $9),
+                address_line  = COALESCE(NULLIF(btrim(address_line), ''), $10),
+                postal_code   = COALESCE(NULLIF(btrim(postal_code), ''), $11),
+                geo_attempts  = 0,
+                geo_error     = NULL,
+                updated_at    = NOW()
+          WHERE id = $12 AND tenant_id = $13`,
+        [
+          out.result.latitude, out.result.longitude,
+          truncate(out.result.precision, 16),
+          truncate(out.result.osm_type, 16),
+          Number.isFinite(out.result.osm_id) ? out.result.osm_id : null,
+          addr.country_code ? String(addr.country_code).trim().toUpperCase().slice(0, 2) : null,
+          truncate(addr.country, 64),
+          // Kyiv has special status and carries no `state`: group it under its own
+          // name rather than creating an "unknown region" bucket in geo-stats.
+          truncate(addr.region || addr.city, 128),
+          truncate(addr.city, 128),
+          truncate(addr.address_line, 256),
+          truncate(addr.postal_code, 16),
+          site.id, site.tenant_id,
+        ]
+      );
+      return;
+    }
+
+    const reason = out.status === geocodeSvc.OUTCOME.FAILED ? 'provider_error' : 'no_match';
+    await recordImportGeocodeFailure(site, reason, log);
+  } catch (err) {
+    log?.warn?.({ err, siteId: site.id }, 'CSV import: background geocode failed');
+  }
+}
+
+/**
+ * Failure bookkeeping. Coordinates, geo_source, geo_precision and geocoded_at are
+ * left untouched — a provider outage must not wipe a site off the map.
+ */
+async function recordImportGeocodeFailure(site, reason, log) {
+  try {
+    await db.query(
+      `UPDATE sites
+          SET geo_attempts        = geo_attempts + 1,
+              geo_last_attempt_at = NOW(),
+              geo_error           = $3,
+              geo_source          = CASE WHEN geo_source = 'none' AND geo_attempts + 1 >= $4
+                                         THEN 'failed' ELSE geo_source END,
+              updated_at          = NOW()
+        WHERE id = $1 AND tenant_id = $2`,
+      [site.id, site.tenant_id, String(reason).slice(0, 200), GEO_FAIL_AFTER_ATTEMPTS]
+    );
+  } catch (err) {
+    log?.warn?.({ err, siteId: site.id }, 'CSV import: could not record geocode failure');
+  }
+}
+
 router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
@@ -796,7 +1039,15 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
 
     // Phase 2: Process rows sequentially
     const results = [];
-    const summary = { total: rows.length, assigned: 0, pre_registered: 0, skipped: 0 };
+    const summary = {
+      total: rows.length, assigned: 0, pre_registered: 0, skipped: 0,
+      sites_created: 0, devices_with_site: 0,
+    };
+
+    // One lookup per distinct site name per import, not per row: a 200-row import
+    // of one store must not run 200 identical SELECTs.
+    const siteCache = new Map();
+    const bulkGeocode = geocodeSvc.isBulkEnabled();
 
     // First pass: check device status in DB and generate passwords for pending ones
     for (const row of rows) {
@@ -855,6 +1106,47 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
       }
 
       if (row._action === 'assign') {
+        // Optional site link. Only the assign path may set site_id: the device's
+        // tenant becomes targetTenantId here, whereas a pre_register row stays in
+        // the SYSTEM tenant, which owns no sites. The address columns are ignored
+        // without a site_name — there is no other key to identify a site by.
+        let siteId = null, siteName = null;
+        const csvSiteName = csvField(row, 'site_name');
+        if (csvSiteName) {
+          const cacheKey = csvSiteName.toLowerCase();
+          try {
+            let resolved = siteCache.get(cacheKey);
+            if (resolved === undefined) {
+              const { country_code, country } = splitCountry(csvField(row, 'country'));
+              resolved = await findOrCreateImportSite(targetTenantId, csvSiteName, {
+                country_code,
+                country,
+                region:       truncate(csvField(row, 'region'), CSV_FIELDS.region.maxLen),
+                city:         truncate(csvField(row, 'city'), CSV_FIELDS.city.maxLen),
+                address_line: truncate(csvField(row, 'address_line'), CSV_FIELDS.address_line.maxLen),
+              });
+              siteCache.set(cacheKey, resolved);
+
+              if (resolved && resolved.created) {
+                summary.sites_created++;
+                // Fire-and-forget: never awaited, so a 1 req/s geocoder cannot
+                // stall the import. Errors are swallowed inside the helper.
+                if (bulkGeocode) {
+                  geocodeImportedSite(resolved.site, req.log).catch(() => {});
+                }
+              }
+            }
+            if (resolved) {
+              siteId = resolved.site.id;
+              siteName = resolved.site.name;
+              summary.devices_with_site++;
+            }
+          } catch (err) {
+            // A bad site must not cost the operator the device row.
+            req.log?.warn?.({ err, site: csvSiteName, row: row._line }, 'CSV import: site link failed');
+          }
+        }
+
         // Same logic as single assign
         const newUsername = `device_${mqttId}`;
         const newPassword = row._password;
@@ -869,7 +1161,8 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
           sentCreds = true;
         } catch (_) { /* MQTT may be unavailable */ }
         try {
-          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+          // Retained for the same reason as the single-assign path above.
+          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
           sentTenant = true;
         } catch (_) { /* MQTT may be unavailable */ }
 
@@ -880,9 +1173,11 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
                mqtt_username = $2, mqtt_password_hash = $3,
                name = COALESCE($4, name), location = COALESCE($5, location),
                model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
-               comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at)
-           WHERE id = $10`,
-          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, manufacturedAt, row._dbId]
+               comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at),
+               site_id = $10,
+               assigned_at = NOW()
+           WHERE id = $11`,
+          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, manufacturedAt, siteId, row._dbId]
         );
 
         mqttSvc.recordAssign(mqttId);
@@ -892,6 +1187,8 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
         results.push({
           row: row._line, mqtt_device_id: mqttId, name,
           status: 'assigned',
+          site_id: siteId,
+          site_name: siteName,
           credentials: {
             username: newUsername,
             password: newPassword,
@@ -908,7 +1205,9 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
       }
 
       if (row._action === 'pre_register') {
-        // Pre-register in SYSTEM tenant
+        // Pre-register in SYSTEM tenant. site_id is deliberately NOT set — the
+        // SYSTEM tenant owns no sites, and the row's site columns are applied
+        // later, when the device is actually assigned to a real tenant.
         const { rowCount } = await db.query(
           `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at)
            VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
@@ -976,6 +1275,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
               d.model, d.comment, d.manufactured_at, d.firmware_version, d.proto_version,
               d.online, d.status, d.last_seen, d.last_state, d.created_at,
               d.latitude, d.longitude,
+              ${SITE_COLUMNS},
               d.mqtt_username, (d.mqtt_password_hash IS NOT NULL) AS has_mqtt_credentials,
               d.tenant_id, t.slug AS tenant_slug,
               d.model_id, d.compressor_kw, d.evap_fan_kw, d.cond_fan_kw,
@@ -987,6 +1287,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
        FROM devices d
        JOIN tenants t ON t.id = d.tenant_id
        LEFT JOIN device_models m ON d.model_id = m.id
+       ${SITE_JOIN}
        WHERE ${whereClause}`,
       params
     );
@@ -1140,6 +1441,7 @@ const updateDeviceSchema = z.object({
   standby_kw:        powerField,
   latitude:          z.number().min(-90).max(90).nullable().optional(),
   longitude:         z.number().min(-180).max(180).nullable().optional(),
+  site_id:           z.string().uuid().nullable().optional(),
 }).refine(data => Object.keys(data).length > 0, {
   message: 'At least one field is required',
 });
@@ -1158,15 +1460,52 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
     const { id } = req.params;
     const { where, params: whereParams } = buildDeviceWhere(id, req);
 
-    // Fetch current state for audit before/after
+    // Fetch current state for audit before/after (tenant_id also gates site_id below)
     const beforeRes = await db.query(
-      `SELECT id, name, location, serial_number, model, comment, latitude, longitude FROM devices WHERE ${where}`,
+      `SELECT id, tenant_id, name, location, serial_number, model, comment, latitude, longitude, site_id
+       FROM devices WHERE ${where}`,
       whereParams
     );
     const beforeDevice = beforeRes.rows[0];
 
     // Build dynamic SET clause
     const fields = parsed.data;
+
+    // site_id is an ACCESS-CONTROL field, not a label: middleware/device-access.js
+    // grants a device to everyone holding a user_sites row for its site. A
+    // technician who can see this one device could otherwise detach it and strip
+    // it from every colleague whose access came from the site grant, or attach it
+    // to another site and widen a third party's access. Every other way to change
+    // site membership (POST/DELETE /api/users/:id/sites, DELETE /api/sites/:id
+    // ?force=true) is admin-only; this one must match.
+    if ('site_id' in fields && AUTH_ENABLED && req.user
+        && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'Only an admin may change a device site',
+        status: 403,
+      });
+    }
+
+    // A device may only be assigned to a site of its OWN tenant. The check runs
+    // against the device row's tenant_id, not req.tenantId: a superadmin PATCHes
+    // cross-tenant, so req.tenantId is merely the tenant they are acting as.
+    // Without this a tenant-A admin could PATCH site_id to any observed tenant-B
+    // site UUID. When beforeDevice is missing the UPDATE below 404s on its own.
+    if (fields.site_id != null && beforeDevice) {
+      const { rows: siteRows } = await db.query(
+        `SELECT 1 FROM sites WHERE id = $1 AND tenant_id = $2`,
+        [fields.site_id, beforeDevice.tenant_id]
+      );
+      if (siteRows.length === 0) {
+        return res.status(400).json({
+          error: 'invalid_site',
+          message: 'Site does not belong to this tenant',
+          status: 400,
+        });
+      }
+    }
+
     const keys = Object.keys(fields);
     const setClauses = keys.map((k, i) => `${k} = $${i + 1}`);
     const values = keys.map(k => fields[k] ?? null);
@@ -1181,7 +1520,7 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
        WHERE ${shiftedWhere}
        RETURNING id, mqtt_device_id, name, location, serial_number,
                  model, comment, manufactured_at, firmware_version, status, created_at,
-                 latitude, longitude`,
+                 latitude, longitude, site_id`,
       [...values, ...whereParams]
     );
 
@@ -1547,7 +1886,9 @@ router.post('/:id/reassign', async (req, res, next) => {
     await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices SET tenant_id = $1, status = 'active',
-                mqtt_username = $2, mqtt_password_hash = $3
+                mqtt_username = $2, mqtt_password_hash = $3,
+                site_id = NULL,
+                assigned_at = NOW()
          WHERE id = $4`,
         [newTenantId, username, hash, device.id]
       );
@@ -1559,6 +1900,15 @@ router.post('/:id/reassign', async (req, res, next) => {
 
     // Record assign timestamp for stuck-device detection grace period
     mqttSvc.recordAssign(mqttId);
+
+    // Repoint the retained tenant hint on the pending prefix, AFTER the move is
+    // committed. autoReassignDevice may have left `_set_tenant <old slug>` there, and a
+    // retained command is replayed on every future subscribe — it would drag the device
+    // straight back into the tenant it was just moved out of. Overwritten, never blanked
+    // (an empty payload on a cmd topic is itself delivered) — see setPendingTenantHint.
+    try {
+      mqttSvc.setPendingTenantHint(mqttId, newSlug);
+    } catch (_) { /* MQTT may be unavailable — the DB move still stands */ }
 
     // Update in-memory state
     mqttSvc.updateDeviceStateMap(mqttId, newTenantId, newSlug);
