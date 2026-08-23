@@ -251,15 +251,20 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
     const isUuid = isUuidFormat(id);
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
 
-    // Look up device
+    // Look up device.
+    // Qualify with `d.` — the lookup below joins `tenants t`, which also has an
+    // `id` column, so a bare `id = $1` is ambiguous and Postgres rejects the whole
+    // statement. That made reset-pending return 500 for any UUID route param while
+    // still working when addressed by mqtt_device_id — which is why it went
+    // unnoticed: the UI addresses devices by their mqtt id.
     let whereClause, params;
     if (isSuperAdmin) {
-      whereClause = isUuid ? 'id = $1' : 'mqtt_device_id = $1';
+      whereClause = isUuid ? 'd.id = $1' : 'd.mqtt_device_id = $1';
       params = [id];
     } else {
       whereClause = isUuid
-        ? 'id = $1 AND tenant_id = $2'
-        : 'mqtt_device_id = $1 AND tenant_id = $2';
+        ? 'd.id = $1 AND d.tenant_id = $2'
+        : 'd.mqtt_device_id = $1 AND d.tenant_id = $2';
       params = [id, req.tenantId];
     }
 
