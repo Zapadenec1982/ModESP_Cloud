@@ -70,6 +70,8 @@
 
   let loading = false;
   let noData = false;
+  let loadError = false;
+  let retryTimer = null;
   let chartEl;
   let chart = null;
   let resizeObserver;
@@ -290,9 +292,11 @@
 
   // ── Load & render ─────────────────────────────────────────
 
-  async function loadData() {
+  async function loadData(isRetry = false) {
     loading = true;
     noData = false;
+    loadError = false;
+    clearTimeout(retryTimer);
     try {
       const fromISO = new Date(range.from).toISOString();
       const toISO   = new Date(range.to).toISOString();
@@ -318,9 +322,15 @@
         if (chart) { chart.destroy(); chart = null; }
       }
     } catch (e) {
+      // Transient failures (network wake-up, token refresh in flight) must not
+      // masquerade as "no data" — surface them and retry once automatically.
       console.error('[TelemetryChart] Load failed:', e);
-      noData = true;
+      loadError = true;
       uData = null;
+      if (chart) { chart.destroy(); chart = null; }
+      if (!isRetry) {
+        retryTimer = setTimeout(() => loadData(true), 2000);
+      }
     } finally {
       loading = false;
     }
@@ -402,6 +412,20 @@
     activePreset = null;
   }
 
+  // Returning to a long-dormant tab (laptop wake, tab switch): a preset range
+  // computed hours ago is stale — recompute it and reload. A failed load also
+  // gets a fresh chance here.
+  function handleVisibility() {
+    if (document.visibilityState !== 'visible') return;
+    const preset = PRESETS.find(p => p.label === activePreset);
+    if (preset) {
+      range = initRange(preset.hours);
+      loadData();
+    } else if (loadError) {
+      loadData();
+    }
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────
 
   onMount(() => {
@@ -424,9 +448,13 @@
     backfillUnsub = wsOn('backfill_complete', (msg) => {
       if (msg.device_id === deviceId) loadData();
     });
+
+    document.addEventListener('visibilitychange', handleVisibility);
   });
 
   onDestroy(() => {
+    clearTimeout(retryTimer);
+    document.removeEventListener('visibilitychange', handleVisibility);
     if (chart) chart.destroy();
     if (resizeObserver) resizeObserver.disconnect();
     if (liveUnsub) liveUnsub();
@@ -517,6 +545,11 @@
     <div class="chart-container" bind:this={chartEl}></div>
     {#if loading}
       <div class="chart-overlay">Loading...</div>
+    {:else if loadError}
+      <div class="chart-overlay chart-error">
+        <span>{$t('chart.load_failed')}</span>
+        <button class="btn-retry" on:click={() => loadData()}>{$t('chart.retry')}</button>
+      </div>
     {:else if noData}
       <div class="chart-overlay">No telemetry data for this period</div>
     {/if}
@@ -700,6 +733,25 @@
 
   .chart-container {
     width: 100%;
+  }
+
+  .chart-error {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .btn-retry {
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .btn-retry:hover {
+    border-color: var(--accent-primary);
   }
 
   .chart-overlay {

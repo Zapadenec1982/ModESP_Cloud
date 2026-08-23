@@ -650,6 +650,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    load_failed: 'Diagrammdaten konnten nicht geladen werden',
+    retry: 'Erneut versuchen',
   },
 
   // ── Audit Log ──

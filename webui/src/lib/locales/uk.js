@@ -656,6 +656,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Офлайн',
+    load_failed: 'Не вдалося завантажити дані графіка',
+    retry: 'Повторити',
   },
 
   // ── Export ──

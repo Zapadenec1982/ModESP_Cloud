@@ -669,6 +669,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    load_failed: 'Failed to load chart data',
+    retry: 'Retry',
   },
 
   // ── Audit Log ──
