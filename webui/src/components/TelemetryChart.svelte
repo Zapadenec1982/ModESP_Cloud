@@ -358,9 +358,9 @@
       if (m.open) {
         if (openedAt === null) openedAt = m.t;
       } else if (openedAt !== null) {
-        // >= keeps same-second pairs: events flush in 1s batches, so a brief opening
-        // can land both marks on one timestamp. The plugin's minimum band width
-        // renders those rather than letting them collapse to nothing.
+        // >= keeps same-second pairs: these marks are floored to whole seconds, so a
+        // brief opening can land both on one timestamp. The plugin's minimum band
+        // width renders those rather than letting them collapse to nothing.
         if (m.t >= openedAt) zones.push({ start: openedAt, end: m.t });
         openedAt = null;
       } else if (isFirstMark && m.t > rangeStartSec) {

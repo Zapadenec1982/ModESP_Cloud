@@ -735,6 +735,11 @@ function insertEvent(tenantId, deviceId, eventType, payload) {
     deviceId,
     eventType,
     payload: payload ? JSON.stringify(payload) : null,
+    // Stamped at detection, not at flush. NOW() inside the batched INSERT is a
+    // single constant for the whole statement, which collapsed up to a second of
+    // events onto one timestamp — colliding on idx_events_dedup and flattening the
+    // on/off ordering that runtime totals and door-zone pairing read back out.
+    time: new Date(),
   });
 }
 
@@ -747,17 +752,27 @@ async function flushEvents() {
   let idx = 1;
 
   for (const evt of batch) {
-    placeholders.push(`($${idx}, $${idx+1}, $${idx+2}, $${idx+3}, NOW())`);
-    values.push(evt.tenantId, evt.deviceId, evt.eventType, evt.payload);
-    idx += 4;
+    placeholders.push(`($${idx}, $${idx+1}, $${idx+2}, $${idx+3}, $${idx+4})`);
+    values.push(evt.tenantId, evt.deviceId, evt.eventType, evt.payload, evt.time);
+    idx += 5;
   }
 
   try {
-    await db.query(
+    // ON CONFLICT DO NOTHING stops one duplicate from aborting the whole multi-row
+    // statement: without it a single repeat of (tenant, device, event_type, time)
+    // threw away every unrelated event in the batch too. Only a same-millisecond
+    // repeat of the same event type for the same device can still conflict, and
+    // that is a genuine duplicate, so nothing real is lost.
+    const { rowCount } = await db.query(
       `INSERT INTO events (tenant_id, device_id, event_type, payload, time)
-       VALUES ${placeholders.join(', ')}`,
+       VALUES ${placeholders.join(', ')}
+       ON CONFLICT DO NOTHING`,
       values
     );
+    if (rowCount < batch.length) {
+      logger.debug({ skipped: batch.length - rowCount, count: batch.length },
+        'Duplicate events skipped on flush');
+    }
   } catch (err) {
     logger.error({ err, count: batch.length }, 'Failed to flush event batch');
   }
