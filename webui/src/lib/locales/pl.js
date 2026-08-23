@@ -652,6 +652,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    door_periods: 'Otwarcia drzwi',
+    door_truncated: 'Pokazano tylko najnowsze otwarcia — zbyt wiele dla tego okresu',
     load_failed: 'Nie udało się załadować danych wykresu',
     retry: 'Ponów',
   },

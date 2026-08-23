@@ -182,6 +182,109 @@
 
   let offlineZones = [];
 
+  // ── Door-open zones ───────────────────────────────────────
+  // Door state is not a telemetry channel — the sampler runs every few minutes and
+  // would miss most openings — so the intervals come from door_open/door_close
+  // events, which carry exact transition timestamps.
+
+  const DOOR_EVENT_LIMIT = 200;   // backend caps /events at 200 per request
+  let doorZones = [];
+  let doorTruncated = false;
+
+  /**
+   * Pair open→close marks into intervals. A close with no preceding open means the
+   * door was already open when the range started; an unmatched open means it is
+   * still open, marked by end === null so the band tracks "now" as time passes.
+   */
+  function buildDoorZones(opens, closes, rangeStartSec) {
+    const marks = [
+      ...opens.map(e => ({ t: Math.floor(new Date(e.time).getTime() / 1000), open: true })),
+      ...closes.map(e => ({ t: Math.floor(new Date(e.time).getTime() / 1000), open: false })),
+    ].sort((a, b) => a.t - b.t || (a.open === b.open ? 0 : a.open ? -1 : 1));
+
+    const zones = [];
+    let openedAt = null;
+    let isFirstMark = true;
+
+    for (const m of marks) {
+      if (m.open) {
+        if (openedAt === null) openedAt = m.t;
+      } else if (openedAt !== null) {
+        // >= keeps same-second pairs: events flush in 1s batches, so a brief opening
+        // can land both marks on one timestamp. The plugin's minimum band width
+        // renders those rather than letting them collapse to nothing.
+        if (m.t >= openedAt) zones.push({ start: openedAt, end: m.t });
+        openedAt = null;
+      } else if (isFirstMark && m.t > rangeStartSec) {
+        // Only a *leading* close means the door was already open when the window
+        // began. A later unmatched close is a duplicate and must not clamp back to
+        // the range start, which would paint a phantom zone across the whole chart.
+        zones.push({ start: rangeStartSec, end: m.t });
+      }
+      isFirstMark = false;
+    }
+    if (openedAt !== null) zones.push({ start: openedAt, end: null });
+
+    return zones;
+  }
+
+  async function loadDoorZones(fromISO, toISO) {
+    const startSec = Math.floor(new Date(fromISO).getTime() / 1000);
+    try {
+      const [opens, closes] = await Promise.all([
+        getDeviceEvents(deviceId, { event_type: 'door_open',  from: fromISO, to: toISO, limit: DOOR_EVENT_LIMIT }),
+        getDeviceEvents(deviceId, { event_type: 'door_close', from: fromISO, to: toISO, limit: DOOR_EVENT_LIMIT }),
+      ]);
+      // Events come back newest-first, so hitting the cap drops the OLDEST — the
+      // early part of the range is then missing zones rather than simply empty.
+      doorTruncated = (opens?.length || 0) >= DOOR_EVENT_LIMIT || (closes?.length || 0) >= DOOR_EVENT_LIMIT;
+      doorZones = buildDoorZones(opens || [], closes || [], startSec);
+    } catch (e) {
+      // Supplementary overlay — never let it take the temperature chart down with it
+      console.warn('[TelemetryChart] Door events unavailable:', e);
+      doorZones = [];
+      doorTruncated = false;
+    }
+  }
+
+  function doorIsOpenNow() {
+    return doorZones.length > 0 && doorZones[doorZones.length - 1].end === null;
+  }
+
+  function doorZonesPlugin() {
+    return {
+      hooks: {
+        drawAxes: [(u) => {
+          if (doorZones.length === 0) return;
+          const { ctx } = u;
+          const { left, top, width, height } = u.bbox;
+          const nowSec = Math.floor(Date.now() / 1000);
+          ctx.save();
+          for (const z of doorZones) {
+            const startPx = u.valToPos(z.start, 'x', true);
+            const endPx   = u.valToPos(z.end ?? nowSec, 'x', true);
+            if (endPx < left) continue;   // entirely before the plotted range
+            // Clamping the start to just inside the right edge keeps an opening that
+            // is happening *now* visible: the x-axis only extends as far as the last
+            // appended sample, so a fresh opening otherwise sits past it unseen.
+            const x0 = Math.min(Math.max(startPx, left), left + width - 2);
+            const x1 = Math.min(Math.max(endPx, x0), left + width);
+            // A 30-second opening is sub-pixel on a 30-day range — floor the width
+            // so brief openings stay visible instead of vanishing.
+            const w = Math.max(x1 - x0, 2);
+            ctx.fillStyle = 'rgba(251, 191, 36, 0.10)';
+            ctx.fillRect(x0, top, w, height);
+            // Solid cap distinguishes the door band from the defrost band, which is
+            // a similar warm hue at similar opacity.
+            ctx.fillStyle = 'rgba(251, 191, 36, 0.85)';
+            ctx.fillRect(x0, top, w, 3);
+          }
+          ctx.restore();
+        }]
+      }
+    };
+  }
+
   function offlineZonesPlugin() {
     return {
       hooks: {
@@ -281,7 +384,7 @@
       scales,
       axes,
       series,
-      plugins: [offlineZonesPlugin(), bandPlugin(channels)],
+      plugins: [offlineZonesPlugin(), doorZonesPlugin(), bandPlugin(channels)],
       legend: {
         show: true,
       },
@@ -306,6 +409,8 @@
         to: toISO,
         channels: ALL_CHANNELS,
       });
+
+      await loadDoorZones(fromISO, toISO);
 
       activeChannels = getActiveChannels(rows);
       uData = transformToUplot(rows, activeChannels);
@@ -352,6 +457,18 @@
     if (!chart || !uData || !activeChannels.length) return;
 
     const now = Math.floor(Date.now() / 1000);
+
+    // Door transitions redraw immediately rather than waiting for the throttled
+    // append below — openings are often shorter than APPEND_INTERVAL, and a brief
+    // one would otherwise never appear.
+    const doorVal = state['equipment.door_open'];
+    if (doorVal !== undefined && !!doorVal !== doorIsOpenNow()) {
+      doorZones = doorVal
+        ? [...doorZones, { start: now, end: null }]
+        : doorZones.map((z, i) => (i === doorZones.length - 1 && z.end === null ? { ...z, end: now } : z));
+      try { chart.redraw(); } catch { /* chart may have been destroyed mid-async */ }
+    }
+
     // Throttle: only append a new point every APPEND_INTERVAL seconds
     if (now - lastAppendTs < APPEND_INTERVAL) return;
 
@@ -555,10 +672,20 @@
     {/if}
   </div>
 
-  {#if offlineZones.length > 0}
-    <div class="offline-legend">
-      <span class="offline-swatch"></span>
-      <span class="offline-label">{$t('chart.offline_periods')} ({offlineZones.length})</span>
+  {#if offlineZones.length > 0 || doorZones.length > 0}
+    <div class="zone-legend">
+      {#if offlineZones.length > 0}
+        <span class="zone-item">
+          <span class="offline-swatch"></span>
+          <span>{$t('chart.offline_periods')} ({offlineZones.length})</span>
+        </span>
+      {/if}
+      {#if doorZones.length > 0}
+        <span class="zone-item" title={doorTruncated ? $t('chart.door_truncated') : null}>
+          <span class="door-swatch"></span>
+          <span>{$t('chart.door_periods')} ({doorZones.length}{doorTruncated ? '+' : ''})</span>
+        </span>
+      {/if}
     </div>
   {/if}
 </div>
@@ -786,24 +913,40 @@
     border-color: var(--accent-blue) !important;
   }
 
-  /* ── Offline legend ─────────────────────────── */
+  /* ── Zone legend (offline / door) ───────────── */
 
-  .offline-legend {
+  .zone-legend {
     display: flex;
     align-items: center;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: var(--space-3);
     padding: 4px 8px;
     font-size: var(--text-xs);
     color: var(--text-muted);
   }
 
-  .offline-swatch {
+  .zone-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .offline-swatch,
+  .door-swatch {
     display: inline-block;
     width: 14px;
     height: 10px;
+    border-radius: 2px;
+  }
+
+  .offline-swatch {
     background: rgba(128, 128, 128, 0.3);
     border: 1px solid rgba(128, 128, 128, 0.5);
-    border-radius: 2px;
+  }
+
+  .door-swatch {
+    background: rgba(251, 191, 36, 0.18);
+    border-top: 2px solid rgba(251, 191, 36, 0.85);
   }
 
   /* ── Mobile responsive ────────────────────── */

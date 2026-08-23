@@ -658,6 +658,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Офлайн',
+    door_periods: 'Відчинення дверей',
+    door_truncated: 'Показано лише останні відчинення — для цього періоду їх забагато',
     load_failed: 'Не вдалося завантажити дані графіка',
     retry: 'Повторити',
   },
