@@ -636,7 +636,16 @@ function handleBackfillDone(tenantSlug, deviceId) {
 
 // Nuisance alarm delay (ISA-18.2): suppress transient alarms
 const pendingAlarms = new Map();  // "deviceId:alarmCode" -> setTimeout handle
-const NUISANCE_DELAY = { door_alarm: 120000, pulldown_alarm: 300000 };  // 2min, 5min
+
+// Door delay is 10 min because goods deliveries hold the door open far longer than
+// the old 2 min. Production door alarms cluster tightly at ~7 min of open door (a
+// delivery), with genuinely forgotten doors well past 18 min — so 10 min drops the
+// delivery traffic while still catching a door left open. Tune per deployment if a
+// site's loading routine is slower.
+const NUISANCE_DELAY = {
+  door_alarm:     parseInt(process.env.DOOR_ALARM_DELAY_MS, 10)     || 600000,  // 10 min
+  pulldown_alarm: parseInt(process.env.PULLDOWN_ALARM_DELAY_MS, 10) || 300000,  // 5 min
+};
 
 async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
