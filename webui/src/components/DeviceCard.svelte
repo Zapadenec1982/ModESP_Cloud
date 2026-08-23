@@ -11,6 +11,7 @@
   $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: statusKey = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
   $: hasAlarm = !!device.alarm_active
+  $: doorOpen = !!device.door_open
   $: stripe = hasAlarm ? 'alarm' : statusKey
 
   function handleClick() {
@@ -25,6 +26,11 @@
     <div class="card-header">
       <StatusDot status={hasAlarm ? 'alarm' : statusKey} size="sm" />
       <span class="device-name truncate">{device.name || device.mqtt_device_id}</span>
+      {#if doorOpen}
+        <span class="door-badge" title={$t('device.door_open')}>
+          <Icon name="door-open" size={12} />
+        </span>
+      {/if}
       {#if hasAlarm}
         <span class="alarm-badge">
           <Icon name="alert-triangle" size={12} />
@@ -154,6 +160,17 @@
     border-radius: var(--radius-full);
     letter-spacing: 0.06em;
     animation: pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  .door-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(251, 191, 36, 0.12);
+    color: var(--accent-yellow);
+    padding: 3px;
+    border-radius: var(--radius-full);
     flex-shrink: 0;
   }
 

@@ -376,6 +376,9 @@
   onDestroy(() => { unsubscribe(resolvedId); for (const fn of unsubs) fn() })
 
   $: hasAlarm = !!$liveState['protection.alarm_active']
+  // Older firmware never publishes the key — leave the badge out entirely
+  $: doorKnown = $liveState['equipment.door_open'] != null
+  $: doorOpen = !!$liveState['equipment.door_open']
 
   function roleVariant(role) {
     if (role === 'admin') return 'danger'
@@ -412,6 +415,12 @@
         </Badge>
         {#if hasAlarm}
           <Badge variant="danger" pulse>{$t('device.alarm_badge')}</Badge>
+        {/if}
+        {#if doorKnown}
+          <Badge variant={doorOpen ? 'warning' : 'neutral'}>
+            <Icon name="door-open" size={13} />
+            {doorOpen ? $t('device.door_open') : $t('device.door_closed')}
+          </Badge>
         {/if}
         <div class="header-spacer"></div>
         {#if $canWrite}

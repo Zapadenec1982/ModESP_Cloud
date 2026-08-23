@@ -143,6 +143,8 @@
             ? changes['equipment.air_temp'] : d.air_temp,
           alarm_active: changes['protection.alarm_active'] !== undefined
             ? !!changes['protection.alarm_active'] : d.alarm_active,
+          door_open: changes['equipment.door_open'] !== undefined
+            ? !!changes['equipment.door_open'] : d.door_open,
           last_seen: msg.time || d.last_seen,
         }
       }))
@@ -157,6 +159,8 @@
           air_temp: s['equipment.air_temp'] ?? d.air_temp,
           alarm_active: s['protection.alarm_active'] != null
             ? !!s['protection.alarm_active'] : d.alarm_active,
+          door_open: s['equipment.door_open'] != null
+            ? !!s['equipment.door_open'] : d.door_open,
           online: msg.meta?.online ?? d.online,
         }
       }))

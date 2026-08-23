@@ -164,6 +164,8 @@ export default {
     off: 'AUS',
     location: 'Standort',
     alarm_badge: 'ALARM',
+    door_open: 'Tür offen',
+    door_closed: 'Tür geschlossen',
     read_device: 'Vom Gerät lesen',
     send: 'Senden',
     no_params: 'Keine Parameter verfügbar',

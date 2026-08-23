@@ -178,6 +178,8 @@ export default {
     off: 'OFF',
     location: 'Location',
     alarm_badge: 'ALARM',
+    door_open: 'Door open',
+    door_closed: 'Door closed',
     read_device: 'Read from device',
     send: 'Send',
     no_params: 'No parameters available',
