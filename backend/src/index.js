@@ -84,9 +84,19 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
 });
+// Device self-registration. The endpoint is already gated by MQTT_BOOTSTRAP_PASSWORD
+// (timing-safe compare), so this limiter is not the primary gate — its job is to stop
+// someone brute-forcing that bootstrap key. Counting SUCCESSFUL registrations was
+// therefore protecting nothing while breaking the legitimate case: one commissioning
+// site is one IP, and a store with 40 cabinets — or a test bench bringing up a whole
+// fleet — hit the wall long before finishing. skipSuccessfulRequests inverts that:
+// the budget is spent only on failures, so key-guessing is throttled harder than
+// before (30 wrong keys per IP per hour) while a valid key can register any number
+// of distinct devices.
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 30,                    // 30 per IP
+  max: 30,                    // 30 FAILED attempts per IP
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
