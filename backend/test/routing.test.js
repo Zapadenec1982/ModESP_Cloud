@@ -12,6 +12,15 @@ const silent = pino({ level: 'silent' });
 
 const ENV_KEYS = ['OSRM_URL', 'OSRM_TIMEOUT_MS', 'ORS_URL', 'ORS_API_KEY', 'ORS_TIMEOUT_MS'];
 
+// Deliberately NOT in ENV_KEYS: beforeEach deletes every key listed there, which
+// would restore the pacer's default mid-run.
+// The ORS pacer keeps us under the account-wide 20 req/min ceiling in production.
+// Tests exercise the same code path repeatedly, so leaving it at its default would
+// add ~3.5s of real sleeping per upstream call and push this file past testTimeout
+// on a slow runner. The pacer's serialisation is what the tests care about; its
+// spacing is not.
+process.env.ORS_MIN_INTERVAL_MS = '0';
+
 const KYIV     = { lat: 50.4501, lon: 30.5234 };
 const LVIV     = { lat: 49.8397, lon: 24.0297 };
 const ZHYTOMYR = { lat: 50.2547, lon: 28.6587 };

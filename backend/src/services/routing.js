@@ -348,6 +348,53 @@ async function trip(points, opts = {}) {
   };
 }
 
+// ── OpenRouteService pacing ───────────────────────────────
+// ORS meters per ACCOUNT, not per user: the free plan allows 20 isochrone
+// requests a minute and 500 a day. `externalLimiter` in index.js is per-user and
+// allows 30/min, so a single enthusiastic user — let alone two — would exhaust
+// the account budget and every isochrone would quietly downgrade to an
+// approximate ring. One process-wide pacer keeps us under the account ceiling
+// regardless of how many people are on the map.
+//
+// When the pacer is already backed up we degrade immediately rather than making
+// someone wait behind a queue: an approximate ring now beats a real polygon in
+// fifteen seconds, and the UI labels it as approximate either way.
+const ORS_MIN_INTERVAL_MS = 3500;   // ≈17 req/min, headroom under the 20/min cap
+const ORS_MAX_QUEUED      = 3;
+
+let orsChain  = Promise.resolve();
+let orsLastAt = 0;
+let orsQueued = 0;
+
+/**
+ * Pacer interval. Read directly rather than through envInt(), which rejects 0 as
+ * a valid value — and 0 is meaningful here: a self-hosted ORS has no account
+ * quota, so an operator pointing ORS_URL at their own instance should be able to
+ * turn the pacing off entirely.
+ */
+function orsGapMs() {
+  const n = parseInt(process.env.ORS_MIN_INTERVAL_MS, 10);
+  return Number.isFinite(n) && n >= 0 ? n : ORS_MIN_INTERVAL_MS;
+}
+
+/** Run `work` on the shared ORS pacer. Returns null when the queue is saturated. */
+function paceOrs(work) {
+  if (orsQueued >= ORS_MAX_QUEUED) return null;
+  orsQueued++;
+  const run = orsChain
+    .then(async () => {
+      const gap  = orsGapMs();
+      const wait = orsLastAt + gap - Date.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      orsLastAt = Date.now();
+      return work();
+    })
+    .finally(() => { orsQueued--; });
+  // Swallow rejections on the chain itself so one failure cannot wedge the pacer.
+  orsChain = run.then(() => {}, () => {});
+  return run;
+}
+
 // ── OpenRouteService isochrones ───────────────────────────
 
 /**
@@ -455,7 +502,7 @@ async function isochrones(lat, lon, minutes) {
   );
   if (!url) return approximateCollection(nLat, nLon, bands);
 
-  const json = await fetchJson(url, {
+  const paced = paceOrs(() => fetchJson(url, {
     timeoutMs: envInt('ORS_TIMEOUT_MS', 10000),
     method: 'POST',
     headers: { Authorization: process.env.ORS_API_KEY.trim(), 'Content-Type': 'application/json' },
@@ -465,7 +512,12 @@ async function isochrones(lat, lon, minutes) {
       range_type: 'time',
     },
     ctx: { service: 'isochrones', bands: bands.length },
-  });
+  }));
+  if (!paced) {
+    log().info({ lat: nLat, lon: nLon }, 'Routing: ORS pacer saturated — serving approximate rings');
+    return approximateCollection(nLat, nLon, bands);
+  }
+  const json = await paced;
 
   const raw = json && Array.isArray(json.features) ? json.features : null;
   if (!raw || raw.length === 0) {
