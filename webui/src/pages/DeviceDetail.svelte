@@ -1,10 +1,14 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice } from '../lib/api.js'
+  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
+  import { formatDate, formatDuration, formatTemp } from '../lib/format.js'
+  // No Leaflet in geo.js by design — the map components themselves are imported
+  // lazily further down, so this stays out of the entry chunk.
+  import { effectiveCoords, formatAddress, geoSourceKey, isValidCoords, weatherCodeKey } from '../lib/geo.js'
   import StatusDot from '../components/ui/StatusDot.svelte'
   import Badge from '../components/ui/Badge.svelte'
   import Icon from '../components/ui/Icon.svelte'
@@ -35,12 +39,18 @@
     { id: 'params',  label: $t('device.tab_params') },
     { id: 'alarms',  label: $t('device.tab_alarms') },
     { id: 'service', label: $t('device.tab_service') },
+    // The map comes AFTER service on purpose — the user asked for it "після сервісу".
+    { id: 'location', label: $t('device.tab_location') },
   ]
 
   // ── Edit modal state ──
   let showEdit = false
   let editForm = { name: '', location: '', serial_number: '', model: '', comment: '', manufactured_at: '',
-    model_id: null, compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '' }
+    model_id: null, compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '',
+    site_id: '' }
+  // AddressPicker mode="point" binds this shape; `display_name` has no column on
+  // devices and is discarded on save — only the coordinate pair is stored.
+  let editPoint = { latitude: null, longitude: null, display_name: '' }
   let saving = false
   let deviceModels = []
 
@@ -97,8 +107,15 @@
       evap_fan_w: device.evap_fan_kw != null ? Math.round(device.evap_fan_kw * 1000) : '',
       cond_fan_w: device.cond_fan_kw != null ? Math.round(device.cond_fan_kw * 1000) : '',
       standby_w: device.standby_kw != null ? Math.round(device.standby_kw * 1000) : '',
+      site_id: device.site_id || '',
+    }
+    editPoint = {
+      latitude: device.latitude ?? null,
+      longitude: device.longitude ?? null,
+      display_name: '',
     }
     loadDeviceModels()
+    loadSites()
     showEdit = true
   }
 
@@ -136,6 +153,20 @@
         if (val !== cur) changes[dbField] = val
       }
 
+      // Site assignment (торгова точка)
+      const nextSiteId = editForm.site_id || null
+      if (nextSiteId !== (device.site_id || null)) changes.site_id = nextSiteId
+
+      // Per-device coordinate override from AddressPicker
+      const nextLat = numOrNull(editPoint && editPoint.latitude)
+      const nextLon = numOrNull(editPoint && editPoint.longitude)
+      if (nextLat !== (device.latitude ?? null) || nextLon !== (device.longitude ?? null)) {
+        const invalid = coordPairError(nextLat, nextLon)
+        if (invalid) { toast.error($t(invalid)); return }
+        changes.latitude = nextLat
+        changes.longitude = nextLon
+      }
+
       if (Object.keys(changes).length === 0) {
         closeEdit()
         return
@@ -145,6 +176,12 @@
       device = { ...device, ...updated }
       toast.success($t('device.edit_saved'))
       closeEdit()
+
+      // PATCH returns the raw device row — no joined site_name / site_latitude —
+      // so a site or coordinate change needs a reload, not a merge.
+      if (changes.site_id !== undefined || changes.latitude !== undefined) {
+        await reloadAfterLocationChange()
+      }
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -212,6 +249,210 @@
   // Load service records when switching to service tab
   $: if (activeTab === 'service' && device && !serviceLoaded && !serviceLoading) {
     loadServiceRecords()
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  Location tab — site, address, weather, nearest technicians
+  // ══════════════════════════════════════════════════════════
+
+  // Every loader below treats a rejection as "this section is unavailable" and
+  // hides itself: a disabled weather provider, a 403 for the caller's role or a
+  // third party being down degrades the location tab, never the device page.
+
+  /** '' / null / undefined / NaN → null. `Number(null)` would be 0 — Null Island. */
+  function numOrNull(value) {
+    if (value === null || value === undefined || value === '') return null
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+
+  /** i18n key of the problem with a coordinate pair, or null when it is usable. */
+  function coordPairError(lat, lon) {
+    // Both or neither — half a pair puts the device nowhere.
+    if ((lat === null) !== (lon === null)) return 'site.coords_incomplete'
+    if (lat !== null && !isValidCoords(lat, lon)) return 'site.coords_invalid'
+    return null
+  }
+
+  let site = null              // GET /api/sites/:id — the full structured address
+  let siteLoading = false
+  let siteError = false
+  let locationLoadedFor = null // the site id the tab data belongs to ('none' = unassigned)
+
+  let weather = null           // { current, forecast, timezone }
+  // 'unknown' (probe in flight) | 'ok' | 'no_site' | 'disabled' | 'no_coordinates' | 'unavailable'
+  let weatherState = 'unknown'
+  let weatherProbedFor = undefined
+
+  let technicians = []
+  let techRouting = null
+  let techLoading = false
+
+  let sites = []               // GET /api/sites — the assignment selector
+  let sitesLoading = false
+  let sitesLoaded = false
+
+  let siteAssign = ''
+  let siteSaving = false
+  let coordForm = { latitude: '', longitude: '' }
+  let coordSaving = false
+
+  $: eff = effectiveCoords(device)
+  $: siteAddressText = formatAddress(site)
+
+  /**
+   * The outdoor-temperature overlay reads `weather_observations` from our own
+   * database, so it survives a provider hiccup — only a deliberately disabled
+   * provider (or a site that has no coordinates and is therefore never polled)
+   * hides the toggle. `unknown` keeps it hidden until the probe has answered, so
+   * it never flashes in and out.
+   */
+  $: outdoorAvailable = !!(device && device.site_id)
+    && (weatherState === 'ok' || weatherState === 'unavailable')
+
+  /**
+   * Probe the site weather once per device view. Two consumers need the answer:
+   * the weather card in this tab, and the outdoor-temperature toggle in
+   * TelemetryChart — which sits on the default tab and must know whether the
+   * feature exists before the user ever opens the location tab.
+   */
+  async function probeWeather(siteId) {
+    const key = siteId || 'none'
+    if (weatherProbedFor === key) return
+    weatherProbedFor = key
+    weather = null
+    if (!siteId) { weatherState = 'no_site'; return }
+    weatherState = 'unknown'
+    try {
+      // requestFull: `meta.weather` says WHY there is no data — disabled provider,
+      // a site with no pin, or a provider that is simply not answering.
+      const json = await getSiteWeather(siteId)
+      if (weatherProbedFor !== key) return   // the device changed under us
+      weather = json.data || null
+      weatherState = weather ? 'ok' : ((json.meta && json.meta.weather) || 'unavailable')
+    } catch {
+      if (weatherProbedFor === key) weatherState = 'unavailable'
+    }
+  }
+
+  async function loadSites() {
+    if (!$canWrite || sitesLoaded || sitesLoading) return
+    sitesLoading = true
+    try {
+      sites = (await getSites()) || []
+      sitesLoaded = true
+    } catch {
+      sites = []
+    } finally {
+      sitesLoading = false
+    }
+  }
+
+  /** Staff roster — admin/technician only server-side; a viewer 403s and it hides. */
+  async function loadTechnicians(siteId) {
+    techLoading = true
+    try {
+      const json = await getNearestTechnicians(siteId, { limit: 5 })
+      technicians = Array.isArray(json.data) ? json.data : []
+      techRouting = (json.meta && json.meta.routing) || null
+    } catch {
+      technicians = []
+      techRouting = null
+    } finally {
+      techLoading = false
+    }
+  }
+
+  async function loadLocationTab() {
+    const key = device.site_id || 'none'
+    if (locationLoadedFor === key) return
+    locationLoadedFor = key
+
+    site = null
+    siteError = false
+    technicians = []
+    techRouting = null
+    siteAssign = device.site_id || ''
+    resetCoordForm()
+
+    loadSites()
+    if (!device.site_id) return
+
+    siteLoading = true
+    try {
+      const loaded = await getSite(device.site_id)
+      if (locationLoadedFor !== key) return
+      site = loaded || null
+    } catch {
+      if (locationLoadedFor === key) siteError = true
+    } finally {
+      if (locationLoadedFor === key) siteLoading = false
+    }
+
+    if ($canWrite && locationLoadedFor === key) loadTechnicians(device.site_id)
+  }
+
+  $: if (activeTab === 'location' && device) loadLocationTab()
+
+  function resetCoordForm() {
+    coordForm = {
+      latitude:  device && device.latitude  != null ? Number(device.latitude)  : '',
+      longitude: device && device.longitude != null ? Number(device.longitude) : '',
+    }
+  }
+
+  /**
+   * A site or coordinate change invalidates the joined columns PATCH does not
+   * return (site_name, site_latitude, …), the weather probe and the technician
+   * distances — so everything is reloaded from the device row up.
+   */
+  async function reloadAfterLocationChange() {
+    locationLoadedFor = null
+    weatherProbedFor = undefined
+    await loadDevice()
+    if (!device) return
+    probeWeather(device.site_id || null)
+    if (activeTab === 'location') loadLocationTab()
+  }
+
+  async function saveSiteAssignment() {
+    const next = siteAssign || null
+    if (next === (device.site_id || null)) return
+    siteSaving = true
+    try {
+      await updateDevice(resolvedId, { site_id: next })
+      toast.success($t('device.site_saved'))
+      await reloadAfterLocationChange()
+    } catch (e) {
+      toast.error(e.message)
+      siteAssign = device.site_id || ''
+    } finally {
+      siteSaving = false
+    }
+  }
+
+  async function saveCoords() {
+    const lat = numOrNull(coordForm.latitude)
+    const lon = numOrNull(coordForm.longitude)
+    const invalid = coordPairError(lat, lon)
+    if (invalid) { toast.error($t(invalid)); return }
+
+    coordSaving = true
+    try {
+      const updated = await updateDevice(resolvedId, { latitude: lat, longitude: lon })
+      device = { ...device, latitude: updated.latitude, longitude: updated.longitude }
+      resetCoordForm()
+      toast.success(lat === null ? $t('map.location_removed') : $t('map.location_saved'))
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      coordSaving = false
+    }
+  }
+
+  function clearCoords() {
+    coordForm = { latitude: '', longitude: '' }
+    saveCoords()
   }
 
   // ── MQTT Credentials ──
@@ -349,6 +590,8 @@
       error = null
       const name = device.name || device.mqtt_device_id
       document.title = `${name} — ModESP Cloud`
+      // Fire-and-forget: decides whether the chart offers the outdoor overlay.
+      probeWeather(device.site_id || null)
     } catch (e) {
       error = e.message
     } finally {
@@ -429,8 +672,9 @@
               <Icon name="settings" size={18} />
             </button>
             {#if showMoreMenu}
-              <!-- svelte-ignore a11y-click-events-have-key-events -->
-              <div class="more-menu-backdrop" on:click={() => showMoreMenu = false}></div>
+              <div class="more-menu-backdrop" role="presentation"
+                on:click={() => showMoreMenu = false}
+                on:keydown={(e) => { if (e.key === 'Escape') showMoreMenu = false }}></div>
               <div class="more-menu">
                 <button class="more-menu-item" on:click={() => { showMoreMenu = false; openEdit(); }}>
                   <Icon name="edit" size={14} />
@@ -489,7 +733,15 @@
             {device.manufactured_at.slice(0, 10)}
           </span>
         {/if}
-        {#if device.location}
+        {#if device.site_name}
+          <span class="meta-item">
+            <Icon name="building" size={12} />
+            {device.site_name}{device.site_city ? `, ${device.site_city}` : ''}
+          </span>
+        {/if}
+        <!-- After the site backfill every legacy device has location === site_name;
+             showing both would read as "АТБ №142 / АТБ №142". -->
+        {#if device.location && device.location !== device.site_name}
           <span class="meta-item">
             <Icon name="map-pin" size={12} />
             {device.location}
@@ -511,7 +763,7 @@
     <!-- Tab content -->
     <div class="tab-content">
       {#if activeTab === 'chart'}
-        <TelemetryChart deviceId={resolvedId} />
+        <TelemetryChart deviceId={resolvedId} siteId={device.site_id || null} weatherEnabled={outdoorAvailable} />
       {:else if activeTab === 'params'}
         <ParameterEditor deviceId={resolvedId} state={$liveState} readonly={!$canWrite} />
       {:else if activeTab === 'alarms'}
@@ -565,6 +817,222 @@
                 </div>
               {/each}
             </div>
+          {/if}
+        </div>
+      {:else if activeTab === 'location'}
+        <div class="location-section">
+          {#if siteLoading}
+            <Skeleton height="280px" />
+          {:else}
+            <!-- Map + the four route deep-links. Imported lazily: a static import
+                 drags Leaflet (~150 KB) into the entry chunk for every page. -->
+            {#if eff.source}
+              {#await import('../components/map/DeviceLocationMap.svelte')}
+                <Skeleton height="280px" />
+              {:then { default: DeviceLocationMap }}
+                <svelte:component
+                  this={DeviceLocationMap}
+                  latitude={eff.latitude}
+                  longitude={eff.longitude}
+                  label={site?.name || device.name || device.mqtt_device_id}
+                  status={hasAlarm ? 'alarm' : (device.online ? 'online' : 'offline')}
+                  address={site}
+                  precision={site?.geo_precision}
+                  source={eff.source}
+                />
+              {:catch}
+                <EmptyState icon="x-circle" title={$t('map.load_failed')} />
+              {/await}
+            {:else}
+              <EmptyState icon="map-pin" title={$t('map.no_coordinates')}
+                message={$t('device.no_coords_hint')} />
+            {/if}
+
+            <!-- Structured address -->
+            {#if siteError}
+              <div class="loc-card">
+                <p class="loc-hint">{$t('site.load_error')}</p>
+              </div>
+            {:else if site}
+              <div class="loc-card">
+                <div class="loc-card-header">
+                  <Icon name="building" size={16} />
+                  <h3>{site.name}</h3>
+                  <span class="loc-badge">{$t(geoSourceKey(site.geo_source))}</span>
+                </div>
+                <dl class="addr-grid">
+                  {#if site.country}
+                    <dt>{$t('site.country')}</dt><dd>{site.country}</dd>
+                  {/if}
+                  {#if site.region}
+                    <dt>{$t('site.region')}</dt><dd>{site.region}</dd>
+                  {/if}
+                  {#if site.city}
+                    <dt>{$t('site.city')}</dt><dd>{site.city}</dd>
+                  {/if}
+                  {#if site.address_line}
+                    <dt>{$t('site.address_line')}</dt><dd>{site.address_line}</dd>
+                  {/if}
+                  {#if site.postal_code}
+                    <dt>{$t('site.postal_code')}</dt><dd>{site.postal_code}</dd>
+                  {/if}
+                  {#if site.timezone}
+                    <dt>{$t('site.timezone')}</dt><dd>{site.timezone}</dd>
+                  {/if}
+                  <!-- The backfill made location === site.name for every legacy
+                       device; showing both would read as "АТБ №142 / АТБ №142". -->
+                  {#if device.location && device.location !== site.name}
+                    <dt>{$t('device.location')}</dt><dd>{device.location}</dd>
+                  {/if}
+                </dl>
+                {#if !siteAddressText}
+                  <p class="loc-hint">{$t('site.no_address')}</p>
+                {/if}
+              </div>
+            {:else}
+              <div class="loc-card">
+                <div class="loc-card-header">
+                  <Icon name="building" size={16} />
+                  <h3>{$t('device.no_site')}</h3>
+                </div>
+                <p class="loc-hint">{$t('device.no_site_hint')}</p>
+              </div>
+            {/if}
+
+            <!-- Outdoor weather at the site -->
+            {#if weatherState === 'ok' && weather && weather.current}
+              <div class="loc-card">
+                <div class="loc-card-header">
+                  <Icon name="thermometer" size={16} />
+                  <h3>{$t('site.weather')}</h3>
+                  {#if weather.timezone}
+                    <span class="loc-badge">{weather.timezone}</span>
+                  {/if}
+                </div>
+                <div class="weather-row">
+                  <span class="weather-temp">{formatTemp(weather.current.temp_c).text}</span>
+                  <div class="weather-facts">
+                    <!-- The sky condition, from the WMO code Open-Meteo returns. -->
+                    {#if weather.current.weather_code != null}
+                      <span>{$t(weatherCodeKey(weather.current.weather_code))}</span>
+                    {/if}
+                    {#if weather.current.humidity != null}
+                      <span>{$t('site.weather_humidity')}: {weather.current.humidity}%</span>
+                    {/if}
+                    {#if weather.current.wind_ms != null}
+                      <span>{$t('site.weather_wind')}: {weather.current.wind_ms} {$t('site.unit_ms')}</span>
+                    {/if}
+                    {#if weather.current.pressure_hpa != null}
+                      <span>{$t('site.weather_pressure')}: {weather.current.pressure_hpa} {$t('site.unit_hpa')}</span>
+                    {/if}
+                  </div>
+                </div>
+                {#if weather.current.observed_at}
+                  <p class="loc-hint">{$t('site.weather_updated', formatDate(weather.current.observed_at))}</p>
+                {/if}
+              </div>
+            {:else if weatherState === 'unavailable'}
+              <div class="loc-card">
+                <p class="loc-hint">{$t('site.weather_unavailable')}</p>
+              </div>
+            {/if}
+
+            <!-- Nearest technicians -->
+            {#if $canWrite && device.site_id}
+              <div class="loc-card">
+                <div class="loc-card-header">
+                  <Icon name="users" size={16} />
+                  <h3>{$t('site.nearest_technicians')}</h3>
+                  {#if techRouting}
+                    <span class="loc-badge">{$t('site.duration_osrm')}</span>
+                  {/if}
+                </div>
+                {#if techLoading}
+                  <Skeleton height="60px" />
+                {:else if technicians.length === 0}
+                  <p class="loc-hint">{$t('site.no_technicians')}</p>
+                {:else}
+                  <ul class="tech-list">
+                    {#each technicians as tech (tech.id)}
+                      <li class="tech-row">
+                        <Icon name="user" size={14} />
+                        <span class="tech-name">{tech.email}</span>
+                        <span class="tech-dist">{tech.distance_km} {$t('map.unit_km')}</span>
+                        {#if tech.duration_s != null}
+                          <span class="tech-eta">{formatDuration(tech.duration_s)}</span>
+                        {/if}
+                        {#if tech.base_address}
+                          <span class="tech-base">{tech.base_address}</span>
+                        {/if}
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Site assignment + per-device coordinate override -->
+            {#if $canWrite}
+              <div class="loc-card">
+                <div class="loc-card-header">
+                  <Icon name="edit" size={16} />
+                  <h3>{$t('device.location_settings')}</h3>
+                </div>
+
+                <!-- Admin only: a site grant cascades access to every device on
+                     the site, so PATCH /api/devices/:id refuses site_id from a
+                     technician. Coordinates below stay open to $canWrite. -->
+                {#if $isAdmin}
+                  <div class="form-group">
+                    <label for="loc-site">{$t('device.site')}</label>
+                    <div class="model-select-row">
+                      <select id="loc-site" bind:value={siteAssign} disabled={siteSaving || sitesLoading}>
+                        <option value="">— {$t('device.no_site')} —</option>
+                        <!-- The current site may be missing from the list (RBAC, or
+                             the list still loading); without this the select would
+                             render blank and read as "unassigned". -->
+                        {#if device.site_id && device.site_name && !sites.some(s => s.id === device.site_id)}
+                          <option value={device.site_id}>{device.site_name}</option>
+                        {/if}
+                        {#each sites as s (s.id)}
+                          <option value={s.id}>{s.name}{s.city ? ` · ${s.city}` : ''}</option>
+                        {/each}
+                      </select>
+                      <button class="btn btn-primary btn-sm" on:click={saveSiteAssignment}
+                        disabled={siteSaving || siteAssign === (device.site_id || '')}>
+                        {siteSaving ? $t('common.loading') : $t('common.save')}
+                      </button>
+                    </div>
+                    <p class="loc-hint">{$t('device.site_hint')}</p>
+                  </div>
+                {/if}
+
+                <div class="form-row-power">
+                  <div class="form-group">
+                    <label for="loc-lat">{$t('site.latitude')}</label>
+                    <input id="loc-lat" type="number" step="0.000001" min="-90" max="90"
+                      bind:value={coordForm.latitude}
+                      placeholder={site && site.latitude != null ? site.latitude : ''} />
+                  </div>
+                  <div class="form-group">
+                    <label for="loc-lon">{$t('site.longitude')}</label>
+                    <input id="loc-lon" type="number" step="0.000001" min="-180" max="180"
+                      bind:value={coordForm.longitude}
+                      placeholder={site && site.longitude != null ? site.longitude : ''} />
+                  </div>
+                </div>
+                <p class="loc-hint">{$t('device.coords_override_hint')}</p>
+                <div class="loc-actions">
+                  <button class="btn btn-ghost btn-sm" on:click={clearCoords}
+                    disabled={coordSaving || (device.latitude == null && device.longitude == null)}>
+                    {$t('site.clear_coords')}
+                  </button>
+                  <button class="btn btn-primary btn-sm" on:click={saveCoords} disabled={coordSaving}>
+                    {coordSaving ? $t('common.loading') : $t('common.save')}
+                  </button>
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
       {:else if activeTab === 'energy'}
@@ -642,6 +1110,43 @@
           <input id="edit-location" type="text" bind:value={editForm.location}
             placeholder={$t('device.location_placeholder')} />
         </div>
+        <!-- Admin only: the site a device belongs to also decides who may SEE it
+             (user_sites grants cascade to every device on the site), so
+             PATCH /api/devices/:id rejects site_id from a technician. Rendering
+             the selector for them would only produce a 403 on save. -->
+        {#if $isAdmin}
+          <div class="form-group">
+            <label for="edit-site">{$t('device.site')}</label>
+            <select id="edit-site" bind:value={editForm.site_id} disabled={sitesLoading}>
+              <option value="">— {$t('device.no_site')} —</option>
+              {#if device.site_id && device.site_name && !sites.some(s => s.id === device.site_id)}
+                <option value={device.site_id}>{device.site_name}</option>
+              {/if}
+              {#each sites as s (s.id)}
+                <option value={s.id}>{s.name}{s.city ? ` · ${s.city}` : ''}</option>
+              {/each}
+            </select>
+            <p class="loc-hint">{$t('device.site_hint')}</p>
+          </div>
+        {/if}
+
+        <!-- Per-device coordinate override. Lazily imported so Leaflet stays out
+             of the entry chunk — nothing else on this page needs it. -->
+        <div class="form-section-title">{$t('device.coords_override')}</div>
+        <p class="loc-hint">{$t('device.coords_override_hint')}</p>
+        {#await import('../components/map/AddressPicker.svelte')}
+          <Skeleton height="220px" />
+        {:then { default: AddressPicker }}
+          <!-- labelKey={null}: there is no column for a device-level address
+               label, so the free-text field would be typed into and thrown away
+               (and its default wording, "Base address", belongs to a technician's
+               home base, not to a device). -->
+          <svelte:component this={AddressPicker} mode="point" labelKey={null}
+            bind:value={editPoint} height="200px" />
+        {:catch}
+          <p class="loc-hint">{$t('map.load_failed')}</p>
+        {/await}
+
         <div class="form-group">
           <label for="edit-model">{$t('device.model')}</label>
           <input id="edit-model" type="text" bind:value={editForm.model}
@@ -680,32 +1185,32 @@
         {#if showNewModel}
           <div class="new-model-form">
             <div class="form-group">
-              <label>{$t('common.name')}</label>
-              <input type="text" bind:value={newModel.name} placeholder="ModESP-4R" />
+              <label for="new-model-name">{$t('common.name')}</label>
+              <input id="new-model-name" type="text" bind:value={newModel.name} placeholder="ModESP-4R" />
             </div>
             <div class="form-row-power">
               <div class="form-group">
-                <label>{$t('energy.compressor')} (kW)</label>
-                <input type="number" step="0.001" min="0" bind:value={newModel.compressor_kw} placeholder="0.450" />
+                <label for="new-model-compressor">{$t('energy.compressor')} (kW)</label>
+                <input id="new-model-compressor" type="number" step="0.001" min="0" bind:value={newModel.compressor_kw} placeholder="0.450" />
               </div>
               <div class="form-group">
-                <label>{$t('energy.defrost')} (kW)</label>
-                <input type="number" step="0.001" min="0" bind:value={newModel.defrost_heater_kw} placeholder="0.800" />
+                <label for="new-model-defrost">{$t('energy.defrost')} (kW)</label>
+                <input id="new-model-defrost" type="number" step="0.001" min="0" bind:value={newModel.defrost_heater_kw} placeholder="0.800" />
               </div>
             </div>
             <div class="form-row-power">
               <div class="form-group">
-                <label>{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
-                <input type="number" step="1" min="0" bind:value={newModel.evap_fan_w} placeholder="50" />
+                <label for="new-model-evap-fan">{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
+                <input id="new-model-evap-fan" type="number" step="1" min="0" bind:value={newModel.evap_fan_w} placeholder="50" />
               </div>
               <div class="form-group">
-                <label>{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
-                <input type="number" step="1" min="0" bind:value={newModel.cond_fan_w} placeholder="80" />
+                <label for="new-model-cond-fan">{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
+                <input id="new-model-cond-fan" type="number" step="1" min="0" bind:value={newModel.cond_fan_w} placeholder="80" />
               </div>
             </div>
             <div class="form-group">
-              <label>{$t('energy.standby')} ({$t('energy.unit_w')})</label>
-              <input type="number" step="1" min="0" bind:value={newModel.standby_w} placeholder="20" style="max-width: 200px" />
+              <label for="new-model-standby">{$t('energy.standby')} ({$t('energy.unit_w')})</label>
+              <input id="new-model-standby" type="number" step="1" min="0" bind:value={newModel.standby_w} placeholder="20" style="max-width: 200px" />
             </div>
             <div class="new-model-actions">
               <button type="button" class="btn btn-ghost btn-sm" on:click={() => showNewModel = false}>{$t('common.cancel')}</button>
@@ -717,31 +1222,31 @@
         {/if}
         <div class="form-row-power">
           <div class="form-group">
-            <label>{$t('energy.compressor')} (kW)</label>
-            <input type="number" step="0.001" min="0" placeholder={device?.model_compressor_kw || ''}
+            <label for="edit-compressor">{$t('energy.compressor')} (kW)</label>
+            <input id="edit-compressor" type="number" step="0.001" min="0" placeholder={device?.model_compressor_kw || ''}
               bind:value={editForm.compressor_kw} />
           </div>
           <div class="form-group">
-            <label>{$t('energy.defrost')} (kW)</label>
-            <input type="number" step="0.001" min="0" placeholder={device?.model_defrost_heater_kw || ''}
+            <label for="edit-defrost">{$t('energy.defrost')} (kW)</label>
+            <input id="edit-defrost" type="number" step="0.001" min="0" placeholder={device?.model_defrost_heater_kw || ''}
               bind:value={editForm.defrost_heater_kw} />
           </div>
         </div>
         <div class="form-row-power">
           <div class="form-group">
-            <label>{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
-            <input type="number" step="1" min="0" placeholder={device?.model_evap_fan_kw ? Math.round(device.model_evap_fan_kw * 1000) : ''}
+            <label for="edit-evap-fan">{$t('energy.evap_fan')} ({$t('energy.unit_w')})</label>
+            <input id="edit-evap-fan" type="number" step="1" min="0" placeholder={device?.model_evap_fan_kw ? Math.round(device.model_evap_fan_kw * 1000) : ''}
               bind:value={editForm.evap_fan_w} />
           </div>
           <div class="form-group">
-            <label>{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
-            <input type="number" step="1" min="0" placeholder={device?.model_cond_fan_kw ? Math.round(device.model_cond_fan_kw * 1000) : ''}
+            <label for="edit-cond-fan">{$t('energy.cond_fan')} ({$t('energy.unit_w')})</label>
+            <input id="edit-cond-fan" type="number" step="1" min="0" placeholder={device?.model_cond_fan_kw ? Math.round(device.model_cond_fan_kw * 1000) : ''}
               bind:value={editForm.cond_fan_w} />
           </div>
         </div>
         <div class="form-group">
-          <label>{$t('energy.standby')} ({$t('energy.unit_w')})</label>
-          <input type="number" step="1" min="0" placeholder={device?.model_standby_kw ? Math.round(device.model_standby_kw * 1000) : ''}
+          <label for="edit-standby">{$t('energy.standby')} ({$t('energy.unit_w')})</label>
+          <input id="edit-standby" type="number" step="1" min="0" placeholder={device?.model_standby_kw ? Math.round(device.model_standby_kw * 1000) : ''}
             bind:value={editForm.standby_w} style="max-width: 200px" />
         </div>
       </div>
@@ -1046,33 +1551,6 @@
     color: var(--text-secondary);
     line-height: 1.5;
     white-space: pre-wrap;
-  }
-
-  .device-users {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    margin-top: var(--space-3);
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border-muted);
-    font-size: var(--text-sm);
-    color: var(--text-muted);
-  }
-
-  .users-label {
-    color: var(--text-secondary);
-  }
-
-  .user-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 2px var(--space-2);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    color: var(--text-primary);
   }
 
   .tab-content {
@@ -1389,19 +1867,6 @@
     min-width: fit-content;
   }
 
-  /* Tenant reassignment */
-  .reassign-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-    margin-top: var(--space-2);
-  }
-
   .reassign-warning {
     display: flex;
     align-items: flex-start;
@@ -1437,44 +1902,6 @@
     border-color: var(--accent-blue);
   }
 
-  /* MQTT Auth */
-  .mqtt-auth-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
-  }
-
-  .mqtt-label {
-    font-weight: 500;
-  }
-
-  .mqtt-actions {
-    display: flex;
-    gap: var(--space-1);
-    margin-left: auto;
-  }
-
-  .btn-danger-text {
-    color: var(--accent-red, #ef4444) !important;
-  }
-
-  .btn-danger-text:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  .btn-warning-text {
-    color: var(--accent-amber, #f59e0b) !important;
-  }
-
-  .btn-warning-text:hover:not(:disabled) {
-    background: rgba(245, 158, 11, 0.1);
-  }
-
   .btn-danger {
     background: var(--accent-red, #ef4444);
     color: #fff;
@@ -1483,17 +1910,6 @@
 
   .btn-danger:hover:not(:disabled) {
     filter: brightness(1.1);
-  }
-
-  .device-danger-zone {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    margin-top: var(--space-2);
-    justify-content: flex-end;
   }
 
   .delete-warning {
@@ -1557,6 +1973,136 @@
     word-break: break-all;
   }
 
+  /* ── Location tab ──────────────────────────── */
+
+  .location-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .loc-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .loc-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+  }
+
+  .loc-card-header h3 {
+    margin: 0;
+    flex: 1;
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-weight: 600;
+  }
+
+  .loc-badge {
+    padding: 1px var(--space-2);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-full);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .loc-hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
+
+  .loc-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+
+  .addr-grid {
+    display: grid;
+    grid-template-columns: minmax(96px, auto) 1fr;
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+  }
+
+  .addr-grid dt {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .addr-grid dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    word-break: break-word;
+  }
+
+  .weather-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .weather-temp {
+    color: var(--text-primary);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .weather-facts {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .tech-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .tech-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  .tech-name {
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+
+  .tech-dist {
+    color: var(--accent-blue);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tech-eta,
+  .tech-base {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+  }
+
   @media (max-width: 640px) {
     .device-header {
       padding: var(--space-3);
@@ -1586,6 +2132,15 @@
     .modal {
       max-width: 100%;
       margin: var(--space-2);
+    }
+
+    .addr-grid {
+      grid-template-columns: 1fr;
+      gap: 2px var(--space-2);
+    }
+
+    .addr-grid dd {
+      margin-bottom: var(--space-2);
     }
   }
 </style>

@@ -1,0 +1,962 @@
+[
+  {
+    "mqtt_device_id": "AE0000000001",
+    "site_index": 0,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "AE0000000002",
+    "site_index": 0,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "AE0000000003",
+    "site_index": 0,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "AE0000000004",
+    "site_index": 0,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Київ",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000004",
+    "site_index": 0,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Київ",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000005",
+    "site_index": 1,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000006",
+    "site_index": 1,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000007",
+    "site_index": 1,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000008",
+    "site_index": 1,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Київ",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000009",
+    "site_index": 1,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Київ",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000000A",
+    "site_index": 2,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000000B",
+    "site_index": 2,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000000C",
+    "site_index": 2,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Київ",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000000D",
+    "site_index": 2,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Київ",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000000E",
+    "site_index": 2,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Київ",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000000F",
+    "site_index": 3,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000010",
+    "site_index": 3,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000011",
+    "site_index": 3,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000012",
+    "site_index": 3,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Львів",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000013",
+    "site_index": 3,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Львів",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000014",
+    "site_index": 4,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000015",
+    "site_index": 4,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000016",
+    "site_index": 4,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Львів",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000017",
+    "site_index": 4,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Львів",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000018",
+    "site_index": 4,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Львів",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000019",
+    "site_index": 5,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Івано-Франківськ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000001A",
+    "site_index": 5,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Івано-Франківськ",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000001B",
+    "site_index": 5,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Івано-Франківськ",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000001C",
+    "site_index": 5,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Івано-Франківськ",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000001D",
+    "site_index": 5,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Івано-Франківськ",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000001E",
+    "site_index": 6,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Тернопіль",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000001F",
+    "site_index": 6,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Тернопіль",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000020",
+    "site_index": 6,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Тернопіль",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000021",
+    "site_index": 6,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Тернопіль",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000022",
+    "site_index": 6,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Тернопіль",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000023",
+    "site_index": 7,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000024",
+    "site_index": 7,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000025",
+    "site_index": 7,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000026",
+    "site_index": 7,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Одеса",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000027",
+    "site_index": 7,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Одеса",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000028",
+    "site_index": 8,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000029",
+    "site_index": 8,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000002A",
+    "site_index": 8,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Одеса",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000002B",
+    "site_index": 8,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Одеса",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000002C",
+    "site_index": 8,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Одеса",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000002D",
+    "site_index": 9,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Вінниця",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000002E",
+    "site_index": 9,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Вінниця",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000002F",
+    "site_index": 9,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Вінниця",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000030",
+    "site_index": 9,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Вінниця",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000031",
+    "site_index": 9,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Вінниця",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000032",
+    "site_index": 10,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Житомир",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000033",
+    "site_index": 10,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Житомир",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000034",
+    "site_index": 10,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Житомир",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000035",
+    "site_index": 10,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Житомир",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000036",
+    "site_index": 10,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Житомир",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000037",
+    "site_index": 11,
+    "chain": "Морозко",
+    "name": "Вітрина молочна — Луцьк",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000038",
+    "site_index": 11,
+    "chain": "Морозко",
+    "name": "Вітрина мʼясна — Луцьк",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000039",
+    "site_index": 11,
+    "chain": "Морозко",
+    "name": "Бонета морозильна — Луцьк",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000003A",
+    "site_index": 11,
+    "chain": "Морозко",
+    "name": "Камера охолодження — Луцьк",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000003B",
+    "site_index": 11,
+    "chain": "Морозко",
+    "name": "Камера заморозки — Луцьк",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000003C",
+    "site_index": 12,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000003D",
+    "site_index": 12,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000003E",
+    "site_index": 12,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000003F",
+    "site_index": 12,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Харків",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000040",
+    "site_index": 12,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Харків",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000041",
+    "site_index": 13,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000042",
+    "site_index": 13,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000043",
+    "site_index": 13,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Харків",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000044",
+    "site_index": 13,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Харків",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000045",
+    "site_index": 13,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Харків",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000046",
+    "site_index": 14,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000047",
+    "site_index": 14,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000048",
+    "site_index": 14,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000049",
+    "site_index": 14,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Дніпро",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000004A",
+    "site_index": 14,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Дніпро",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000004B",
+    "site_index": 15,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000004C",
+    "site_index": 15,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000004D",
+    "site_index": 15,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Дніпро",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000004E",
+    "site_index": 15,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Дніпро",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000004F",
+    "site_index": 15,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Дніпро",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000050",
+    "site_index": 16,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Запоріжжя",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000051",
+    "site_index": 16,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Запоріжжя",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000052",
+    "site_index": 16,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Запоріжжя",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000053",
+    "site_index": 16,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Запоріжжя",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000054",
+    "site_index": 16,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Запоріжжя",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000055",
+    "site_index": 17,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Кривий Ріг",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000056",
+    "site_index": 17,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Кривий Ріг",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000057",
+    "site_index": 17,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Кривий Ріг",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000058",
+    "site_index": 17,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Кривий Ріг",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000059",
+    "site_index": 17,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Кривий Ріг",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000005A",
+    "site_index": 18,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Полтава",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000005B",
+    "site_index": 18,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Полтава",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000005C",
+    "site_index": 18,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Полтава",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000005D",
+    "site_index": 18,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Полтава",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000005E",
+    "site_index": 18,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Полтава",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000005F",
+    "site_index": 19,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Черкаси",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000060",
+    "site_index": 19,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Черкаси",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000061",
+    "site_index": 19,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Черкаси",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000062",
+    "site_index": 19,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Черкаси",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000063",
+    "site_index": 19,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Черкаси",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000064",
+    "site_index": 20,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Чернігів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000065",
+    "site_index": 20,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Чернігів",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000066",
+    "site_index": 20,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Чернігів",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000067",
+    "site_index": 20,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Чернігів",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000068",
+    "site_index": 20,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Чернігів",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000069",
+    "site_index": 21,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Суми",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000006A",
+    "site_index": 21,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Суми",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE000000006B",
+    "site_index": 21,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Суми",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE000000006C",
+    "site_index": 21,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Суми",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE000000006D",
+    "site_index": 21,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Суми",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE000000006E",
+    "site_index": 22,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Кременчук",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE000000006F",
+    "site_index": 22,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Кременчук",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000070",
+    "site_index": 22,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Кременчук",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000071",
+    "site_index": 22,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Кременчук",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000072",
+    "site_index": 22,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Кременчук",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  },
+  {
+    "mqtt_device_id": "EE0000000073",
+    "site_index": 23,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина молочна — Кропивницький",
+    "location": "Торговий зал",
+    "equipment": "Вітрина молочна"
+  },
+  {
+    "mqtt_device_id": "EE0000000074",
+    "site_index": 23,
+    "chain": "Свіжий Крам",
+    "name": "Вітрина мʼясна — Кропивницький",
+    "location": "Торговий зал",
+    "equipment": "Вітрина мʼясна"
+  },
+  {
+    "mqtt_device_id": "EE0000000075",
+    "site_index": 23,
+    "chain": "Свіжий Крам",
+    "name": "Бонета морозильна — Кропивницький",
+    "location": "Торговий зал",
+    "equipment": "Бонета морозильна"
+  },
+  {
+    "mqtt_device_id": "EE0000000076",
+    "site_index": 23,
+    "chain": "Свіжий Крам",
+    "name": "Камера охолодження — Кропивницький",
+    "location": "Склад",
+    "equipment": "Камера охолодження"
+  },
+  {
+    "mqtt_device_id": "EE0000000077",
+    "site_index": 23,
+    "chain": "Свіжий Крам",
+    "name": "Камера заморозки — Кропивницький",
+    "location": "Склад",
+    "equipment": "Камера заморозки"
+  }
+]

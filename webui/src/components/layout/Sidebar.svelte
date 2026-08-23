@@ -9,8 +9,13 @@
   import ConnectionStatus from './ConnectionStatus.svelte'
   import SettingsMenu from './SettingsMenu.svelte'
   import ChangePasswordModal from './ChangePasswordModal.svelte'
+  import HomeBaseModal from './HomeBaseModal.svelte'
 
   let showPasswordModal = false
+  // Self-service home base (Part 2 §7.4). Offered to every role that the
+  // nearest-technician ranking actually considers — technician and admin —
+  // because /api/profile is the only route those two can use to set it.
+  let showHomeBaseModal = false
 
   export let alarmCount = 0
   export let pendingCount = 0
@@ -19,8 +24,13 @@
     { section: $t('nav.sections.monitoring') },
     { path: '/',              icon: 'grid',     label: $t('nav.dashboard') },
     { path: '/map',           icon: 'map-pin',  label: $t('nav.map') },
+    // Any authenticated role: GET /api/stats/geo narrows by RBAC rather than by role.
+    { path: '/geo-stats',     icon: 'globe',    label: $t('nav.geo_stats') },
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
     { section: $t('nav.sections.management') },
+    // Any authenticated role: GET /api/sites narrows by RBAC rather than by role,
+    // and the page hides its own write controls from a non-admin.
+    { path: '/sites',         icon: 'building', label: $t('nav.sites') },
     { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
     { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware') },
     { section: $t('nav.sections.admin'), admin: true },
@@ -55,6 +65,11 @@
 
   $: isAdmin = !$authEnabled || $authUser?.role === 'admin' || $authUser?.role === 'superadmin'
   $: isSuperAdmin = $authEnabled && $authUser?.role === 'superadmin'
+
+  // Exactly the roles GET /api/sites/:id/nearest-technicians ranks
+  // (`u.role IN ('technician', 'admin')`) — a viewer has no base to set.
+  $: canEditHomeBase = $authEnabled
+    && ($authUser?.role === 'technician' || $authUser?.role === 'admin' || $authUser?.role === 'superadmin')
 
   // Tenant switcher
   let tenantDropdownOpen = false
@@ -170,6 +185,12 @@
         <Icon name="user" size={16} />
         {#if !$sidebarCollapsed}
           <span class="user-email truncate">{$authUser.email}</span>
+          {#if canEditHomeBase}
+            <button class="user-action-btn" on:click={() => showHomeBaseModal = true}
+              title={$t('users.base_location_title')} aria-label={$t('users.base_location_title')}>
+              <Icon name="map-pin" size={14} />
+            </button>
+          {/if}
           <button class="user-action-btn" on:click={() => showPasswordModal = true}
             title={$t('password.change_password')}>
             <Icon name="lock" size={14} />
@@ -184,6 +205,7 @@
 </aside>
 
 <ChangePasswordModal bind:show={showPasswordModal} />
+<HomeBaseModal bind:show={showHomeBaseModal} />
 
 <style>
   .backdrop {

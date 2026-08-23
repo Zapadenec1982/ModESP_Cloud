@@ -213,7 +213,7 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
 
   // Get all users who have access to this tenant
   const { rows: users } = await db.query(
-    `SELECT DISTINCT u.id, u.role, u.telegram_id
+    `SELECT DISTINCT u.id, u.role, u.telegram_id, u.email
      FROM users u
      LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
      WHERE u.active = true
@@ -236,8 +236,9 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
     for (const r of accessRows) accessSet.add(r.user_id);
   }
 
-  const tgHandler = channels.get('telegram');
-  const wpHandler = channels.get('webpush');
+  const tgHandler    = channels.get('telegram');
+  const wpHandler    = channels.get('webpush');
+  const emailHandler = channels.get('email');
 
   // Batch: fetch all push subscriptions for eligible users (avoids N+1)
   const eligibleUserIds = users
@@ -293,6 +294,16 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
         } catch (err) {
           logger.debug({ err: err.statusCode || err.message, userId: user.id }, 'WebPush send failed');
         }
+      }
+    }
+
+    // Email — send to user's email address
+    if (emailHandler && user.email) {
+      try {
+        await emailHandler.send(user.email, payload);
+        logger.info({ channel: 'email', userId: user.id, deviceId }, 'Email sent');
+      } catch (err) {
+        logger.error({ err: err.message, userId: user.id }, 'Email send failed');
       }
     }
   }

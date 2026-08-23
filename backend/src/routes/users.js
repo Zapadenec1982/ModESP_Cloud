@@ -5,6 +5,7 @@ const { z }       = require('zod');
 const crypto      = require('crypto');
 const db          = require('../services/db');
 const authSvc     = require('../services/auth');
+const { isUuidFormat } = require('../lib/ids');
 
 const router = Router();
 
@@ -17,12 +18,30 @@ const createUserSchema = z.object({
   tenant_id: z.string().uuid().optional(),   // superadmin only — create in another tenant
 });
 
+// A half-set home base is worse than none: "nearest technician" would place the
+// user on the prime meridian. The pair must be written or cleared together.
+// (routes/profile.js repeats this rule for the self-service half of §7.4.)
+const baseLocationPaired = (d) => {
+  const hasLat = d.base_latitude  !== undefined;
+  const hasLon = d.base_longitude !== undefined;
+  if (hasLat !== hasLon) return false;
+  if (hasLat && hasLon) return (d.base_latitude === null) === (d.base_longitude === null);
+  return true;
+};
+const BASE_LOCATION_PAIR_MSG =
+  'base_latitude and base_longitude must be provided (or cleared) together';
+
 const updateUserSchema = z.object({
   email:     z.string().email().optional(),
   role:      z.enum(['admin', 'technician', 'viewer']).optional(),
   active:    z.boolean().optional(),
   tenant_id: z.string().uuid().optional(),   // superadmin only — reassign to another tenant
-});
+  // Technician home base (§7.4) — an admin may set it for any user in the tenant;
+  // the user's own self-service editing lives in routes/profile.js.
+  base_latitude:  z.number().min(-90).max(90).nullable().optional(),
+  base_longitude: z.number().min(-180).max(180).nullable().optional(),
+  base_address:   z.string().max(256).nullable().optional(),
+}).refine(baseLocationPaired, { message: BASE_LOCATION_PAIR_MSG });
 
 const updateProfileSchema = z.object({
   email:        z.string().email().optional(),
@@ -32,6 +51,10 @@ const updateProfileSchema = z.object({
 
 const deviceAccessSchema = z.object({
   device_id: z.string().uuid(),
+});
+
+const siteAccessSchema = z.object({
+  site_id: z.string().uuid(),
 });
 
 // ── GET /users — list (admin: tenant-scoped, superadmin: all) ─
@@ -44,7 +67,9 @@ router.get('/', async (req, res) => {
       // Superadmin sees ALL users cross-tenant with tenant memberships
       ({ rows } = await db.query(
         `SELECT u.id, u.email, u.role, u.active, u.created_at, u.last_login,
-                u.tenant_id, u.telegram_id, t.name AS tenant_name, t.slug AS tenant_slug
+                u.tenant_id, u.telegram_id,
+                u.base_latitude, u.base_longitude, u.base_address,
+                t.name AS tenant_name, t.slug AS tenant_slug
          FROM users u
          JOIN tenants t ON t.id = u.tenant_id
          ORDER BY t.name, u.created_at DESC`
@@ -65,7 +90,8 @@ router.get('/', async (req, res) => {
       }
     } else {
       ({ rows } = await db.query(
-        `SELECT id, email, role, active, created_at, last_login, telegram_id
+        `SELECT id, email, role, active, created_at, last_login, telegram_id,
+                base_latitude, base_longitude, base_address
          FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`,
         [req.tenantId]
       ));
@@ -82,7 +108,8 @@ router.get('/', async (req, res) => {
 router.get('/me', async (req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT id, email, role, active, created_at, last_login, push_token, telegram_id
+      `SELECT id, email, role, active, created_at, last_login, push_token, telegram_id,
+              base_latitude, base_longitude, base_address
        FROM users WHERE id = $1 AND tenant_id = $2`,
       [req.user.id, req.tenantId]
     );
@@ -313,6 +340,10 @@ router.put('/:id', async (req, res) => {
     if (data.role  !== undefined)     { sets.push(`role = $${idx++}`);      params.push(data.role);  }
     if (data.active !== undefined)    { sets.push(`active = $${idx++}`);    params.push(data.active); }
     if (data.tenant_id !== undefined) { sets.push(`tenant_id = $${idx++}`); params.push(data.tenant_id); }
+    // Technician home base (§7.4) — set by an admin from the Users page
+    if (data.base_latitude !== undefined)  { sets.push(`base_latitude = $${idx++}`);  params.push(data.base_latitude); }
+    if (data.base_longitude !== undefined) { sets.push(`base_longitude = $${idx++}`); params.push(data.base_longitude); }
+    if (data.base_address !== undefined)   { sets.push(`base_address = $${idx++}`);   params.push(data.base_address); }
 
     if (sets.length === 0) {
       return res.status(400).json({
@@ -334,7 +365,7 @@ router.put('/:id', async (req, res) => {
 
     const { rows } = await db.query(
       `UPDATE users SET ${sets.join(', ')} ${whereClause}
-       RETURNING id, email, role, active`,
+       RETURNING id, email, role, active, base_latitude, base_longitude, base_address`,
       params
     );
 
@@ -553,6 +584,14 @@ router.delete('/:id/tenants/:tenantId', async (req, res) => {
       [userId, tenantId]
     );
 
+    // Site grants live in the tenant the membership just lost. Leaving them
+    // behind would silently reactivate the old access the moment the user is
+    // re-added to that tenant.
+    await db.query(
+      'DELETE FROM user_sites WHERE user_id = $1 AND tenant_id = $2',
+      [userId, tenantId]
+    );
+
     // If removed tenant was the user's default, switch to another
     const { rows: uRows } = await db.query(
       'SELECT tenant_id FROM users WHERE id = $1', [userId]
@@ -754,6 +793,154 @@ router.delete('/:id/devices/:deviceId', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Revoke device access failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to revoke access', status: 500 });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
+// ── Site-level access grants (user_sites) ────────────────
+// ══════════════════════════════════════════════════════════
+//
+// A grant on a site gives the user every device standing at that site, resolved
+// as `user_devices ∪ user_sites` in middleware/device-access.js. The whole router
+// is mounted behind authorize('admin') in index.js, so these are admin-only.
+//
+// Tenant scoping rule for all three handlers: the site is validated against the
+// TARGET USER's tenant, never req.tenantId. For a superadmin acting from another
+// tenant those differ, and using req.tenantId would either grant nothing or —
+// worse — accept a site id observed in a different tenant. `user_sites.tenant_id`
+// is written from the same value, and the composite FK (tenant_id, site_id)
+// makes a cross-tenant row physically impossible.
+
+// Resolve the grant target the way PUT /users/:id/devices does (superadmin: any
+// user; everybody else: own tenant only). Returns null when not visible.
+async function loadTargetUser(req, userId) {
+  const isSuperAdmin = req.user && req.user.role === 'superadmin';
+  const sql = isSuperAdmin
+    ? 'SELECT id, tenant_id FROM users WHERE id = $1'
+    : 'SELECT id, tenant_id FROM users WHERE id = $1 AND tenant_id = $2';
+  const params = isSuperAdmin ? [userId] : [userId, req.tenantId];
+  const { rows } = await db.query(sql, params);
+  return rows[0] || null;
+}
+
+function userNotFound(res) {
+  return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+}
+
+// ── GET /users/:id/sites — list granted sites ────────────
+
+router.get('/:id/sites', async (req, res) => {
+  // A non-UUID :id compared against the uuid column raises 22P02 → 500.
+  if (!isUuidFormat(req.params.id)) return userNotFound(res);
+
+  try {
+    const target = await loadTargetUser(req, req.params.id);
+    if (!target) return userNotFound(res);
+
+    const { rows } = await db.query(
+      `SELECT s.id, s.name, s.country_code, s.country, s.region, s.city,
+              us.granted_at, us.granted_by,
+              (SELECT COUNT(*) FROM devices d
+                WHERE d.site_id = s.id AND d.tenant_id = s.tenant_id
+                  AND d.status = 'active' AND d.deleted_at IS NULL)::int AS device_count
+         FROM user_sites us
+         JOIN sites s ON s.id = us.site_id AND s.tenant_id = us.tenant_id
+        WHERE us.user_id = $1 AND us.tenant_id = $2
+        ORDER BY s.name`,
+      [req.params.id, target.tenant_id]
+    );
+
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'List user sites failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to list user sites', status: 500 });
+  }
+});
+
+// ── POST /users/:id/sites — grant one site ───────────────
+
+router.post('/:id/sites', async (req, res) => {
+  if (!isUuidFormat(req.params.id)) return userNotFound(res);
+
+  const parsed = siteAccessSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: 'validation_failed',
+      message: 'site_id (UUID) is required',
+      status: 400,
+    });
+  }
+
+  const { site_id } = parsed.data;
+
+  try {
+    const target = await loadTargetUser(req, req.params.id);
+    if (!target) return userNotFound(res);
+
+    // The site must belong to the TARGET USER's tenant.
+    const siteCheck = await db.query(
+      'SELECT 1 FROM sites WHERE id = $1 AND tenant_id = $2',
+      [site_id, target.tenant_id]
+    );
+    if (siteCheck.rows.length === 0) {
+      return res.status(400).json({
+        error: 'invalid_site',
+        message: 'Site does not belong to this tenant',
+        status: 400,
+      });
+    }
+
+    await db.query(
+      `INSERT INTO user_sites (user_id, site_id, tenant_id, granted_by, granted_at)
+       VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING`,
+      [req.params.id, site_id, target.tenant_id, req.user?.id || null]
+    );
+
+    // Audit: which site was granted to whom
+    req.auditContext = { entityId: req.params.id, changes: { site_id, action: 'grant' } };
+
+    res.status(201).json({ data: { message: 'Site access granted', site_id } });
+  } catch (err) {
+    // The site was deleted between the check and the insert.
+    if (err.code === '23503') {
+      return res.status(400).json({
+        error: 'invalid_site',
+        message: 'Site does not belong to this tenant',
+        status: 400,
+      });
+    }
+    req.log?.error?.({ err }, 'Grant site access failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to grant site access', status: 500 });
+  }
+});
+
+// ── DELETE /users/:id/sites/:siteId — revoke one site ────
+
+router.delete('/:id/sites/:siteId', async (req, res) => {
+  if (!isUuidFormat(req.params.id) || !isUuidFormat(req.params.siteId)) {
+    return userNotFound(res);
+  }
+
+  try {
+    const target = await loadTargetUser(req, req.params.id);
+    if (!target) return userNotFound(res);
+
+    // tenant_id in the predicate as well as the PK columns: a grant belonging to
+    // another tenant must not be removable from here.
+    const { rowCount } = await db.query(
+      'DELETE FROM user_sites WHERE user_id = $1 AND site_id = $2 AND tenant_id = $3',
+      [req.params.id, req.params.siteId, target.tenant_id]
+    );
+
+    req.auditContext = {
+      entityId: req.params.id,
+      changes: { site_id: req.params.siteId, action: 'revoke', removed: rowCount > 0 },
+    };
+
+    res.json({ data: { message: 'Site access revoked', site_id: req.params.siteId } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Revoke site access failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to revoke site access', status: 500 });
   }
 });
 

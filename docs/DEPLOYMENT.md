@@ -63,17 +63,22 @@ Ubuntu 24.04
 │   │   │       ├── 014_push_subscriptions.sql
 │   │   │       ├── 015_audit_log.sql
 │   │   │       ├── 016_password_reset.sql
-│   │   │       ├── 017_energy_monitoring.sql
-│   │   │       └── 018_device_geo.sql
+│   │   │       ├── 018_device_geo.sql
+│   │   │       ├── 018_soft_delete_devices.sql
+│   │   │       ├── 019_energy_monitoring.sql
+│   │   │       ├── 020_telegram_id_unique.sql
+│   │   │       └── 021_sites.sql        # торгові точки + гео (фаза 14)
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration
 │   │   ├── cleanup-telemetry.js     # retention: видаляє партиції >90 днів
+│   │   ├── cleanup-weather.js       # retention: weather_observations >395 днів
 │   │   └── provision-mqtt-creds.js  # генерує MQTT credentials для існуючих пристроїв
 │   ├── .env                         # конфігурація (не в git!)
 │   └── package.json
 ├── webui/
 │   ├── dist/                        # збілджений SPA (Nginx serve)
+│   ├── .env                         # VITE_MAP_TILE_URL / VITE_MAP_ATTRIBUTION (не в git!)
 │   └── package.json
 └── infra/
     ├── systemd/
@@ -83,6 +88,29 @@ Ubuntu 24.04
     ├── nginx/
     └── mosquitto/
 ```
+
+---
+
+## Ліцензування третіх сторін — прочитати ДО продакшну
+
+ModESP Cloud — комерційний продукт. Гео-функціонал спирається на п'ять зовнішніх сервісів, які зараз
+увімкнені на їхніх **безкоштовних / некомерційних** умовах, бо це демо-розгортання.
+
+| Сервіс | Що дає | Потрібно до продакшну | Змінна |
+|---|---|---|---|
+| Nominatim (OSM) | геокодування адрес, автодоповнення | self-hosted Nominatim або платний геокодер | `GEOCODER_URL` |
+| Open-Meteo | зовнішня погода, таймзони точок | платний план або self-hosted | `WEATHER_PROVIDER` |
+| OSRM | маршрути, оптимізація обʼїзду | **обовʼязково** self-hosted: `router.project-osrm.org` це community demo-сервер, прямо не призначений для продакшну | `OSRM_URL` |
+| OpenRouteService | ізохрони доїзду | API-ключ + платний план, або self-hosted | `ORS_API_KEY` |
+| Тайли OpenStreetMap | сама карта | платний провайдер тайлів або власні тайли | `VITE_MAP_TILE_URL` |
+
+Повний чекліст, варіанти по кожному сервісу і зобовʼязання щодо атрибуції —
+**[`docs/THIRD_PARTY_LICENSING.md`](THIRD_PARTY_LICENSING.md)**. Це блокер продакшну, а не побажання.
+
+Кожен із них вимикається однією змінною оточення і деградує у **робочий вимкнений стан**: платформа не
+ламається, зникає лише відповідна функція (детально — у тому ж файлі). Атрибуцію
+`© OpenStreetMap contributors` прибирати не можна за жодних умов — цього вимагає ліцензія ODbL,
+незалежно від того, безкоштовний у вас провайдер тайлів чи платний.
 
 ---
 
@@ -164,6 +192,62 @@ node scripts/grant-all-devices.js --apply  # виконати
 cd /opt/modesp-cloud/backend
 node scripts/provision-mqtt-creds.js          # dry-run (перегляд)
 node scripts/provision-mqtt-creds.js --apply  # генерує паролі
+```
+
+Решта міграцій (`009_superadmin_role.sql` … `020_telegram_id_unique.sql`) застосовуються так само —
+по порядку номерів, тією ж командою. Повний перелік — у розділі «Структура на сервері» вище.
+
+**Міграція 021** (торгові точки / гео, фаза 14) — як і всі DDL-міграції, виконується **від власника
+схеми**:
+
+```bash
+cd /opt/modesp-cloud
+sudo -u postgres psql -d modesp_cloud \
+  -f backend/src/db/migrations/021_sites.sql
+```
+
+Що вона робить:
+- створює `sites`, `geocode_cache`, `user_sites`, `weather_observations`, `site_public_links`
+- додає `devices.site_id` і `users.base_latitude` / `base_longitude` / `base_address`
+- переносить наявні значення `devices.location` у торгові точки (backfill) і проставляє `site_id`
+- видає права ролі застосунку (GRANT)
+
+Міграція **ідемпотентна**: повторний запуск безпечний і ніколи не перезаписує `site_id`, проставлений
+вручну після першого прогону.
+
+**Перевірте ім'я ролі в GRANT-ах.** Файл видає права ролі `modesp_cloud`. Якщо ваш `DB_USER` інший —
+відредагуйте ці пʼять рядків перед запуском або виконайте їх окремо:
+
+```bash
+sudo -u postgres psql -d modesp_cloud <<'SQL'
+GRANT SELECT, INSERT, UPDATE, DELETE ON sites TO modesp_cloud;
+GRANT SELECT, INSERT, UPDATE, DELETE ON geocode_cache TO modesp_cloud;
+GRANT SELECT, INSERT, UPDATE, DELETE ON user_sites TO modesp_cloud;
+GRANT SELECT, INSERT, UPDATE, DELETE ON weather_observations TO modesp_cloud;
+GRANT SELECT, INSERT, UPDATE, DELETE ON site_public_links TO modesp_cloud;
+SQL
+```
+
+Без цих прав `/api/sites`, `/api/map` і `/api/stats/geo` у продакшні повертають
+`permission denied for table sites`. Тести цього не ловлять — тестовий раннер міграцій GRANT-и
+коментує.
+
+**Перевірка після застосування:**
+
+```bash
+# 5 нових таблиць існують (має повернути 5 рядків)
+sudo -u postgres psql -d modesp_cloud -c \
+  "SELECT tablename FROM pg_tables WHERE tablename IN ('sites','geocode_cache','user_sites','weather_observations','site_public_links');"
+
+# backfill відпрацював: скільки точок створено
+sudo -u postgres psql -d modesp_cloud -c "SELECT count(*) FROM sites;"
+
+# скільки пристроїв з локацією лишилися без точки (очікується 0)
+sudo -u postgres psql -d modesp_cloud -c \
+  "SELECT count(*) FROM devices WHERE location IS NOT NULL AND btrim(location) <> '' AND site_id IS NULL AND status NOT IN ('deleted','pending') AND deleted_at IS NULL;"
+
+# права видані (від імені ролі застосунку)
+PGPASSWORD=... psql -h localhost -U modesp_cloud -d modesp_cloud -c "SELECT count(*) FROM sites;"
 ```
 
 ### 3. Mosquitto + mosquitto-go-auth
@@ -296,9 +380,22 @@ nano .env
 
 # Зібрати WebUI
 cd ../webui
+cp .env.example .env    # адреса тайлів карти; за замовчуванням — публічні тайли OSM
 npm install
 npm run build
 ```
+
+`webui/.env` (шаблон — `webui/.env.example`):
+
+```bash
+VITE_MAP_TILE_URL=https://tile.openstreetmap.org/{z}/{x}/{y}.png
+VITE_MAP_ATTRIBUTION=© OpenStreetMap contributors
+```
+
+> **Зміна тайл-хоста вимагає трьох синхронних правок**, інакше браузер заблокує тайли по CSP:
+> `VITE_MAP_TILE_URL` тут, `img-src` у helmet (`backend/src/index.js`) і **обидва** заголовки
+> Content-Security-Policy у `infra/nginx/modesp.conf`. Змінні `VITE_*` вшиваються під час
+> `npm run build` — після зміни WebUI треба перезібрати.
 
 `.env` файл (`/opt/modesp-cloud/backend/.env`):
 
@@ -336,7 +433,53 @@ FCM_SERVER_KEY=your_fcm_server_key
 
 # Telegram (опціонально)
 TELEGRAM_BOT_TOKEN=your_bot_token
+
+# --- Гео-сервіси (фаза 14) ---
+# ДЕМО-конфігурація. Політики і що треба купити/розгорнути до продакшну:
+# docs/THIRD_PARTY_LICENSING.md і розділ «Ліцензування третіх сторін» вище.
+# Усі таймаути мають лишатися нижче nginx `proxy_read_timeout 30s` для location /api/.
+
+# Геокодування (Nominatim). Порожнє або none = вимкнено повністю
+GEOCODER_PROVIDER=nominatim
+GEOCODER_URL=https://nominatim.openstreetmap.org
+GEOCODER_USER_AGENT=ModESP-Cloud/1.0 (admin@your-domain.tld)
+GEOCODER_EMAIL=admin@your-domain.tld
+GEOCODER_RATE_LIMIT_MS=1100
+GEOCODER_CACHE_TTL_DAYS=180
+GEOCODER_TIMEOUT_MS=8000
+GEOCODER_NEGATIVE_TTL_MIN=360
+GEOCODER_BULK_ENABLED=false
+
+# Зовнішня погода (Open-Meteo). Порожнє або none = вимкнено
+WEATHER_PROVIDER=open-meteo
+WEATHER_URL=https://api.open-meteo.com/v1
+WEATHER_CACHE_TTL_MIN=30
+WEATHER_POLL_INTERVAL_MIN=60
+WEATHER_TIMEOUT_MS=8000
+WEATHER_RETENTION_DAYS=395
+
+# Маршрутизація (OSRM). Порожнє = планувальник обʼїзду деградує до прямих ліній
+OSRM_URL=https://router.project-osrm.org
+OSRM_TIMEOUT_MS=10000
+
+# Ізохрони (OpenRouteService). Порожній ключ = наближені кільця прямої відстані
+ORS_URL=https://api.openrouteservice.org
+ORS_API_KEY=
+ORS_TIMEOUT_MS=10000
 ```
+
+Що важливо знати про ці змінні:
+
+| Змінна | Наслідок |
+|---|---|
+| `GEOCODER_PROVIDER=` / `none` | геокодування вимкнено: автодоповнення адреси зникає з UI, координати вводяться вручну |
+| `GEOCODER_USER_AGENT` | політика OSM **вимагає** ідентифікованого User-Agent з робочим контактом. Дефолтний або підроблений UA — привід для блокування |
+| `GEOCODER_RATE_LIMIT_MS` | не опускати нижче 1100 для публічного Nominatim — це його ліміт 1 запит/с |
+| `GEOCODER_BULK_ENABLED` | вмикати **тільки** для self-hosted Nominatim: політика OSM забороняє систематичні масові запити незалежно від темпу |
+| `WEATHER_PROVIDER=` | погода вимкнена: віджети погоди і накладення зовнішньої температури ховаються, таймзони точок задаються вручну |
+| `WEATHER_RETENTION_DAYS` | глибина `weather_observations`; чистить cron-задача `cleanup-weather.js` (нижче) |
+| `OSRM_URL=` | планувальник обʼїзду лишається робочим: порядок рахується по прямій, deep-link Google Maps працює завжди |
+| `ORS_API_KEY=` | ізохрони стають наближеними кільцями і **видимо позначаються** такими в UI. Гейт стоїть саме на ключі, не на `ORS_URL` |
 
 Створити адміністратора:
 
@@ -485,6 +628,9 @@ sudo crontab -u modesp -e
 ```cron
 # Очистка старих партицій телеметрії (>90 днів), щодня о 3:00
 0 3 * * * cd /opt/modesp-cloud/backend && /usr/bin/node scripts/cleanup-telemetry.js >> /var/log/modesp-cleanup.log 2>&1
+
+# Очистка старих спостережень погоди (>WEATHER_RETENTION_DAYS, дефолт 395), щодня о 3:20
+20 3 * * * cd /opt/modesp-cloud/backend && /usr/bin/node scripts/cleanup-weather.js >> /var/log/modesp-cleanup.log 2>&1
 ```
 
 **Примітка:** партиції на наступні місяці створюються автоматично через systemd timer `modesp-telemetry-partition.timer` (25-го числа кожного місяця о 3:00).
@@ -557,3 +703,4 @@ mkdir -p /backup
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

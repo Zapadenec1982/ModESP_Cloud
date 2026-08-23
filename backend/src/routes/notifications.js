@@ -42,10 +42,10 @@ router.post('/subscribers', async (req, res, next) => {
       });
     }
 
-    if (!['telegram', 'fcm'].includes(channel)) {
+    if (!['telegram', 'fcm', 'email'].includes(channel)) {
       return res.status(400).json({
         error: 'validation_failed',
-        message: 'channel must be "telegram" or "fcm"',
+        message: 'channel must be "telegram", "fcm", or "email"',
         status: 400,
       });
     }

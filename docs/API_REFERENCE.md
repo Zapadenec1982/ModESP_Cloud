@@ -10,6 +10,16 @@ Authorization: Bearer <access_token>
 ```
 
 **Формат відповіді:** JSON
+
+> **Виняток — `/api/public/*`.** Роутер публічної сторінки статусу точки змонтований **вище**
+> ланцюжка автентифікації і навмисне не вимагає Bearer-токена. Він має власний rate limiter і власний
+> звужений набір полів — див. «Публічна сторінка статусу точки».
+
+> **Окремий rate limiter на зовнішні сервіси.** `/api/geo/*`, `/api/map/route`,
+> `/api/map/isochrones`, `/api/sites/:id/weather` і `/api/sites/geocode-pending` ходять до третіх
+> сторін (Nominatim, Open-Meteo, OSRM, OpenRouteService), тому обмежені **30 запитами/хв на
+> користувача** — не на IP: цілий тенант за одним NAT ділив би спільну IP-квоту.
+
 **Помилки:**
 ```json
 {
@@ -113,11 +123,24 @@ Authorization: Bearer <access_token>
       "alarm_active": false,
       "air_temp": 4.5,
       "latitude": 50.4501,
-      "longitude": 30.5234
+      "longitude": 30.5234,
+      "site_id": "uuid",
+      "site_name": "АТБ №142",
+      "site_city": "Львів",
+      "site_region": "Львівська область",
+      "site_country": "Україна",
+      "site_latitude": 49.844,
+      "site_longitude": 24.0262
     }
   ]
 }
 ```
+
+`latitude` / `longitude` — **сирі** координати пристрою; COALESCE з координатами точки тут навмисне
+**не** застосовується. Ефективні координати для карти рахує `GET /api/map/devices`. Якби цей ендпоінт
+віддавав `COALESCE(d.latitude, s.latitude)`, список «Без координат» на сторінці «Карта» став би
+порожнім, а кнопка «Прибрати з карти» виглядала б зламаною: `PATCH {latitude: null}` повертав би
+координати точки.
 
 ### `GET /devices/:id`
 Деталі пристрою з поточним станом + список користувачів з доступом.
@@ -141,6 +164,13 @@ Authorization: Bearer <access_token>
     "thermostat.compressor": true,
     "protection.alarm_active": false
   },
+  "site_id": "uuid",
+  "site_name": "АТБ №142",
+  "site_city": "Львів",
+  "site_region": "Львівська область",
+  "site_country": "Україна",
+  "site_latitude": 49.844,
+  "site_longitude": 24.0262,
   "users": [
     { "id": "uuid", "email": "tech@example.com", "role": "technician" }
   ]
@@ -167,15 +197,31 @@ Authorization: Bearer <access_token>
     "fan_watts": 90
   },
   "latitude": 50.4501,
-  "longitude": 30.5234
+  "longitude": 30.5234,
+  "site_id": "uuid або null"
 }
 ```
 
 - `model_id` — прив'язка до профілю потужності з таблиці `device_models`
 - `power_overrides` — JSONB, індивідуальне перевизначення потужності для пристрою (перекриває значення з device_models)
 - `latitude` / `longitude` — координати для сторінки «Карта» (lat ∈ [-90, 90], lng ∈ [-180, 180]; `null` прибирає пристрій з карти)
+- `site_id` — торгова точка пристрою; `null` відв'язує. **Тільки admin / superadmin** — технік отримує
+  **403** `forbidden`. Це поле керує доступом, а не підписом: `middleware/device-access.js` віддає
+  пристрій усім, хто має грант `user_sites` на його точку, тож технік із доступом до одного пристрою
+  міг би відв'язати його й забрати доступ у колег (або навпаки — розширити). Решта шляхів зміни
+  членства (`POST/DELETE /users/:id/sites`, `DELETE /sites/:id?force=true`) теж admin-only.
+  Точка перевіряється на приналежність тенанту
+  **пристрою** (для superadmin це `tenant_id` рядка пристрою, а не активний тенант сесії). Чужа точка
+  дає **400** `invalid_site` — інакше адмін тенанта A міг би прив'язати свій пристрій до побаченого
+  UUID точки тенанта B
 
 **Response 200:** оновлений пристрій (без state).
+
+> **CSV-імпорт (фаза 12) приймає нові колонки:** `site_name`, `country`, `region`, `city`,
+> `address_line`. Рядок з невідомою назвою точки створює точку в тенанті призначення. Геокодування
+> нової точки — fire-and-forget через масову чергу: імпорт на 500 рядків не має чекати на геокодер із
+> лімітом 1 запит/с. Рядки, що потрапляють у системний тенант (`pre_register`), `site_id` не отримують
+> взагалі — пристрій системного тенанта не може володіти точкою тенанта.
 
 ---
 
@@ -572,6 +618,765 @@ HACCP Temperature Compliance Report (PDF).
 
 ---
 
+## Торгові точки (Sites)
+
+Торгова точка — фізичний об'єкт (магазин, склад, цех), до якого прив'язані пристрої. Один пристрій
+належить максимум одній точці (`devices.site_id`), одна точка тримає скільки завгодно пристроїв.
+Адреса живе на точці; `devices.location` лишається вільним описом місця **всередині** точки
+(«Зал, ряд 3»).
+
+**Спільні правила всіх ендпоінтів `/sites`:**
+
+- Кожен запит обмежений `tenant_id`; superadmin має звичний cross-tenant bypass і додатковий
+  query-параметр `tenant_id`.
+- `GET /sites` і `GET /sites/:id` пропущені через `filterDeviceAccess`. Лічильники
+  (`device_count`, `online_count`, `alarm_count`) рахуються по **видимому** набору пристроїв, а точка,
+  в якій викликач не бачить жодного пристрою, у видачу не потрапляє взагалі.
+- Будь-який `:id`, `:siteId`, `:linkId` не-UUID формату повертає **404**, не 400 — щоб зіпсований
+  ідентифікатор не відрізнявся від неіснуючого.
+- `POST` / `PATCH` / `DELETE` і все керування публічними посиланнями — тільки `admin`.
+
+### `GET /sites`
+Список точок тенанта зі зведеними лічильниками пристроїв.
+
+**Query params:**
+- `search=атб` — пошук по назві, місту, адресі
+- `country_code=UA`, `region=Львівська область`, `city=Львів` — фільтри
+- `tenant_id=uuid` — тільки superadmin
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "name": "АТБ №142",
+      "country_code": "UA",
+      "country": "Україна",
+      "region": "Львівська область",
+      "city": "Львів",
+      "address_line": "просп. Свободи, 28",
+      "postal_code": "79000",
+      "latitude": 49.844,
+      "longitude": 24.0262,
+      "geo_source": "geocoded",
+      "geo_precision": "house",
+      "geocoded_at": "2026-08-23T09:12:00Z",
+      "timezone": "Europe/Kyiv",
+      "notes": null,
+      "device_count": 10,
+      "online_count": 9,
+      "alarm_count": 1,
+      "created_at": "2026-08-23T09:10:00Z",
+      "updated_at": "2026-08-23T09:12:00Z"
+    }
+  ]
+}
+```
+
+`geo_source`: `none` (координат ще немає) · `geocoded` (від Nominatim) · `manual` (задано людиною) ·
+`failed` (3+ невдалі спроби; причина в `geo_error`).
+
+### `POST /sites`
+Створити точку.
+
+**Ролі:** admin
+
+**Body:**
+```json
+{
+  "name": "АТБ №142",
+  "country_code": "UA",
+  "country": "Україна",
+  "region": "Львівська область",
+  "city": "Львів",
+  "address_line": "просп. Свободи, 28",
+  "postal_code": "79000",
+  "latitude": null,
+  "longitude": null,
+  "timezone": null,
+  "notes": null,
+  "tenant_id": "uuid (тільки superadmin)"
+}
+```
+
+Обов'язкове тільки `name`. Якщо координати не передані, а адреса є — виконується inline-геокодування
+(best effort, структурований запит до Nominatim). Виклик **не чекає** на геокодер довше 5 секунд:
+якщо черга зайнята, точка створюється з `geo_source: "none"`, а фонова задача дописує координати
+пізніше. Геокодер вимкнений або недоступний — точка все одно створюється.
+
+**Response 201:** `{ "data": { ...site } }`
+
+**409** — назва вже зайнята в цьому тенанті (унікальний індекс `uq_sites_tenant_name`). Порівняння
+регістро- і пробіло-нечутливе: «АТБ №142» і « атб №142 » — одна назва.
+
+### `GET /sites/:id`
+Точка з переліком її пристроїв.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "name": "АТБ №142",
+    "city": "Львів",
+    "latitude": 49.844,
+    "longitude": 24.0262,
+    "timezone": "Europe/Kyiv",
+    "device_count": 2,
+    "online_count": 2,
+    "alarm_count": 0,
+    "devices": [
+      { "id": "uuid", "mqtt_device_id": "A4CF12", "name": "Камера №1", "online": true, "alarm_active": false }
+    ]
+  }
+}
+```
+
+### `PATCH /sites/:id`
+Оновити точку. Мінімум одне поле.
+
+**Ролі:** admin
+
+**Body** (будь-яка підмножина):
+```json
+{
+  "name": "АТБ №142",
+  "country_code": "UA",
+  "country": "Україна",
+  "region": "Львівська область",
+  "city": "Львів",
+  "address_line": "просп. Свободи, 30",
+  "postal_code": "79000",
+  "latitude": 49.844,
+  "longitude": 24.0262,
+  "timezone": "Europe/Kyiv",
+  "notes": "Вхід з двору"
+}
+```
+
+**Не приймаються ніколи:** `id`, `tenant_id`, `geo_source`, `geo_precision`, `geocoded_at`,
+`geo_attempts`, `geo_error`, `osm_type`, `osm_id`, `created_at`. Зокрема `tenant_id` — зміна тенанта
+точки перенесла б разом із нею видимість усіх її пристроїв на карті та всі гранти `user_sites`.
+
+**Зміна адреси запускає повторне геокодування, але нічого не стирає.** `latitude`, `longitude`,
+`geo_source`, `geo_precision`, `geocoded_at` перезаписуються **тільки при успіху**. Якщо геокодер
+вимкнений, у таймауті або віддав порожній результат — попередні координати лишаються на місці.
+Виправлення друкарської помилки в адресі під час недоступності Nominatim не має стирати точку з карти.
+
+**Response 200:** `{ "data": { ...site } }`
+
+### `DELETE /sites/:id`
+Видалити точку.
+
+**Ролі:** admin
+
+**Query params:** `force=true` — відв'язати пристрої (`site_id = NULL`) і видалити точку.
+Прапорець парситься строго: `?force=false` і `?force=0` означають **не** force.
+
+**409, якщо на точці є пристрої і `force` не переданий:**
+```json
+{
+  "error": "site_has_devices",
+  "message": "Site has 10 attached devices",
+  "status": 409,
+  "device_count": 10
+}
+```
+
+**Response 200:**
+```json
+{ "data": { "deleted": true } }
+```
+
+Примусове видалення виконується в транзакції і пише в аудит перелік відв'язаних пристроїв разом із
+прапорцем `force` — інакше воно було б не відрізнити від видалення порожньої точки, тоді як
+`devices.site_id` занулено безповоротно.
+
+### `POST /sites/:id/geocode`
+Примусово перегеокодувати точку.
+
+**Ролі:** admin
+
+**Response 200** — завжди 200, навіть коли нічого не сталося:
+```json
+{
+  "data": { "...site": "..." },
+  "meta": { "geocoder": "ok" }
+}
+```
+
+`meta.geocoder`: `ok` (координати оновлено) · `disabled` (`GEOCODER_PROVIDER` порожній або `none`) ·
+`failed` (провайдер не відповів або збігів немає — `geo_attempts` збільшено, координати не змінені).
+UI показує причину замість мовчазного no-op.
+
+### `GET /sites/:id/weather`
+Поточна погода та прогноз на точці (Open-Meteo).
+
+**Ролі:** будь-яка автентифікована. **Доступ до точки** — той самий, що й у `GET /sites/:id`: бачити
+хоча б один пристрій на точці або мати грант `user_sites`, інакше **404**. Погода — публічні дані, а от
+«які `site_id` існують у тенанті» — ні, тож ендпоінт не має бути оракулом існування точок.
+
+**Rate limit:** 30 запитів/хв на користувача.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "current": {
+      "observed_at": "2026-08-23T09:00:00Z",
+      "temp_c": 27.4,
+      "humidity": 41,
+      "pressure_hpa": 1012.3,
+      "wind_ms": 3.1,
+      "weather_code": 1
+    },
+    "forecast": {
+      "hourly": [
+        { "time": "2026-08-23T10:00:00Z", "temp_c": 28.1, "humidity": 39, "weather_code": 1 }
+      ]
+    },
+    "timezone": "Europe/Kyiv"
+  }
+}
+```
+
+`{ "data": null }` — погода вимкнена (`WEATHER_PROVIDER` порожній), у точки немає координат, або
+провайдер не відповів. Ніколи не 500.
+
+### `GET /sites/:id/weather/history`
+Історія зовнішніх умов з `weather_observations` (без звернення до провайдера).
+
+**Ролі та доступ до точки:** як у `GET /sites/:id/weather` вище — інакше **404**.
+
+**Query params:** `from`, `to` (ISO). Некоректна дата → **400** `validation_failed`.
+
+**Response 200:**
+```json
+{
+  "data": [
+    { "observed_at": "2026-08-22T09:00:00Z", "temp_c": 25.8, "humidity": 44,
+      "pressure_hpa": 1011.0, "wind_ms": 2.4, "weather_code": 0 }
+  ]
+}
+```
+
+Це джерело даних для накладення «зовнішня температура» на графік телеметрії пристрою — саме воно
+пояснює стрибки навантаження і просідання COP.
+
+### `GET /sites/:id/nearest-technicians`
+Найближчі до точки техніки, відсортовані за відстанню.
+
+**Ролі:** admin, technician (для `viewer` — 403: це перелік персоналу)
+
+**Доступ до самої точки:** той самий, що й у `GET /sites/:id` — викликач має бачити хоча б один
+пристрій на точці або мати грант `user_sites`, інакше **404**. Без цієї перевірки будь-який технік міг
+би опитати будь-який `site_id` тенанта, а три такі запити тріангулюють домашню базу колеги — саме те,
+що маскування `base_address` нижче й приховує.
+
+**Query params:** `limit` — 1..50, за замовчуванням 5.
+
+**Response 200** (для `admin` / `superadmin`):
+```json
+{
+  "data": [
+    { "id": "uuid", "email": "tech@example.com", "distance_km": 12.4,
+      "duration_s": 1080, "base_address": "Львів, вул. Городоцька 100" }
+  ]
+}
+```
+
+Беруться користувачі **того ж тенанта** з роллю `technician`/`admin`, `active = true` і заповненою
+домашньою базою (`users.base_latitude` / `base_longitude`). Відстань — haversine; `duration_s` — реальний
+час у дорозі, коли налаштований `OSRM_URL`, інакше `null`.
+
+Для викликача з роллю `technician` `email` маскується (`t***@example.com`), `base_address` повертається
+як `null`, а `distance_km` округлюється до **цілих кілометрів** (для admin/superadmin — до 0.1 км).
+Округлення навмисне: 0.1 км по трьох точках дає координату бази з точністю ~100 м. Жодних інших полів
+користувача (hash пароля, токени, telegram_id) у відповіді немає ніколи.
+
+### `GET /sites/:id/public-links`
+Публічні посилання точки.
+
+**Ролі:** admin
+
+**Response 200:**
+```json
+{
+  "data": [
+    { "id": "uuid", "label": "Для клієнта", "expires_at": "2026-11-21T09:00:00Z",
+      "revoked_at": null, "view_count": 37, "last_viewed": "2026-08-23T08:40:00Z",
+      "created_at": "2026-08-23T09:00:00Z" }
+  ]
+}
+```
+
+Токен у списку **не повертається** — у базі лежить лише його sha256.
+
+### `POST /sites/:id/public-links`
+Створити публічне посилання. Сирий токен повертається **рівно один раз**.
+
+**Ролі:** admin
+
+**Body:**
+```json
+{ "label": "Для клієнта", "expires_at": "2026-11-21T09:00:00Z" }
+```
+
+Обидва поля опціональні; `expires_at` за замовчуванням — 90 днів. Безстрокового посилання не буває.
+
+**Response 201:**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "token": "SHOWN_ONCE_base64url_token",
+    "label": "Для клієнта",
+    "expires_at": "2026-11-21T09:00:00Z"
+  }
+}
+```
+
+Посилання для людини складається з токена: `https://<host>/#/public/site/<token>`.
+
+Токен — 32 випадкові байти. Він не пишеться в логи і не потрапляє в `audit_log` (там лише `site_id`,
+`label`, `expires_at`): `audit_log` захищений тригером незмінності, тож витерти звідти токен було б
+неможливо.
+
+### `DELETE /sites/:id/public-links/:linkId`
+Відкликати посилання (`revoked_at = NOW()`).
+
+**Ролі:** admin
+
+**Response 200:** `{ "data": { "deleted": true } }`
+
+### `POST /sites/geocode-pending`
+Фонове геокодування точок із `geo_source = 'none'`.
+
+**Ролі:** admin
+**Rate limit:** 30 запитів/хв на користувача.
+
+**Query params:** `retry_failed=true` — включити також точки з `geo_source = 'failed'`.
+
+**Response 200:**
+```json
+{ "data": { "queued": 12 } }
+```
+
+Можливі відмови, обидві зі статусом 200:
+- `{ "data": { "queued": 0, "reason": "bulk_disabled" } }` — `GEOCODER_BULK_ENABLED=false` (значення
+  за замовчуванням). Політика OSM забороняє систематичні масові запити до публічного Nominatim
+  незалежно від темпу, тому вмикати це можна лише для self-hosted інстансу.
+- `{ "data": { "queued": 0, "reason": "sweep_in_progress" } }` — попередній прохід ще працює.
+  Прапорець «прохід триває» тримається **на тенант**, а не на процес: прохід на 50 точок при
+  `GEOCODER_RATE_LIMIT_MS=1100` займає близько хвилини, і спільний прапорець блокував би адмінів усіх
+  інших тенантів. Він усе ще в памʼяті процесу — за двох воркерів позаду nginx кожен матиме свій, і
+  тоді потрібен advisory lock у Postgres на `tenant_id`.
+
+Один прохід обмежений 50 точками. Черга геокодера має два пріоритети: інтерактивні запити (створення
+точки, `/geo/*`) завжди обганяють масові.
+
+### `GET /sites/geocode-status`
+Прогрес геокодування для індикатора в UI.
+
+**Response 200:**
+```json
+{ "data": { "pending": 12, "geocoded": 180, "failed": 3 } }
+```
+
+`pending` = `geo_source='none'`, `geocoded` = `geo_source IN ('geocoded','manual')`,
+`failed` = `geo_source='failed'`.
+
+---
+
+## Геокодування (Geo)
+
+Проксі до Nominatim. **Браузер ніколи не звертається до Nominatim напряму** — так у провайдера є один
+ідентифікований `User-Agent`, один rate limiter (1 запит/с) і один спільний кеш, як того вимагає
+політика використання OSM.
+
+Обидва ендпоінти доступні будь-якому автентифікованому користувачу і обмежені **30 запитами/хв на
+користувача**. Будь-яка помилка провайдера (таймаут, 429, 5xx, зіпсована відповідь, вимкнений
+геокодер) дає **200 з порожнім результатом**, ніколи 500.
+
+### `GET /geo/search`
+Пошук адреси (автодоповнення).
+
+**Query params:** `q` (до 200 символів), `limit` (1..10)
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "display_name": "просп. Свободи, 28, Львів, Львівська область, 79000, Україна",
+      "latitude": 49.844,
+      "longitude": 24.0262,
+      "precision": "house",
+      "address": {
+        "country_code": "UA",
+        "country": "Україна",
+        "region": "Львівська область",
+        "city": "Львів",
+        "address_line": "просп. Свободи, 28",
+        "postal_code": "79000"
+      }
+    }
+  ]
+}
+```
+
+`precision`: `house` · `street` · `city` · `region` · `country`.
+
+> **Київ не має `region`.** Місто зі спеціальним статусом не повертає `address.state`, тоді як
+> Львів/Харків/Одеса/Дніпро повертають «... область» коректно. У такому разі `region` заповнюється
+> назвою міста, щоб Київ групувався у власний регіон, а не в кошик «невідомий регіон».
+
+### `GET /geo/reverse`
+Зворотне геокодування — координати в адресу (використовується при перетягуванні маркера).
+
+**Query params:** `lat`, `lon`
+
+**Response 200:** один об'єкт тієї ж форми, або `{ "data": null }`.
+
+---
+
+## Карта (Map)
+
+Усі ендпоінти монтуються під `/api/map`, всі проходять `filterDeviceAccess` і всі обмежені
+`tenant_id`. Точка, в якій викликач не бачить жодного пристрою, не дає жодного Feature — ані на карті,
+ані в теплокарті аварій.
+
+Валідація параметрів виконується **до** будь-якого SQL чи зовнішнього виклику: `bbox` — рівно чотири
+скінченні числа в допустимих діапазонах і `min <= max`; `from`/`to` — ISO-дати; `status` — з білого
+списку. Некоректне значення дає **400** `validation_failed`, ніколи 500.
+
+### `GET /map/devices`
+GeoJSON-шар карти. Один Feature на **точку** плюс синтетичні Feature для пристроїв із власними
+координатами без точки.
+
+**Query params:**
+- `tenant_id` (superadmin), `user_id` (тільки admin — інакше будь-хто перелічив би призначення чужого
+  користувача), `site_id`
+- `country_code`, `region`, `city`
+- `status=online|offline|alarm|all`
+- `model`, `firmware_version`
+- `q` — вільний пошук по назві, `mqtt_device_id`, `location`, назві точки
+- `bbox=minLon,minLat,maxLon,maxLat`
+
+**Response 200:**
+```json
+{
+  "data": {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [24.0262, 49.844] },
+        "properties": {
+          "site_id": "uuid",
+          "site_name": "АТБ №142",
+          "city": "Львів",
+          "region": "Львівська область",
+          "country": "Україна",
+          "country_code": "UA",
+          "tenant_slug": "acme",
+          "device_count": 10,
+          "online_count": 9,
+          "offline_count": 1,
+          "alarm_count": 1,
+          "devices": [
+            { "id": "uuid", "mqtt_device_id": "A4CF12", "name": "Камера №1",
+              "online": true, "alarm_active": false, "air_temp": -18.4 }
+          ]
+        }
+      }
+    ]
+  },
+  "meta": { "total_sites": 42, "total_devices": 310, "ungeocoded_devices": 7 }
+}
+```
+
+FeatureCollection лежить **у `data`**, а не на верхньому рівні — це загальна форма відповіді всього
+API. `meta.ungeocoded_devices` живить лічильник «Без координат» у UI.
+
+Координати пристрою на карті — `COALESCE(devices.latitude, sites.latitude)`: власні координати
+пристрою перекривають координати точки. (У `GET /devices` цей COALESCE **не** застосовується — там
+повертаються сирі колонки пристрою.)
+
+**Синтетичні Feature без точки** (`site_id: null` — пристрій із власними координатами, але без
+торгової точки) додатково несуть у `properties` поля самого пристрою: `device_id`, `mqtt_device_id`,
+`name`, `online`, `alarm_active`, `air_temp`. Це те, що читає `MapCanvas` для заголовка попапа,
+температури й посилання «Відкрити пристрій», і те, на чому `lib/geo.js featureKey()` будує стабільний
+ключ маркера — без `device_id` два пристрої з однаковими округленими координатами злилися б в один
+маркер. У Feature торгової точки цих полів немає: там заголовок — `site_name`.
+
+### `GET /map/filters`
+Значення для випадних списків фільтрів, з кількостями.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "countries": [{ "code": "UA", "name": "Україна", "count": 40 }],
+    "regions": [{ "name": "Львівська область", "count": 12 }],
+    "cities": [{ "name": "Львів", "count": 9 }],
+    "models": [{ "name": "ModESP-4R", "count": 120 }],
+    "firmware_versions": [{ "version": "1.2.3", "count": 88 }],
+    "tenants": [{ "id": "uuid", "slug": "acme", "name": "Acme Corp", "count": 40 }],
+    "users": [{ "id": "uuid", "email": "tech@example.com", "count": 15 }]
+  }
+}
+```
+
+`tenants` присутній тільки для superadmin, `users` — тільки для admin і вище. Технік не отримує жодного
+з цих ключів.
+
+### `GET /map/alarm-heatmap`
+Теплокарта аварій за період — агрегується в SQL, не в JS.
+
+**Query params:** `from`, `to` + усі фільтри `GET /map/devices`.
+
+**Response 200:**
+```json
+{
+  "data": [[49.844, 24.0262, 12], [50.4498, 30.5231, 3]],
+  "meta": { "max_weight": 12, "total": 15 }
+}
+```
+
+`meta.max_weight` обов'язковий для клієнта: без нього шар `L.heatLayer` нормалізується відносно свого
+дефолту 1.0 і малює суцільну пляму.
+
+### `GET /map/isochrones`
+Зони доїзду навколо точки.
+
+**Ролі:** admin, technician
+**Rate limit:** 30 запитів/хв на користувача.
+
+**Query params:** `lat`, `lon`, `minutes=15,30,60` — **максимум 3** значення, кожне 1..120.
+Більше або поза діапазоном → 400 (інакше один запит `minutes=1,2,...,500` спалює всю квоту ORS).
+
+**Response 200:**
+```json
+{
+  "data": { "type": "FeatureCollection", "features": [ { "type": "Feature", "properties": {
+    "minutes": 15, "approximate": true, "provider": null, "assumed_speed_kmh": 30 } } ] },
+  "meta": { "approximate": true, "provider": null, "minutes": [15, 30, 60], "assumed_speed_kmh": 30 }
+}
+```
+
+- З `ORS_API_KEY` — справжні ізохрони від OpenRouteService, `approximate: false`.
+- Без ключа (значення за замовчуванням), а також при таймауті чи помилці ORS — **кільця прямої
+  відстані** за середньою швидкістю 30 км/год, `approximate: true`. Гейт стоїть саме на **ключі**, а не
+  на `ORS_URL`: демо-конфігурація постачає URL заповненим і ключ порожнім.
+- `approximate` дублюється в `properties` **кожного** Feature, а не тільки в `meta` — прапорець має
+  подорожувати разом із геометрією, яку малюють, кешують чи експортують.
+- **UI зобов'язаний видимо позначати наближені кільця як наближені.** Рішення про виїзд не має
+  спиратися на коло, яке користувач вважає полігоном часу доїзду.
+
+### `POST /map/route`
+Маршрут обʼїзду по точках (OSRM `/trip` — оптимізація порядку, або `/route`).
+
+**Ролі:** admin, technician
+**Rate limit:** 30 запитів/хв на користувача.
+
+**Body:**
+```json
+{
+  "site_ids": ["uuid", "uuid", "uuid"],
+  "start": { "lat": 49.8397, "lon": 24.0297 },
+  "roundtrip": true
+}
+```
+
+`site_ids` — від 1 до 25 UUID. Кожен перевіряється на приналежність тенанту викликача **і** на
+видимість під його RBAC — до будь-якого зовнішнього виклику.
+
+Координати точки беруться **ефективні**, як і на карті: власні `sites.latitude/longitude`, а якщо їх
+немає — координати першого розміщеного пристрою цієї точки (з видимих викликачеві). Інакше точка, яку
+`GET /map/devices` намалював, давала б **400** `invalid_site` при спробі додати її в обʼїзд. Точка,
+яку карта намалювати не може, лишається **400** `invalid_site` зі списком `site_ids`.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "order": ["uuid-2", "uuid-1", "uuid-3"],
+    "legs": [{ "from": "uuid-2", "to": "uuid-1", "distance_m": 4120, "duration_s": 540 }],
+    "geometry": { "type": "LineString", "coordinates": [[24.03, 49.84]] },
+    "total_distance_m": 18400,
+    "total_duration_s": 2460,
+    "google_maps_url": "https://www.google.com/maps/dir/?api=1&origin=49.8397,24.0297&destination=..."
+  },
+  "meta": { "optimized": true, "provider": "osrm" }
+}
+```
+
+**Деградація — теж 200.** Коли `OSRM_URL` порожній, сервер у таймауті або віддав не-2xx:
+`order` рахується жадібним «найближчий сусід» по haversine, `total_distance_m` — сума по прямій,
+`legs` і `geometry` — `null`, `total_duration_s` — `null`, `meta.optimized = false`,
+`meta.provider = null`. `google_maps_url` працює завжди — це звичайне посилання, йому не потрібен
+жоден API. UI підписує такий результат як «орієнтовно, без оптимізації за часом у дорозі».
+
+---
+
+## Гео-статистика
+
+### `GET /stats/geo`
+Метрики по країнах / регіонах / містах / точках із деталізацією вглиб.
+
+**Query params:**
+- `group_by=country|region|city|site` (за замовчуванням `country`) — **білий список**; будь-яке інше
+  значення дає 400
+- `from`, `to` — ISO
+- плюс усі фільтри `GET /map/devices`
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "key": "UA",
+      "label": "Україна",
+      "device_count": 310,
+      "online_count": 298,
+      "offline_count": 12,
+      "alarm_count": 4,
+      "alarms_period": 57,
+      "avg_air_temp": -18.2,
+      "uptime_pct": 99.1,
+      "energy_kwh": 12480.5,
+      "service_visits": 8
+    }
+  ],
+  "meta": {
+    "group_by": "country",
+    "from": "2026-07-23T00:00:00Z",
+    "to": "2026-08-23T00:00:00Z",
+    "totals": { "device_count": 310, "alarms_period": 57, "energy_kwh": 12480.5 }
+  }
+}
+```
+
+`energy_kwh` рахується за енергомоделлю фази 13, `service_visits` — записи `service_records` у
+періоді, `alarms_period` — аварії у періоді. Метрика, яку не можна порахувати дешево, повертається як
+`null` — вигаданих нулів немає.
+
+### `GET /stats/geo/export.csv`
+Той самий набір даних у CSV, з тими самими фільтрами і тим самим RBAC.
+
+**Headers:**
+- `Content-Type: text/csv; charset=utf-8`
+- `Content-Disposition: attachment; filename="geo_stats_{group_by}_{from}_{to}.csv"`
+
+Включає UTF-8 BOM для сумісності з Excel, як і решта експортів.
+
+---
+
+## Профіль користувача
+
+`/api/users` змонтований під `authorize('admin')`, тому технік не може відредагувати навіть власний
+профіль через нього. Домашня база персоналу живе на окремому роутері `/api/profile`, доступному
+будь-якому автентифікованому користувачу — **тільки для власного запису**.
+
+### `GET /profile`
+**Повний шлях:** `/api/profile`
+
+**Response 200:**
+```json
+{
+  "data": {
+    "id": "uuid",
+    "email": "tech@example.com",
+    "role": "technician",
+    "base_latitude": 49.8397,
+    "base_longitude": 24.0297,
+    "base_address": "Львів, вул. Городоцька 100"
+  }
+}
+```
+
+### `PATCH /profile`
+Оновити домашню базу. Приймаються **тільки** три поля.
+
+**Body:**
+```json
+{
+  "base_latitude": 49.8397,
+  "base_longitude": 24.0297,
+  "base_address": "Львів, вул. Городоцька 100"
+}
+```
+
+`null` у координатах прибирає базу — користувач зникає з видачі `nearest-technicians`.
+Роль, email і тенант через цей ендпоінт змінити неможливо.
+
+**Response 200:** оновлений профіль тієї ж форми.
+
+---
+
+## Публічна сторінка статусу точки
+
+Найризикованіша частина гео-функціоналу: помилка тут публічно оприлюднює дані тенанта. Тому роутер
+змонтований під `/api/public` **вище** `app.use('/api', authenticate)` — Express виконує middleware у
+порядку реєстрації, тож перенесення цього рядка нижче зламає тест, а не поверне 401.
+
+### `GET /api/public/site`
+Публічний read-only статус однієї точки. **Без автентифікації.**
+
+**Headers:** `X-Site-Token: <raw token>`
+
+Токен передається заголовком, а не сегментом шляху: nginx пише повний шлях в `access.log`, а це
+довгоживучі облікові дані на сторінку статусу тенанта. Посилання для людини лишається
+`https://modesp.com.ua/#/public/site/<token>` — фрагмент URL браузер на сервер не надсилає, тож токен
+не потрапляє ні в серверні логи, ні в `Referer`.
+
+**Rate limit:** 30 запитів / 5 хв на IP (власний лімітер, не спільний з `/api`).
+
+**Response 200:**
+```json
+{
+  "data": {
+    "name": "АТБ №142",
+    "city": "Львів",
+    "region": "Львівська область",
+    "country": "Україна",
+    "devices": [
+      { "name": "Камера №1", "online": true, "air_temp": -18.4, "alarm_active": false },
+      { "name": "#2", "online": false, "air_temp": null, "alarm_active": false }
+    ],
+    "device_count": 2,
+    "online_count": 1,
+    "alarm_count": 0,
+    "generated_at": "2026-08-23T10:15:00.000Z"
+  }
+}
+```
+
+**Свідоме відхилення від SPEC §7.7.** Специфікація перелічує «лише name / city / region / country
+і на пристрій `{ name, online, air_temp, alarm_active }`». Реалізація додає ще чотири поля:
+`device_count`, `online_count`, `alarm_count` рахуються на сервері з масиву `devices`, який і так
+у тілі відповіді, тож нової інформації вони не розкривають (сторінка просто не мусить рахувати їх
+у браузері), а `generated_at` — це годинник сервера. Жодне з них не є даними тенанта.
+
+**Що у відповіді немає ніколи:** `mqtt_device_id`, серійні номери, будь-які UUID, slug тенанта, версія
+прошивки, дані користувачів і координати точніші за місто. Назва пристрою рахується на сервері як `name`
+або `'#' + номер_рядка` — підстановка `mqtt_device_id` як fallback (загальноприйнята в решті кодової бази)
+тут заборонена. Показуються тільки пристрої зі `status = 'active'`: м'яко видалені зберігають `site_id`
+і живуть ще 7 днів, очікуючі теж існують — обидві категорії відсіюються.
+
+**404 — однаково для трьох різних причин:** токена не існує, токен відкликаний, токен прострочений.
+
+```json
+{ "error": "not_found", "message": "Not found", "status": 404 }
+```
+
+Ні `WWW-Authenticate`, ні відмінного повідомлення: підтверджувати, що токен колись існував, не можна.
+Кожен успішний перегляд інкрементує `view_count` і `last_viewed`.
+
+---
+
 ## Користувачі (тільки admin)
 
 ### `GET /users`
@@ -663,23 +1468,72 @@ Bulk-заміна списку пристроїв користувача (вид
 
 **Response 200:** Array of remaining tenants.
 
+Разом із членством видаляються **всі гранти на точки цього тенанта** (`user_sites`) — інакше вони
+пережили б видалення членства і знову ожили б при повторному додаванні користувача.
+
+### `GET /users/:id/sites`
+Точки, до яких користувач має доступ.
+
+**Ролі:** admin
+
+**Response 200:**
+```json
+{
+  "data": [
+    { "id": "uuid", "name": "АТБ №142", "city": "Львів", "device_count": 10,
+      "granted_at": "2026-08-23T09:00:00Z" }
+  ]
+}
+```
+
+### `POST /users/:id/sites`
+Надати доступ до всіх пристроїв точки.
+
+**Ролі:** admin
+
+```json
+{ "site_id": "uuid" }
+```
+
+Точка перевіряється на приналежність тенанту **цільового користувача**, а не тенанту адміна: інакше
+superadmin, що діє в тенанті A, видав би користувачу тенанта B доступ до чужої точки. Чужа точка →
+**400** `invalid_site`. Дія пишеться в аудит.
+
+### `DELETE /users/:id/sites/:siteId`
+Відкликати доступ до точки.
+
+**Ролі:** admin
+
 ---
 
-## Per-Device RBAC (Phase 7a)
+## Per-Device RBAC (Phase 7a) + Per-Site RBAC (Phase 14)
 
-Всі ендпоінти пристроїв тепер перевіряють per-device доступ:
+Всі ендпоінти пристроїв перевіряють доступ до конкретного пристрою:
 
 **Правила:**
 - `superadmin` — бачить всі пристрої всіх тенантів, cross-tenant bypass
 - `admin` — бачить всі пристрої свого тенанту, без обмежень
-- `technician` / `viewer` — бачить тільки пристрої з таблиці `user_devices`
+- `technician` / `viewer` — бачить `user_devices` **∪** пристрої точок з `user_sites`
 - `AUTH_ENABLED=false` — всі перевірки вимкнені (backward compatible)
 
+**Об'єднання двох джерел доступу (з фази 14).** Грант на точку («АТБ №142») дає доступ до всіх
+пристроїв цієї точки, включно з доданими пізніше. Гранти зберігаються в `user_sites` і завжди несуть
+власний `tenant_id`, тому грант, отриманий у тенанті B, **нічого не дає** під час роботи в тенанті A —
+це важливо, бо один користувач може належати кільком тенантам і перемикатися між ними без
+перелогіну. Порожній набір доступу означає «жодного пристрою», а не «без обмежень».
+
+Межа набору доступу — 5000 пристроїв (підвищено з 500 у фазі 14: одна точка мережі магазинів легко
+дає сотні пристроїв). При досягненні межі набір детерміновано обрізається і в лог пишеться
+попередження — авторизаційний набір не обрізається мовчки.
+
 **List endpoints** (використовують `filterDeviceAccess`):
-- `GET /devices` — фільтрує по user_devices
+- `GET /devices` — фільтрує по набору доступу
 - `GET /alarms` — фільтрує по device_id
 - `GET /alarms/stats` — фільтрує по device_id
-- `GET /fleet/summary` — рахує тільки assigned devices
+- `GET /fleet/summary` — рахує тільки доступні devices
+- `GET /sites`, `GET /sites/:id` — точка без жодного видимого пристрою не показується
+- `GET /map/devices`, `GET /map/filters`, `GET /map/alarm-heatmap`, `POST /map/route`
+- `GET /stats/geo`, `GET /stats/geo/export.csv`
 
 **Single-device endpoints** (використовують `checkDeviceAccess`):
 - `GET /devices/:id` — 403 якщо немає доступу
@@ -1228,3 +2082,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-03-15 — Phase 11: Events API (GET /devices/:id/events), HACCP Export (CSV telemetry/devices/alarms + PDF report), severity filter on GET /alarms (?severity=critical,warning), rate-limited export endpoints (10/min/user).
 - 2026-03-24 — Phase 13: Device Models CRUD (GET/POST/PATCH/DELETE /device-models), Energy summary (GET /devices/:id/energy/summary), PATCH /devices/:id accepts model_id and power_overrides.
 - 2026-03-31 — Device map: devices отримали latitude/longitude (migration 018); GET /devices, GET /devices/:id повертають координати; PATCH /devices/:id приймає latitude/longitude (null = прибрати з карти).
+- 2026-08-23 — Phase 14 (Sites & Geo): Sites CRUD (`/sites`) з геокодуванням, погодою, найближчими техніками та публічними посиланнями; геокодер-проксі (`/geo/search`, `/geo/reverse`); карта (`/map/devices`, `/map/filters`, `/map/alarm-heatmap`, `/map/isochrones`, `POST /map/route`); гео-статистика (`/stats/geo` + `export.csv`); профіль з домашньою базою (`/profile`); гранти на точки (`/users/:id/sites`); неавтентифікована публічна сторінка статусу (`/api/public/site` + заголовок `X-Site-Token`); `site_id` у PATCH /devices/:id і `site_*` поля у видачі пристроїв; нові колонки CSV-імпорту; окремий rate limiter 30/хв на користувача для ендпоінтів із зовнішніми сервісами.

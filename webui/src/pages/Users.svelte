@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink, generatePasswordReset } from '../lib/api.js'
+  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink, generatePasswordReset, getSites, getUserSites, grantUserSite, revokeUserSite } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -155,7 +155,14 @@
     if (e.key === 'Escape') closeModal()
   }
 
-  // ── Device assignment modal ──
+  // ── Access modal: devices + site grants ──
+  //
+  // Two grant kinds live in one modal because a user's accessible device set is
+  // `user_devices ∪ user_sites` — showing them apart would let an admin revoke a
+  // device checkbox and believe access was gone while a site grant still carried
+  // it. Both are STAGED: the modal mutates two Sets and applies everything in
+  // saveDevices(), so Cancel discards both. Per-item POST/DELETE for the sites
+  // would give one modal two Save semantics.
   let showDevices = false
   let deviceUser = null
   let allDevices = []
@@ -164,31 +171,67 @@
   let devicesSaving = false
   let deviceSearch = ''
 
+  // Site grants (user_sites)
+  let assignTab = 'devices'      // 'devices' | 'sites'
+  let allSites = []
+  let grantedSiteIds = new Set()
+  let initialSiteIds = new Set() // the set loaded from the server — the diff base
+  let siteSearch = ''
+  /** True when /api/sites or the grant list could not be read. */
+  let sitesUnavailable = false
+
   $: filteredDevices = deviceSearch
     ? allDevices.filter(d => {
         const q = deviceSearch.toLowerCase()
         return (d.name || '').toLowerCase().includes(q) ||
           (d.mqtt_device_id || '').toLowerCase().includes(q) ||
           (d.location || '').toLowerCase().includes(q) ||
+          (d.site_name || '').toLowerCase().includes(q) ||
           (d.model || '').toLowerCase().includes(q)
       })
     : allDevices
+
+  $: filteredSites = siteSearch
+    ? allSites.filter(s => {
+        const q = siteSearch.toLowerCase()
+        return (s.name || '').toLowerCase().includes(q) ||
+          (s.city || '').toLowerCase().includes(q) ||
+          (s.region || '').toLowerCase().includes(q) ||
+          (s.address_line || '').toLowerCase().includes(q)
+      })
+    : allSites
 
   async function openDevices(user) {
     deviceUser = user
     devicesLoading = true
     showDevices = true
     deviceSearch = ''
+    siteSearch = ''
+    assignTab = 'devices'
+    allSites = []
+    grantedSiteIds = new Set()
+    initialSiteIds = new Set()
+    sitesUnavailable = false
     try {
-      // Superadmin: scope devices to target user's tenant
+      // Superadmin: scope devices AND sites to the target user's tenant. A grant
+      // is validated against that tenant server-side, so offering a site from
+      // anywhere else could only produce a 400.
       const devParams = $isSuperAdmin && user.tenant_id ? { tenant_id: user.tenant_id } : {}
-      const [devs, assigned] = await Promise.all([
+      const [devs, assigned, sites, granted] = await Promise.all([
         getDevices(devParams),
         getUserDevices(user.id),
+        // The site half must never take the device half down with it — this modal
+        // is the only way to assign devices at all.
+        getSites(devParams).catch(() => null),
+        getUserSites(user.id).catch(() => null),
       ])
       allDevices = (devs?.data || devs || []).filter(d => d.status === 'active')
       const ids = (assigned || []).map(d => d.id)
       assignedIds = new Set(ids)
+      sitesUnavailable = sites === null || granted === null
+      allSites = sites || []
+      initialSiteIds = new Set((granted || []).map(s => s.id))
+      grantedSiteIds = new Set(initialSiteIds)
     } catch (e) {
       toast.error(e.message)
       showDevices = false
@@ -207,22 +250,65 @@
     assignedIds = assignedIds  // trigger reactivity
   }
 
+  function toggleSite(siteId) {
+    grantedSiteIds = new Set(grantedSiteIds)
+    if (grantedSiteIds.has(siteId)) {
+      grantedSiteIds.delete(siteId)
+    } else {
+      grantedSiteIds.add(siteId)
+    }
+    grantedSiteIds = grantedSiteIds  // trigger reactivity
+  }
+
   function selectAll() {
-    assignedIds = new Set(allDevices.map(d => d.id))
+    if (assignTab === 'sites') {
+      grantedSiteIds = new Set(allSites.map(s => s.id))
+    } else {
+      assignedIds = new Set(allDevices.map(d => d.id))
+    }
   }
 
   function selectNone() {
-    assignedIds = new Set()
+    if (assignTab === 'sites') {
+      grantedSiteIds = new Set()
+    } else {
+      assignedIds = new Set()
+    }
+  }
+
+  /** Re-read the grants so a partial apply cannot look like a clean save. */
+  async function reloadSiteGrants() {
+    if (!deviceUser) return
+    try {
+      const granted = await getUserSites(deviceUser.id)
+      initialSiteIds = new Set((granted || []).map(s => s.id))
+      grantedSiteIds = new Set(initialSiteIds)
+    } catch { /* the caller already surfaced the failure */ }
   }
 
   async function saveDevices() {
     devicesSaving = true
     try {
       await setUserDevices(deviceUser.id, [...assignedIds])
-      toast.success($t('users.devices_updated'))
+
+      // Site grants are per-item on the wire; the diff is what makes them behave
+      // like the device list next to them. With the grant list unread, the diff
+      // base is unknown — applying it would revoke grants nobody touched.
+      const toGrant  = sitesUnavailable ? [] : [...grantedSiteIds].filter(id => !initialSiteIds.has(id))
+      const toRevoke = sitesUnavailable ? [] : [...initialSiteIds].filter(id => !grantedSiteIds.has(id))
+      for (const siteId of toGrant)  await grantUserSite(deviceUser.id, siteId)
+      for (const siteId of toRevoke) await revokeUserSite(deviceUser.id, siteId)
+
+      toast.success(toGrant.length || toRevoke.length
+        ? $t('users.access_updated')
+        : $t('users.devices_updated'))
       showDevices = false
+      // A site grant changes what the device checkboxes mean, so the row data
+      // behind them is re-read rather than left stale.
+      await loadUsers()
     } catch (e) {
       toast.error(e.message)
+      await reloadSiteGrants()
     } finally {
       devicesSaving = false
     }
@@ -231,6 +317,85 @@
   function closeDevicesModal() {
     showDevices = false
     deviceUser = null
+  }
+
+  // ── Technician home base (Part 2 §7.4) ──
+  //
+  // `GET /api/sites/:id/nearest-technicians` ranks staff by the distance from
+  // this point, so a half-set base would put the technician on the prime
+  // meridian: latitude and longitude are always written — or cleared — together.
+  let showBase = false
+  let baseUser = null
+  let basePoint = null      // { latitude, longitude, display_name } — AddressPicker mode="point"
+  let baseSaving = false
+
+  function openBase(user) {
+    baseUser = user
+    basePoint = {
+      latitude:  user.base_latitude ?? null,
+      longitude: user.base_longitude ?? null,
+      display_name: user.base_address || '',
+    }
+    showBase = true
+  }
+
+  function closeBaseModal() {
+    showBase = false
+    baseUser = null
+    basePoint = null
+  }
+
+  function handleBaseBackdropClick(e) {
+    if (e.target === e.currentTarget) closeBaseModal()
+  }
+
+  function handleBaseKey(e) {
+    if (e.key === 'Escape') closeBaseModal()
+  }
+
+  $: baseHasPoint = !!basePoint
+    && basePoint.latitude !== null && basePoint.latitude !== undefined && basePoint.latitude !== ''
+    && basePoint.longitude !== null && basePoint.longitude !== undefined && basePoint.longitude !== ''
+
+  async function saveBase() {
+    if (!baseHasPoint) {
+      toast.warning($t('users.base_needs_point'))
+      return
+    }
+    baseSaving = true
+    try {
+      const address = (basePoint.display_name || '').trim()
+      await updateUser(baseUser.id, {
+        base_latitude:  Number(basePoint.latitude),
+        base_longitude: Number(basePoint.longitude),
+        base_address:   address ? address.slice(0, 256) : null,
+      })
+      toast.success($t('users.base_saved'))
+      closeBaseModal()
+      await loadUsers()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      baseSaving = false
+    }
+  }
+
+  async function clearBase() {
+    baseSaving = true
+    try {
+      await updateUser(baseUser.id, {
+        base_latitude: null,
+        base_longitude: null,
+        base_address: null,
+      })
+      toast.success($t('users.base_cleared'))
+      closeBaseModal()
+      await loadUsers()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      baseSaving = false
+    }
   }
 
   function handleDevicesBackdropClick(e) {
@@ -489,10 +654,22 @@
                     <Icon name="edit" size={13} />
                   </Button>
                 {/if}
-                <!-- Device assignment: only for technician/viewer (admin/superadmin see all) -->
+                <!-- Device + site access: only for technician/viewer (admin/superadmin see all) -->
                 {#if user.role !== 'admin' && user.role !== 'superadmin'}
-                  <Button variant="secondary" size="sm" on:click={() => openDevices(user)} aria-label="{$t('users.devices')} {user.email}">
+                  <Button variant="secondary" size="sm" on:click={() => openDevices(user)} aria-label="{$t('users.manage_access')} {user.email}" title={$t('users.manage_access')}>
                     <Icon name="cpu" size={13} />
+                  </Button>
+                {/if}
+                <!-- Home base: nearest-technicians ranks exactly technician + admin -->
+                {#if user.role === 'technician' || user.role === 'admin'}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    on:click={() => openBase(user)}
+                    aria-label="{$t('users.base_location')} {user.email}"
+                    title={user.base_address || (user.base_latitude != null ? $t('users.base_location') : $t('users.base_not_set'))}
+                  >
+                    <Icon name="map-pin" size={13} />
                   </Button>
                 {/if}
                 <!-- Manage tenants (superadmin only, not for superadmin users) -->
@@ -538,7 +715,7 @@
     <div class="modal">
       <div class="modal-header">
         <h3 id="create-user-title">{$t('users.create_user')}</h3>
-        <button class="modal-close" on:click={closeModal} aria-label="Close dialog">
+        <button class="modal-close" on:click={closeModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -603,17 +780,17 @@
   </div>
 {/if}
 
-<!-- Device Assignment Modal -->
+<!-- Access Modal: per-device assignment + site grants (staged, one Save) -->
 {#if showDevices}
   <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <div class="modal-backdrop" on:click={handleDevicesBackdropClick} on:keydown={handleDevicesKey} role="dialog" aria-modal="true" aria-labelledby="devices-modal-title" tabindex="-1">
     <div class="modal modal-devices">
       <div class="modal-header">
         <div class="modal-title-group">
-          <h3 id="devices-modal-title">{$t('users.assign_devices')}</h3>
+          <h3 id="devices-modal-title">{$t('users.manage_access')}</h3>
           <span class="modal-subtitle">{deviceUser?.email}</span>
         </div>
-        <button class="modal-close" on:click={closeDevicesModal} aria-label="Close dialog">
+        <button class="modal-close" on:click={closeDevicesModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -622,58 +799,196 @@
         {#if devicesLoading}
           <Skeleton height="200px" />
         {:else}
-          <!-- Search -->
-          <div class="device-search">
-            <Icon name="search" size={14} />
-            <input
-              type="text"
-              bind:value={deviceSearch}
-              placeholder={$t('users.search_devices')}
-              class="input device-search-input"
-            />
+          <!-- Access kind -->
+          <div class="access-tabs" role="tablist" aria-label={$t('users.manage_access')}>
+            <button
+              class="access-tab"
+              class:active={assignTab === 'devices'}
+              role="tab"
+              aria-selected={assignTab === 'devices'}
+              on:click={() => assignTab = 'devices'}
+            >
+              <Icon name="cpu" size={13} />
+              <span>{$t('users.devices')}</span>
+              <span class="access-tab-count">{assignedIds.size}</span>
+            </button>
+            <button
+              class="access-tab"
+              class:active={assignTab === 'sites'}
+              role="tab"
+              aria-selected={assignTab === 'sites'}
+              on:click={() => assignTab = 'sites'}
+            >
+              <Icon name="map-pin" size={13} />
+              <span>{$t('users.sites')}</span>
+              <span class="access-tab-count">{grantedSiteIds.size}</span>
+            </button>
           </div>
 
-          <!-- Bulk actions -->
-          <div class="device-bulk-actions">
-            <button class="link-btn" on:click={selectAll}>{$t('users.select_all')}</button>
-            <span class="sep">|</span>
-            <button class="link-btn" on:click={selectNone}>{$t('users.select_none')}</button>
-            <span class="device-count">{assignedIds.size} / {allDevices.length}</span>
-          </div>
+          <p class="field-hint">
+            {assignTab === 'sites' ? $t('users.site_grants_hint') : $t('users.device_grants_hint')}
+          </p>
 
-          <!-- Device list -->
-          <div class="device-checklist">
-            {#if filteredDevices.length === 0}
-              <div class="device-empty">{$t('users.no_devices_found')}</div>
-            {:else}
-              {#each filteredDevices as device (device.id)}
-                <label class="device-check-item" class:checked={assignedIds.has(device.id)}>
-                  <input
-                    type="checkbox"
-                    checked={assignedIds.has(device.id)}
-                    on:change={() => toggleDevice(device.id)}
-                  />
-                  <div class="device-check-info">
-                    <span class="device-check-name">{device.name || device.mqtt_device_id}</span>
-                    {#if device.name}
-                      <span class="device-check-id">{device.mqtt_device_id}</span>
-                    {/if}
-                    {#if device.location}
-                      <span class="device-check-location">{device.location}</span>
-                    {/if}
-                    {#if device.model}
-                      <span class="device-check-model">{device.model}</span>
-                    {/if}
-                  </div>
-                </label>
-              {/each}
-            {/if}
-          </div>
+          {#if assignTab === 'devices'}
+            <!-- Search -->
+            <div class="device-search">
+              <Icon name="search" size={14} />
+              <input
+                type="text"
+                bind:value={deviceSearch}
+                placeholder={$t('users.search_devices')}
+                class="input device-search-input"
+              />
+            </div>
+
+            <!-- Bulk actions -->
+            <div class="device-bulk-actions">
+              <button class="link-btn" on:click={selectAll}>{$t('users.select_all')}</button>
+              <span class="sep">|</span>
+              <button class="link-btn" on:click={selectNone}>{$t('users.select_none')}</button>
+              <span class="device-count">{assignedIds.size} / {allDevices.length}</span>
+            </div>
+
+            <!-- Device list -->
+            <div class="device-checklist">
+              {#if filteredDevices.length === 0}
+                <div class="device-empty">{$t('users.no_devices_found')}</div>
+              {:else}
+                {#each filteredDevices as device (device.id)}
+                  <label class="device-check-item" class:checked={assignedIds.has(device.id)}>
+                    <input
+                      type="checkbox"
+                      checked={assignedIds.has(device.id)}
+                      on:change={() => toggleDevice(device.id)}
+                    />
+                    <div class="device-check-info">
+                      <span class="device-check-name">{device.name || device.mqtt_device_id}</span>
+                      {#if device.name}
+                        <span class="device-check-id">{device.mqtt_device_id}</span>
+                      {/if}
+                      <!-- `location` is the spot inside the site ("Зал, ряд 3"); after the
+                           backfill it can equal the site name, so it is shown only when it
+                           actually adds something. -->
+                      {#if device.location && device.location !== device.site_name}
+                        <span class="device-check-location">{device.location}</span>
+                      {/if}
+                      {#if device.site_name}
+                        <span class="device-check-site">
+                          <Icon name="map-pin" size={11} />
+                          {device.site_name}
+                        </span>
+                      {/if}
+                      {#if device.model}
+                        <span class="device-check-model">{device.model}</span>
+                      {/if}
+                    </div>
+                  </label>
+                {/each}
+              {/if}
+            </div>
+          {:else if sitesUnavailable}
+            <div class="device-empty">{$t('site.load_error')}</div>
+          {:else}
+            <!-- Search -->
+            <div class="device-search">
+              <Icon name="search" size={14} />
+              <input
+                type="text"
+                bind:value={siteSearch}
+                placeholder={$t('users.search_sites')}
+                class="input device-search-input"
+              />
+            </div>
+
+            <!-- Bulk actions -->
+            <div class="device-bulk-actions">
+              <button class="link-btn" on:click={selectAll}>{$t('users.select_all')}</button>
+              <span class="sep">|</span>
+              <button class="link-btn" on:click={selectNone}>{$t('users.select_none')}</button>
+              <span class="device-count">{grantedSiteIds.size} / {allSites.length}</span>
+            </div>
+
+            <!-- Site list -->
+            <div class="device-checklist">
+              {#if filteredSites.length === 0}
+                <div class="device-empty">{$t('users.no_sites_found')}</div>
+              {:else}
+                {#each filteredSites as site (site.id)}
+                  <label class="device-check-item" class:checked={grantedSiteIds.has(site.id)}>
+                    <input
+                      type="checkbox"
+                      checked={grantedSiteIds.has(site.id)}
+                      on:change={() => toggleSite(site.id)}
+                    />
+                    <div class="device-check-info">
+                      <span class="device-check-name">{site.name}</span>
+                      {#if site.city}
+                        <span class="device-check-location">{site.city}</span>
+                      {/if}
+                      {#if site.region}
+                        <span class="device-check-id">{site.region}</span>
+                      {/if}
+                      <span class="device-check-model">
+                        {$t('users.site_devices', site.device_count ?? 0)}
+                      </span>
+                    </div>
+                  </label>
+                {/each}
+              {/if}
+            </div>
+          {/if}
         {/if}
 
         <div class="modal-actions">
           <Button variant="secondary" on:click={closeDevicesModal}>{$t('common.cancel')}</Button>
           <Button variant="primary" loading={devicesSaving} on:click={saveDevices} icon="check">{$t('common.save')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Home Base Modal (Part 2 §7.4) -->
+{#if showBase}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={handleBaseBackdropClick} on:keydown={handleBaseKey} role="dialog" aria-modal="true" aria-labelledby="base-modal-title" tabindex="-1">
+    <div class="modal modal-base">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="base-modal-title">{$t('users.base_location_title')}</h3>
+          <span class="modal-subtitle">{baseUser?.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeBaseModal} aria-label={$t('common.close')}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">{$t('users.base_location_hint')}</p>
+
+        <!--
+          Lazily imported: AddressPicker pulls in MapCanvas and therefore Leaflet.
+          A static import here would drag ~150 KB into the entry chunk that every
+          user downloads on every page.
+        -->
+        {#await import('../components/map/AddressPicker.svelte')}
+          <Skeleton height="300px" />
+        {:then { default: AddressPicker }}
+          <AddressPicker mode="point" bind:value={basePoint} disabled={baseSaving} height="240px" />
+        {:catch}
+          <div class="device-empty">{$t('users.base_picker_failed')}</div>
+        {/await}
+
+        <div class="modal-actions base-actions">
+          <!-- Disabled, not hidden, when there is nothing to clear: the button
+               stays in the same place whether or not a base is set. -->
+          <Button
+            variant="secondary"
+            disabled={baseSaving || (baseUser?.base_latitude == null && baseUser?.base_longitude == null)}
+            on:click={clearBase}
+          >{$t('users.clear_base')}</Button>
+          <span class="base-spacer" />
+          <Button variant="secondary" on:click={closeBaseModal}>{$t('common.cancel')}</Button>
+          <Button variant="primary" loading={baseSaving} disabled={!baseHasPoint} on:click={saveBase} icon="check">{$t('common.save')}</Button>
         </div>
       </div>
     </div>
@@ -690,7 +1005,7 @@
           <h3 id="tenant-modal-title">{$t('users.manage_tenants')}</h3>
           <span class="modal-subtitle">{tenantUser?.email}</span>
         </div>
-        <button class="modal-close" on:click={closeTenantModal} aria-label="Close dialog">
+        <button class="modal-close" on:click={closeTenantModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -751,7 +1066,7 @@
           <h3 id="telegram-modal-title">{$t('users.telegram_link_title')}</h3>
           <span class="modal-subtitle">{telegramLinkUser?.email}</span>
         </div>
-        <button class="modal-close" on:click={closeTelegramModal} aria-label="Close dialog">
+        <button class="modal-close" on:click={closeTelegramModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -783,7 +1098,7 @@
           <h3 id="reset-modal-title">{$t('users.reset_password_title')}</h3>
           <span class="modal-subtitle">{resetUser?.email}</span>
         </div>
-        <button class="modal-close" on:click={closeResetModal} aria-label="Close dialog">
+        <button class="modal-close" on:click={closeResetModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
@@ -853,7 +1168,8 @@
   .th-telegram { width: 90px; }
   .th-created { width: 100px; }
   .th-login   { width: 100px; }
-  .th-actions { width: 140px; text-align: right; }
+  /* Wide enough for the home-base button added alongside the existing actions. */
+  .th-actions { width: 172px; text-align: right; }
 
   /* User rows */
   .user-list {
@@ -902,7 +1218,7 @@
   .cell-telegram { width: 90px; }
   .cell-created { width: 100px; }
   .cell-login   { width: 100px; }
-  .cell-actions { width: 140px; justify-content: flex-end; gap: var(--space-1); }
+  .cell-actions { width: 172px; justify-content: flex-end; gap: var(--space-1); }
 
   .tenant-name {
     font-size: var(--text-xs);
@@ -1212,6 +1528,79 @@
     color: var(--text-muted);
     margin-left: auto;
     flex-shrink: 0;
+  }
+
+  .device-check-site {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: var(--text-xs);
+    color: var(--accent-blue);
+    flex-shrink: 0;
+  }
+
+  /* Access modal: devices ↔ sites */
+  .access-tabs {
+    display: flex;
+    gap: var(--space-1);
+    padding: 3px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+  }
+
+  .access-tab {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .access-tab:hover {
+    color: var(--text-primary);
+  }
+
+  .access-tab.active {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
+  }
+
+  .access-tab-count {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+  }
+
+  .access-tab.active .access-tab-count {
+    color: var(--accent-blue);
+  }
+
+  /* Home base modal */
+  .modal-base {
+    max-width: 560px;
+  }
+
+  .base-actions {
+    align-items: center;
+  }
+
+  .base-spacer {
+    flex: 1;
   }
 
   /* Tenant badges */
