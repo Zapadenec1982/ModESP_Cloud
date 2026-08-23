@@ -83,11 +83,18 @@ const STARTUP_GRACE_MS = 120_000; // 2 min — ignore stuck detection while rece
 // ── Public API ────────────────────────────────────────────
 
 /**
+ * Inject the logger. start() calls this; tests call it directly so the module
+ * can be driven without opening an MQTT connection.
+ * @param {import('pino').Logger} log
+ */
+function setLogger(log) { logger = log; }
+
+/**
  * Start the MQTT service.
  * @param {import('pino').Logger} log
  */
 async function start(log) {
-  logger = log;
+  setLogger(log);
   startupTime = Date.now();
 
   // Pre-hash bootstrap password at startup (one-time cost)
@@ -1778,11 +1785,13 @@ function clearRetainedForTenant(tenantSlug, deviceId) {
 function getBootstrapHash() { return BOOTSTRAP_HASH; }
 
 module.exports = {
-  start, shutdown, isConnected,
+  start, setLogger, shutdown, isConnected,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
   getBootstrapHash, recordAssign, clearPendingRetained, setPendingTenantHint,
+  // Event-buffer internals — exported for test/mqtt-events.test.js
+  insertEvent, flushEvents,
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),
