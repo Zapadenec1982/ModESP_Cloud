@@ -468,6 +468,8 @@ export default {
     off: 'OFF',
     location: 'Location',
     alarm_badge: 'ALARM',
+    door_open: 'Door open',
+    door_closed: 'Door closed',
     read_device: 'Read from device',
     send: 'Send',
     no_params: 'No parameters available',
@@ -994,6 +996,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    door_periods: 'Door openings',
+    door_truncated: 'Showing only the most recent openings — too many for this period',
     load_failed: 'Failed to load chart data',
     retry: 'Retry',
     outdoor_series: 'Outdoor',

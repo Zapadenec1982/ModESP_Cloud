@@ -468,6 +468,8 @@ export default {
     off: 'WYŁ',
     location: 'Lokalizacja',
     alarm_badge: 'ALARM',
+    door_open: 'Drzwi otwarte',
+    door_closed: 'Drzwi zamknięte',
     read_device: 'Odczytaj z urządzenia',
     send: 'Wyślij',
     no_params: 'Brak dostępnych parametrów',
@@ -994,6 +996,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Offline',
+    door_periods: 'Otwarcia drzwi',
+    door_truncated: 'Pokazano tylko najnowsze otwarcia — zbyt wiele dla tego okresu',
     load_failed: 'Nie udało się załadować danych wykresu',
     retry: 'Ponów',
     outdoor_series: 'Na zewnątrz',

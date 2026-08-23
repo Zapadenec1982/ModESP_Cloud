@@ -468,6 +468,8 @@ export default {
     off: 'Вимк',
     location: 'Локація',
     alarm_badge: 'АВАРІЯ',
+    door_open: 'Двері відчинені',
+    door_closed: 'Двері зачинені',
     read_device: 'Зчитати з пристрою',
     send: 'Надіслати',
     no_params: 'Параметри недоступні',
@@ -979,6 +981,8 @@ export default {
   // ── Chart ──
   chart: {
     offline_periods: 'Офлайн',
+    door_periods: 'Відчинення дверей',
+    door_truncated: 'Показано лише останні відчинення — для цього періоду їх забагато',
     load_failed: 'Не вдалося завантажити дані графіка',
     retry: 'Повторити',
     outdoor_series: 'Надворі',

@@ -44,9 +44,13 @@ const ALARM_KEYS = new Set([
 ]);
 
 // Event-transition keys
+// Names match BACKFILL_EVENT_NAMES so live and firmware-backfilled events unify.
+// Door is tracked here rather than as a telemetry channel: the sampler runs every
+// TELEMETRY_INTERVAL (5 min by default), which would miss most door openings.
 const EVENT_KEYS = {
   'equipment.compressor': { on: 'compressor_on', off: 'compressor_off' },
   'defrost.active':       { on: 'defrost_start', off: 'defrost_end' },
+  'equipment.door_open':  { on: 'door_open',     off: 'door_close' },
 };
 
 // ── In-memory registries ──────────────────────────────────

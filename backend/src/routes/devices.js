@@ -146,6 +146,8 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
         last_seen:    meta ? new Date(meta.lastSeen).toISOString() : row.last_seen,
         alarm_active: live ? !!live['protection.alarm_active'] : false,
         air_temp:     live ? live['equipment.air_temp'] ?? null : null,
+        // null = device never published the key (older firmware) — UI hides the indicator
+        door_open:    live ? live['equipment.door_open'] ?? null : null,
       };
     });
 

@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte'
   import { navigate } from '../../lib/stores.js'
   import { timeAgo } from '../../lib/format.js'
+  import { t } from '../../lib/i18n.js'
   import StatusDot from '../ui/StatusDot.svelte'
   import Icon from '../ui/Icon.svelte'
 
@@ -53,6 +54,11 @@
   </div>
   <div class="cell cell-id font-mono">{device.mqtt_device_id}</div>
   <div class="cell cell-seen">{timeAgo(device.last_seen)}</div>
+  {#if device.door_open}
+    <div class="cell cell-door" title={$t('device.door_open')}>
+      <Icon name="door-open" size={14} />
+    </div>
+  {/if}
   {#if device.alarm_active}
     <div class="cell cell-alarm">
       <Icon name="alert-triangle" size={14} />
@@ -163,6 +169,11 @@
     width: 20px;
     color: var(--accent-red);
     animation: pulse 2s ease-in-out infinite;
+  }
+
+  .cell-door {
+    width: 20px;
+    color: var(--accent-yellow);
   }
 
   .truncate {
