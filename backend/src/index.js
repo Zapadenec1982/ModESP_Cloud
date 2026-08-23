@@ -16,7 +16,11 @@ const pushSvc     = require('./services/push');
 const telegramSvc = require('./services/telegram');
 const fcmSvc      = require('./services/fcm');
 const webpushSvc  = require('./services/webpush');
+const emailSvc    = require('./services/email');
 const otaSvc      = require('./services/ota');
+const geocodeSvc  = require('./services/geocode');
+const weatherSvc  = require('./services/weather');
+const routingSvc  = require('./services/routing');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize, requireSuperadmin } = require('./middleware/auth');
 const createAuditMiddleware = require('./middleware/audit');
@@ -39,6 +43,30 @@ if (AUTH_ENABLED) {
     process.exit(1);
   }
 }
+
+// ── Third-party licensing reminder ────────────────────────
+// Nominatim, Open-Meteo, the OSRM demo server and OpenRouteService are all free for
+// NON-COMMERCIAL use only. ModESP Cloud is a commercial product, so every enabled
+// service needs a paid plan or a self-hosted instance before production.
+// Warn only — never process.exit: breaking a running production system over a
+// licensing note would be worse than the note being missed.
+function logThirdPartyLicensing() {
+  const enabled = [];
+  if (geocodeSvc.isEnabled())         enabled.push('Nominatim (geocoding)');
+  if (weatherSvc.isEnabled())         enabled.push('Open-Meteo (outdoor weather, site timezones)');
+  if (routingSvc.isEnabled())         enabled.push('OSRM (route / service-round planning)');
+  if (routingSvc.isochronesEnabled()) enabled.push('OpenRouteService (isochrones)');
+  if (enabled.length === 0) return;
+
+  const message = 'Third-party geo services are enabled under free / non-commercial terms — '
+    + 'buy a plan or self-host before production. See docs/THIRD_PARTY_LICENSING.md';
+  if (process.env.NODE_ENV === 'production') {
+    logger.warn({ services: enabled }, message);
+  } else {
+    logger.info({ services: enabled }, message);
+  }
+}
+logThirdPartyLicensing();
 
 // ── Express ───────────────────────────────────────────
 const app    = express();
@@ -84,12 +112,41 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
 });
+// Device self-registration. The endpoint is already gated by MQTT_BOOTSTRAP_PASSWORD
+// (timing-safe compare), so this limiter is not the primary gate — its job is to stop
+// someone brute-forcing that bootstrap key. Counting SUCCESSFUL registrations was
+// therefore protecting nothing while breaking the legitimate case: one commissioning
+// site is one IP, and a store with 40 cabinets — or a test bench bringing up a whole
+// fleet — hit the wall long before finishing. skipSuccessfulRequests inverts that:
+// the budget is spent only on failures, so key-guessing is throttled harder than
+// before (30 wrong keys per IP per hour) while a valid key can register any number
+// of distinct devices.
 const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 30,                    // 30 per IP
+  max: 30,                    // 30 FAILED attempts per IP
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
+});
+// Public site status page — unauthenticated, so the only key available is the IP
+const publicLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,  // 5 min
+  max: 30,                    // 30 views per IP per 5 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
+});
+// Routes that reach a third party (Nominatim / Open-Meteo / OSRM / OpenRouteService).
+// Keyed on the user id, not the IP — a whole tenant can sit behind one NAT, and nginx
+// applies no limit_req to the general /api/ location.
+const externalLimiter = rateLimit({
+  windowMs: 60 * 1000,      // 1 min
+  max: 30,                    // 30 upstream-backed calls per user per min
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: req => req.user?.id || rateLimit.ipKeyGenerator(req.ip),
+  message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
 // ── Health check (no auth / no tenant) ────────────────────────
@@ -320,6 +377,15 @@ app.get('/api/firmware/dl', require('./routes/firmware-download'));
 // ── Audit middleware (before auth — captures login/logout too) ─────
 app.use('/api', createAuditMiddleware(logger));
 
+// ── Public site status page — intentionally UNAUTHENTICATED ────────
+// Express runs middleware in registration order: this MUST stay above
+// `app.use('/api', authenticate)`. test/public-site.test.js guards that twice —
+// a supertest proves the router answers without an Authorization header, and a
+// second case reads THIS file and asserts the mount below still precedes the JWT
+// gate — so a future reorder fails a test instead of 401ing every status page.
+// The raw token travels in the X-Site-Token header, never in the path (access.log).
+app.use('/api/public', publicLimiter, require('./routes/public'));
+
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
   // Public auth routes (no JWT required)
@@ -335,6 +401,10 @@ if (AUTH_ENABLED) {
   app.get('/api/ws-ticket', (req, res) => {
     res.json({ data: { ticket: wsSvc.issueWsTicket(req.user) } });
   });
+
+  // Own profile (any authenticated role) — must stay ABOVE the admin-only
+  // /api/users mount, which would 403 a technician editing their home base.
+  app.use('/api/profile',  require('./routes/profile'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -359,6 +429,19 @@ app.use('/api/alarms',   exportAlarms);                   // /export.csv
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
 app.use('/api/device-models', require('./routes/device-models'));
+
+// Per-user throttle on every route that can reach a third-party API.
+// Registered before the routers below so it runs first.
+app.use('/api/geo',                   externalLimiter);
+app.use('/api/map/route',             externalLimiter);
+app.use('/api/map/isochrones',        externalLimiter);
+app.use('/api/sites/:id/weather',     externalLimiter);
+app.use('/api/sites/geocode-pending', externalLimiter);
+
+app.use('/api/sites',    require('./routes/sites'));       // trade points (торгові точки)
+app.use('/api/geo',      require('./routes/geo'));         // geocoder proxy
+app.use('/api/map',      require('./routes/map'));         // GeoJSON fleet map + filters
+app.use('/api/stats',    require('./routes/geo-stats'));   // /geo aggregates
 
 // Firmware/OTA routes (admin-only when AUTH_ENABLED, mounted above; dev fallback below)
 if (!AUTH_ENABLED) {
@@ -398,19 +481,26 @@ async function main() {
   // 3. WebSocket
   wsSvc.attach(server, logger);
 
-  // 4. Push notifications (Telegram + FCM + Web Push)
-  const tgHandler  = telegramSvc.init(logger);
-  const fcmHandler = fcmSvc.init(logger);
-  const wpHandler  = webpushSvc.init(logger);
-  if (tgHandler)  pushSvc.registerChannel('telegram', tgHandler);
-  if (fcmHandler) pushSvc.registerChannel('fcm', fcmHandler);
-  if (wpHandler)  pushSvc.registerChannel('webpush', wpHandler);
+  // 4. Push notifications (Telegram + FCM + Web Push + Email)
+  const tgHandler    = telegramSvc.init(logger);
+  const fcmHandler   = fcmSvc.init(logger);
+  const wpHandler    = webpushSvc.init(logger);
+  const emailHandler = emailSvc.init(logger);
+  if (tgHandler)    pushSvc.registerChannel('telegram', tgHandler);
+  if (fcmHandler)   pushSvc.registerChannel('fcm', fcmHandler);
+  if (wpHandler)    pushSvc.registerChannel('webpush', wpHandler);
+  if (emailHandler) pushSvc.registerChannel('email', emailHandler);
   pushSvc.start(logger);
 
   // 5. OTA service (periodic status checker + rollout scheduler)
   otaSvc.start(logger);
 
-  // 6. HTTP
+  // 6. Geo services (geocode queue + cache sweeper, outdoor weather poller)
+  geocodeSvc.start(logger);
+  routingSvc.init(logger);
+  weatherSvc.start(logger);
+
+  // 7. HTTP
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
     logger.info({ port: PORT, host: HOST, auth: AUTH_ENABLED }, 'HTTP server listening');
@@ -422,10 +512,13 @@ async function shutdown(signal) {
   logger.info({ signal }, 'Shutdown signal received');
   await Promise.allSettled([
     otaSvc.shutdown(),
+    weatherSvc.shutdown(),
+    geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),
     fcmSvc.shutdown(),
     webpushSvc.shutdown(),
+    emailSvc.shutdown(),
     wsSvc.shutdown(),
   ]);
   await mqttSvc.shutdown();

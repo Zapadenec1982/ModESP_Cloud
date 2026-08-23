@@ -10,12 +10,12 @@
 
 | Metric | Value |
 |--------|-------|
-| API endpoints | 60+ REST |
+| API endpoints | 90+ REST |
 | Real-time channels | MQTT + WebSocket |
 | Device parameters | 48 per device (temperatures, alarms, settings) |
 | Alarm types | 10 (critical / warning / info) |
 | Test coverage | 130+ integration tests |
-| Languages | Ukrainian, English |
+| Languages | Ukrainian, English, Polish, German |
 | Deployment | Production on Hetzner VPS, TLS/HTTPS |
 
 ---
@@ -44,7 +44,8 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 
 ### Device Properties
 - Name, location, serial number, model, manufacturing date, free-text comments
-- Geographic coordinates (latitude/longitude) for the interactive fleet map
+- Site assignment — country, region, city and street address live on the site, shared by every device at that address
+- Geographic coordinates (latitude/longitude) as an optional per-device override on top of the site's
 - Firmware version and protocol version tracked via heartbeat
 - Real-time online/offline status (90-second heartbeat threshold)
 
@@ -160,7 +161,74 @@ Estimated energy consumption based on equipment model power profiles.
 
 ---
 
-## 8. Event Tracking
+## 8. Sites & Geographic Intelligence
+
+Physical trade points as first-class objects — one address, many devices — plus everything a service
+organisation actually does with a map.
+
+### Sites (Trade Points)
+- A site is one physical object (store, warehouse, workshop) with country, region, city, street address and postal code
+- One device belongs to at most one site; a site holds any number of devices — a store with ten cabinets is one pin on the map, not ten
+- `location` keeps its old meaning: free text for the spot **inside** the site ("Hall, row 3"), not an address
+- Per-device coordinates remain an optional override on top of the site's — effective map position is the device's own coordinate first, the site's second
+- Existing `location` values are backfilled into sites during migration, so an upgraded deployment starts with a populated map
+- Site names are unique per tenant, compared case- and whitespace-insensitively
+
+### Server-Side Geocoding
+- Address → coordinates through a backend proxy (Nominatim). The browser never calls the geocoder directly: one identifying User-Agent, one 1 req/s pacer, one shared cache — exactly what the OSM usage policy requires
+- Structured queries (street / city / country) for sites; free-form text only for the autocomplete box, where the user is typing arbitrary input
+- **Country sanity check** — a result whose country contradicts the requested one is treated as no match. A mangled query fails silently and confidently: corrupted Cyrillic returns French departments with high confidence scores and no error. This one guard is what stands between a demo map and a fleet apparently located in France
+- Persistent cache with two lifetimes: hits 180 days, genuine misses 6 hours, transport failures never cached — one provider blip must not make an address un-geocodable for half a year
+- Address autocomplete and a draggable marker with reverse geocoding in the UI
+- Fully optional: with `GEOCODER_PROVIDER=none` the autocomplete hides itself and the platform keeps working on manually entered coordinates
+
+### Fleet Map
+- Clustered markers, one per site, coloured by the worst device status inside the cluster
+- Filter bar: country, region, city, site, model, firmware version, device status, assigned user, free text search, viewport bounding box
+- Alarm heatmap layer, aggregated in SQL over any period
+- Coverage isochrones (15 / 30 / 60 min) — real drive-time polygons with an OpenRouteService key; without one, straight-line rings that the UI **visibly labels as approximate**, so no planning decision rests on a circle mistaken for a drive-time polygon
+- Click-to-place coordinates, live WebSocket status updates and the "no coordinates" worklist all carried over from the original map
+
+### Geo Analytics
+- Drill-down: country → region → city → site
+- Per group: device / online / offline / alarm counts, alarms in period, average air temperature, uptime %, estimated kWh, service visits
+- Sortable table plus CSV export with identical filters and identical access rules — a metric that cannot be computed cheaply returns null rather than a fabricated zero
+
+### Service Round Planner
+- Multi-select sites on the map → optimised visiting order (OSRM travelling-salesman), route polyline, per-leg distance and duration
+- Hand-off to a phone as a Google Maps directions link with waypoints
+- Without a routing server the planner still answers: nearest-neighbour ordering and the deep link need no upstream at all, and the result is labelled "orientation only, not drive-time optimised"
+- Nearest technicians to a site, ranked by distance from their home base, enriched with real driving time when routing is configured. An admin sees id, email, home address, distance to 0.1 km and duration; a technician sees a masked label, no address, and a distance coarsened to whole kilometres — 0.1 km over three sites would trilaterate the colleague's home. Asking about a site requires the same access as reading the site itself. Never tokens, telegram ids or password hashes
+
+### Outdoor Weather
+- Current conditions and hourly forecast per site (Open-Meteo), with hourly history retained for 395 days so year-over-year comparison keeps working
+- **Outdoor temperature as a second series on the device telemetry chart**, on its own right-hand axis — this is the payoff: it is what explains load spikes and COP drops that look inexplicable on the cabinet's own curves
+- Site IANA timezone filled automatically from the same weather response — no extra dependency, no manual entry
+- The poller batches one request per distinct rounded coordinate, not one per site
+
+### Site-Level Access Control
+- Grant a technician an entire site instead of ticking devices one by one; devices added to that site later are covered automatically
+- Effective access is the union of per-device and per-site grants — the existing per-device model is unchanged
+- Grants carry their own tenant, so a grant held in one tenant grants nothing while the user works in another
+- Technicians edit their own home base from the sidebar user menu (`PATCH /api/profile`); admins can set it for anyone from the Users page
+
+### Public Status Links
+- Share a read-only status page for one site with a customer — no login, no account, no app
+- The token is 32 random bytes, stored only as a sha256 hash, shown exactly once at creation, and sent in a request header so it never lands in a server access log or a Referer
+- Expiry is mandatory (90 days by default), links are revocable, and each carries a view counter
+- The page exposes only the site name, city / region / country, and per device a display label, online flag, air temperature and alarm flag — no ids, no serial numbers, no firmware versions, no tenant slug, no coordinates finer than city
+- Revoked, expired and unknown tokens are indistinguishable: all three return the same 404, so the page never confirms that a token existed
+
+### Third-Party Services — Demo Posture
+Geocoding, weather, routing and isochrones are all ENV-gated, called server-side only, and degrade to a
+working disabled state rather than an error. The current deployment uses their free / non-commercial
+tiers **for demo purposes**. ModESP Cloud is a commercial product, so each one needs a paid plan or a
+self-hosted instance before production — the checklist lives in `docs/THIRD_PARTY_LICENSING.md`.
+`© OpenStreetMap contributors` attribution is rendered on every map and must not be removed.
+
+---
+
+## 9. Event Tracking
 
 Operational events beyond alarms — equipment cycles, status changes, device connectivity.
 
@@ -171,7 +239,7 @@ Operational events beyond alarms — equipment cycles, status changes, device co
 
 ---
 
-## 9. Notifications & Alerting
+## 10. Notifications & Alerting
 
 Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
@@ -199,7 +267,7 @@ Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
 ---
 
-## 10. OTA Firmware Updates
+## 11. OTA Firmware Updates
 
 Upload, deploy, and monitor firmware updates — single device or fleet-wide rollout.
 
@@ -228,7 +296,7 @@ Upload, deploy, and monitor firmware updates — single device or fleet-wide rol
 
 ---
 
-## 11. User Management & Authentication
+## 12. User Management & Authentication
 
 JWT-based auth with 4-tier RBAC and per-device access control.
 
@@ -254,6 +322,12 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 - Bulk assign/revoke via API
 - Assignment audit trail (granted_by, granted_at)
 
+### Per-Site Assignment
+- Admin grants a whole site instead of ticking devices one by one; devices added to that site later are covered automatically
+- Effective access is the union of per-device and per-site grants — the per-device model is unchanged
+- Grants carry their own tenant, so a grant held in one tenant grants nothing while the user works in another
+- Staged in the same modal as device assignment: Cancel discards both, Save applies both
+
 ### Multi-Tenant Membership
 - Users can belong to multiple tenants (M:N relationship)
 - Tenant selection on login if multiple memberships exist
@@ -265,7 +339,7 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 
 ---
 
-## 12. Audit Logging
+## 13. Audit Logging
 
 Immutable, append-only audit trail for compliance and security.
 
@@ -278,7 +352,7 @@ Immutable, append-only audit trail for compliance and security.
 
 ---
 
-## 13. Real-Time Communication
+## 14. Real-Time Communication
 
 Dual real-time channels — MQTT for device-to-cloud, WebSocket for cloud-to-browser.
 
@@ -297,7 +371,7 @@ Dual real-time channels — MQTT for device-to-cloud, WebSocket for cloud-to-bro
 
 ---
 
-## 14. Web Interface
+## 15. Web Interface
 
 Responsive Svelte SPA with dark/light theme and full i18n.
 
@@ -305,26 +379,29 @@ Responsive Svelte SPA with dark/light theme and full i18n.
 | Page | Description |
 |------|-------------|
 | **Dashboard** | Fleet summary (online/total/alarms), device grid with search and filters |
-| **Map** | Interactive OpenStreetMap fleet map — live status markers, click-to-place coordinates, one-tap directions via Google Maps / Apple Maps |
+| **Map** | Interactive OpenStreetMap fleet map — clustered site markers, filter bar, alarm heatmap, coverage isochrones, service-round planner, click-to-place coordinates, one-tap directions via Google / Apple / Waze / OSM |
+| **Geo Analytics** | Country → region → city → site drill-down, metric table, CSV export |
+| **Sites** | Trade point CRUD (`/sites`), address autocomplete, a geocoding-status panel with a manual sweep trigger, and public status link management (the raw token is shown exactly once). Weather and nearest technicians live on the device Location tab |
 | **Device Detail** | Live state, telemetry charts, alarm history, event log, service records, controls |
 | **Alarms** | Alarm table with severity filters, CSV export |
 | **Firmware** | Upload, library, deploy modal, rollout monitor |
 | **Notifications** | Subscriber management, test send, delivery log |
 | **Pending Devices** | Unassigned device queue, batch assignment with metadata |
-| **Users** | User CRUD, role assignment, device assignment modal, Telegram linking |
+| **Users** | User CRUD, role assignment, device + site assignment modal, technician home base, Telegram linking |
 | **Tenants** | Tenant CRUD (superadmin), device/user counts per tenant |
 | **Audit Log** | Searchable audit trail with JSON diff viewer (superadmin) |
+| **Public Site Status** | Read-only single-site status page for customers — no login, no sidebar, no authenticated call |
 
 ### UX Features
 - **Dark / Light mode** — CSS custom properties, toggle in settings, localStorage persistence
-- **Bilingual** — Ukrainian + English, 500+ translation keys, locale-aware date/number formatting
+- **Four languages** — Ukrainian (primary), English, Polish, German; 600+ translation keys, locale-aware date/number formatting
 - **Responsive** — mobile-optimized header and sidebar
 - **Toast notifications** — success/error feedback for all actions
 - **Connection indicator** — real-time MQTT/WebSocket status in header
 
 ---
 
-## 15. Infrastructure & Operations
+## 16. Infrastructure & Operations
 
 Production-ready deployment with TLS, backups, and monitoring.
 
@@ -359,7 +436,7 @@ Production-ready deployment with TLS, backups, and monitoring.
 
 ---
 
-## 16. Developer Experience
+## 17. Developer Experience
 
 Clean codebase with testing infrastructure and local development tools.
 
@@ -381,6 +458,8 @@ Clean codebase with testing infrastructure and local development tools.
 | **MQTT Broker** | Mosquitto 2.0 + go-auth (PostgreSQL ACL) |
 | **Frontend** | Svelte 4.18, Vite 5.4 |
 | **Charts** | uPlot |
+| **Maps** | Leaflet 1.9 + markercluster + heat, OpenStreetMap raster tiles |
+| **Geo services** | Nominatim (geocoding), Open-Meteo (weather), OSRM (routing), OpenRouteService (isochrones) — all server-side, all ENV-gated |
 | **PDF Generation** | pdfmake (server-side, Cyrillic support) |
 | **Auth** | JWT (HS256), bcrypt, express-rate-limit |
 | **Testing** | Vitest 3.2, Supertest |

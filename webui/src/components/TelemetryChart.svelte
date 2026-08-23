@@ -2,13 +2,17 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
-  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf } from '../lib/api.js';
+  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf, getSiteWeatherHistory } from '../lib/api.js';
   import { liveState } from '../lib/stores.js';
   import { t } from '../lib/i18n.js';
   import { toast } from '../lib/toast.js';
   import { on as wsOn } from '../lib/ws.js';
 
   export let deviceId;
+  /** Site the device belongs to — the outdoor overlay reads its weather history. */
+  export let siteId = null;
+  /** False when the deployment has no weather provider: the toggle stays hidden. */
+  export let weatherEnabled = false;
 
   // ── Events overlay state ─────────────────────────────────
   let deviceEvents = [];
@@ -36,6 +40,11 @@
     comp:     { label: 'Compressor', stroke: 'rgba(59,130,246,0.5)', fill: 'rgba(59,130,246,0.08)', band: true },
     defrost:  { label: 'Defrost',    stroke: 'rgba(251,146,60,0.5)', fill: 'rgba(251,146,60,0.12)', band: true },
     energy:   { label: 'Energy (kWh)', stroke: '#fbbf24', width: 2, fill: 'rgba(251,191,36,0.08)' },
+    // Outdoor temperature — an optional OVERLAY, never an `activeChannels` entry.
+    // Its own `outdoor` scale and right-hand axis are load-bearing: a −22 °C
+    // cabinet and a +32 °C summer afternoon share nothing but a unit, and putting
+    // them on `y` flattens the curves this chart exists to show.
+    outdoor:  { stroke: '#94a3b8', width: 2, dash: [2, 4], scale: 'outdoor' },
   };
 
   // Map liveState keys → telemetry channels for real-time append
@@ -79,6 +88,145 @@
   // Track active channels and data for real-time append
   let activeChannels = [];
   let uData = null;
+
+  // ── Outdoor temperature overlay ───────────────────────────
+  //
+  // uData layout:  [ timestamps, ...activeChannels, outdoor? ]
+  //
+  // The overlay is a TRAILING column, deliberately outside `activeChannels` —
+  // that array is the single index key for the uData columns, the uPlot series,
+  // `bandPlugin`'s `channels[si - 1]` and the live-append path. A trailing column
+  // survives `handleLiveUpdate`'s map untouched (it appends
+  // `newPoint[undefined] ?? null`), which is why none of those need changes.
+
+  // Weather is hourly: reach back a few hours so the first telemetry sample
+  // already has an observation to hold instead of starting on a gap…
+  const OUTDOOR_LOOKBEHIND_H = 3;
+  // …but never hold a value across a hole in the weather series.
+  const OUTDOOR_MAX_HOLD_SEC = 3 * 3600;
+
+  let showOutdoor = false;       // off by default
+  let outdoorLoading = false;
+  let outdoorRows = [];          // [{ ts, temp }] sorted, for the loaded window
+  let outdoorKey = '';           // site + range the rows belong to
+  let outdoorEmpty = false;
+  let outdoorSiteId = siteId;
+
+  $: outdoorLabel = $t('chart.outdoor_series');
+  $: canOverlay = !!siteId && weatherEnabled;
+
+  // Weather switched off (or the device left its site) while the overlay was on.
+  $: if (!canOverlay && showOutdoor) disableOutdoor();
+
+  // A site change invalidates everything the overlay holds.
+  $: if (siteId !== outdoorSiteId) {
+    outdoorSiteId = siteId;
+    outdoorRows = [];
+    outdoorKey = '';
+    outdoorEmpty = false;
+    if (showOutdoor) disableOutdoor();
+  }
+
+  function disableOutdoor() {
+    showOutdoor = false;
+    outdoorEmpty = false;
+    detachOutdoor();
+  }
+
+  /**
+   * `GET /api/sites/:id/weather/history` — recorded observations from our own
+   * database, so it keeps working while the upstream provider is down. A failure
+   * is not an error state here: the overlay reports "no data" and the telemetry
+   * chart is untouched.
+   */
+  async function fetchOutdoor(fromISO, toISO) {
+    const json = await getSiteWeatherHistory(siteId, { from: fromISO, to: toISO });
+    return Array.isArray(json && json.data) ? json.data : [];
+  }
+
+  async function loadOutdoor() {
+    if (!canOverlay) return;
+
+    const fromISO = new Date(new Date(range.from).getTime() - OUTDOOR_LOOKBEHIND_H * 3600 * 1000).toISOString();
+    const toISO   = new Date(range.to).toISOString();
+    const key = `${siteId}|${fromISO}|${toISO}`;
+    if (key === outdoorKey) return;
+
+    outdoorLoading = true;
+    try {
+      const rows = await fetchOutdoor(fromISO, toISO);
+      outdoorRows = rows
+        .map(r => ({
+          ts: Math.floor(new Date(r.observed_at).getTime() / 1000),
+          // temp_c is NUMERIC(5,2); the route already coerces it, but a raw
+          // string from any other path must not become NaN silently.
+          temp: r.temp_c === null || r.temp_c === undefined ? NaN : Number(r.temp_c),
+        }))
+        .filter(r => Number.isFinite(r.ts) && Number.isFinite(r.temp))
+        .sort((a, b) => a.ts - b.ts);
+      outdoorKey = key;
+      outdoorEmpty = outdoorRows.length === 0;
+    } catch (e) {
+      console.warn('[TelemetryChart] Outdoor history unavailable:', e);
+      outdoorRows = [];
+      outdoorKey = '';
+      outdoorEmpty = true;
+    } finally {
+      outdoorLoading = false;
+    }
+  }
+
+  /**
+   * Step/hold resample of the hourly observations onto the telemetry timestamps.
+   *
+   * The weather timestamps are NEVER merged into `data[0]`: a denser timeline
+   * would make `detectGapsFromTimestamps(uData[0], 900)` find no gaps and
+   * silently remove the offline-zone shading together with its legend.
+   */
+  function resampleOutdoor(timestamps) {
+    if (!timestamps || timestamps.length === 0 || outdoorRows.length === 0) return null;
+    const col = new Array(timestamps.length).fill(null);
+    let i = 0;
+    let held = null;
+    for (let k = 0; k < timestamps.length; k++) {
+      const ts = timestamps[k];
+      while (i < outdoorRows.length && outdoorRows[i].ts <= ts) { held = outdoorRows[i]; i++; }
+      col[k] = held && (ts - held.ts) <= OUTDOOR_MAX_HOLD_SEC ? held.temp : null;
+    }
+    return col;
+  }
+
+  function outdoorAttached() {
+    return !!uData && uData.length === activeChannels.length + 2;
+  }
+
+  /** @returns {boolean} whether a column was actually added. */
+  function attachOutdoor() {
+    if (!uData || outdoorAttached()) return false;
+    const col = resampleOutdoor(uData[0]);
+    if (!col || col.every(v => v === null)) return false;
+    uData = [...uData, col];
+    return true;
+  }
+
+  function detachOutdoor() {
+    if (!outdoorAttached()) return;
+    uData = uData.slice(0, -1);
+    createChart(uData, activeChannels);
+  }
+
+  // Adding or removing a series changes the series count, which `setData` cannot
+  // express — the chart is rebuilt on both edges.
+  async function toggleOutdoor() {
+    if (showOutdoor) { disableOutdoor(); return; }
+
+    showOutdoor = true;
+    outdoorEmpty = false;
+    await loadOutdoor();
+    if (!showOutdoor) return;                 // toggled off while loading
+    if (attachOutdoor()) createChart(uData, activeChannels);
+    else outdoorEmpty = true;
+  }
 
   // ── Data helpers ──────────────────────────────────────────
 
@@ -211,10 +359,14 @@
     const width = chartEl.clientWidth;
     if (width < 50) return;
 
+    // The optional outdoor overlay is the one trailing column beyond `channels`.
+    const hasOutdoor = data.length === channels.length + 2;
+
     const series = [
       {},  // x-axis
       ...channels.map(ch => {
-        const cfg = SERIES_CONFIG[ch];
+        // Guarded: an unknown channel must not throw the whole chart away.
+        const cfg = SERIES_CONFIG[ch] || {};
         if (cfg.band) {
           return {
             label:    cfg.label,
@@ -228,7 +380,7 @@
           };
         }
         return {
-          label:    cfg.label,
+          label:    cfg.label || ch,
           stroke:   cfg.stroke,
           width:    cfg.width,
           dash:     cfg.dash,
@@ -238,7 +390,22 @@
       }),
     ];
 
-    const hasBands = channels.some(ch => SERIES_CONFIG[ch].band);
+    if (hasOutdoor) {
+      const cfg = SERIES_CONFIG.outdoor;
+      series.push({
+        label:    outdoorLabel,
+        stroke:   cfg.stroke,
+        width:    cfg.width,
+        dash:     cfg.dash,
+        scale:    'outdoor',
+        // Step/hold values are already dense, but an hour-long hole in the
+        // weather series must not tear the line in two.
+        spanGaps: true,
+        points:   { show: false },
+      });
+    }
+
+    const hasBands = channels.some(ch => SERIES_CONFIG[ch]?.band);
 
     const axes = [
       {
@@ -266,12 +433,30 @@
       });
     }
 
+    // Right-hand axis for the outdoor overlay — its own scale, so the cabinet
+    // curves keep their vertical resolution.
+    if (hasOutdoor) {
+      axes.push({
+        scale: 'outdoor',
+        side: 1,
+        stroke: SERIES_CONFIG.outdoor.stroke,
+        grid: { show: false },
+        size: window.innerWidth <= 640 ? 34 : 46,
+        font: (window.innerWidth <= 640 ? '10' : '11') + 'px "IBM Plex Sans", system-ui',
+        ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
+        values: (u, vals) => vals.map(v => v == null ? '' : v + '°'),
+      });
+    }
+
     const scales = {
       x: { time: true },
       y: { auto: true },
     };
     if (hasBands) {
       scales.state = { auto: false, range: [0, 1] };
+    }
+    if (hasOutdoor) {
+      scales.outdoor = { auto: true };
     }
 
     const opts = {
@@ -333,6 +518,13 @@
       }
     } finally {
       loading = false;
+    }
+
+    // The overlay is re-fetched for the new window before the first paint, so the
+    // chart is never built once without it and once with it.
+    if (uData && showOutdoor && canOverlay) {
+      await loadOutdoor();
+      if (showOutdoor && !attachOutdoor()) outdoorEmpty = true;
     }
 
     if (uData) {
@@ -531,6 +723,23 @@
     </button>
   </div>
   <div class="export-row">
+    {#if canOverlay}
+      <label class="outdoor-toggle" title={$t('chart.outdoor_hint')}>
+        <input
+          type="checkbox"
+          checked={showOutdoor}
+          on:change={toggleOutdoor}
+          disabled={loading || outdoorLoading}
+        />
+        <span class="outdoor-swatch"></span>
+        <span>{$t('chart.outdoor_series')}</span>
+        {#if outdoorLoading}
+          <span class="outdoor-note">{$t('common.loading')}</span>
+        {:else if showOutdoor && outdoorEmpty}
+          <span class="outdoor-note">{$t('chart.outdoor_no_data')}</span>
+        {/if}
+      </label>
+    {/if}
     <div class="export-buttons">
       <button class="btn-export" on:click={handleExportCsv} disabled={exporting || loading} title={$t('export.export_csv')}>
         CSV
@@ -686,6 +895,38 @@
   }
 
   .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Outdoor overlay toggle ───────────────────── */
+
+  .outdoor-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .outdoor-toggle input {
+    accent-color: var(--accent-blue);
+    cursor: pointer;
+  }
+
+  .outdoor-toggle input:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Mirrors SERIES_CONFIG.outdoor — a dashed grey line. */
+  .outdoor-swatch {
+    width: 16px;
+    height: 0;
+    border-top: 2px dashed #94a3b8;
+  }
+
+  .outdoor-note {
+    color: var(--text-muted);
+  }
 
   /* ── Export buttons ─────────────────────────────── */
 

@@ -17,20 +17,22 @@
   $: alarmStatus = device.alarm_active ? 'alarm'
     : device.online ? 'online' : 'offline'
 
+  // One handler on the row <button>: a click anywhere inside the checkbox cell
+  // toggles selection, anything else opens the device. Keeping the toggle here
+  // (instead of on a nested <div on:click>) keeps the only interactive element
+  // a real, keyboard-reachable button.
   function handleClick(e) {
-    if (selectable && (e.target.type === 'checkbox' || e.target.closest('.cell-check'))) return
+    if (selectable && (e.target.type === 'checkbox' || e.target.closest('.cell-check'))) {
+      dispatch('toggle', device.id)
+      return
+    }
     navigate(`/device/${device.mqtt_device_id}`)
-  }
-
-  function handleCheck(e) {
-    e.stopPropagation()
-    dispatch('toggle', device.id)
   }
 </script>
 
 <button class="row" class:selected on:click={handleClick}>
   {#if selectable}
-    <div class="cell cell-check" on:click={handleCheck}>
+    <div class="cell cell-check">
       <input type="checkbox" checked={selected} tabindex="-1" />
     </div>
   {/if}

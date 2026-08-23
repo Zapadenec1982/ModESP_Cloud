@@ -46,12 +46,52 @@
     '/device/:id':      DeviceDetail,
     // Lazy-loaded: keeps Leaflet (~150 KB) out of the main bundle
     '/map':             wrap({ asyncComponent: () => import('./pages/DeviceMap.svelte') }),
+    '/geo-stats':       wrap({ asyncComponent: () => import('./pages/GeoStats.svelte') }),
+    // Any authenticated role: GET /api/sites narrows by RBAC, not by role. The
+    // write controls inside the page are behind $isAdmin, matching the backend.
+    '/sites':           wrap({ asyncComponent: () => import('./pages/Sites.svelte') }),
     '/alarms':          Alarms,
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
+  }
+
+  // ── Public site status page (Part 2 §7.7) ──────────────
+  //
+  // Deliberately NOT an entry in `routes`: <Router> is instantiated only in the
+  // authenticated branch below, so a route added there is unreachable for a
+  // logged-out visitor. The hash is therefore read synchronously here, at
+  // instance init, and the page is rendered standalone above every auth gate —
+  // no sidebar, no Login screen, and no authenticated API call.
+  //
+  // The token lives in the fragment (`…/#/public/site/<token>`), which browsers
+  // never send to a server, so it appears in no access log and in no Referer.
+  const PUBLIC_PREFIX = '#/public/site/'
+
+  function readPublicToken() {
+    const hash = typeof window !== 'undefined' ? (window.location.hash || '') : ''
+    if (!hash.startsWith(PUBLIC_PREFIX)) return null
+    // Stop at a query/extra segment so a stray `?utm=…` never becomes part of
+    // the credential we send.
+    const raw = hash.slice(PUBLIC_PREFIX.length).split(/[?&#]/)[0]
+    if (!raw) return null
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return raw   // a malformed escape is still a token the backend will 404
+    }
+  }
+
+  const publicToken = readPublicToken()
+  const isPublicView = publicToken !== null
+
+  // Pasting a public link into an already-open tab changes the hash without a
+  // page load, and the two shells cannot swap in place — reload across that
+  // boundary only. Ordinary in-app navigation never crosses it.
+  function onHashChange() {
+    if ((readPublicToken() !== null) !== isPublicView) window.location.reload()
   }
 
   let booting = true
@@ -80,6 +120,18 @@
   let unsubDeviceOffline
 
   onMount(async () => {
+    window.addEventListener('hashchange', onHashChange)
+
+    // The public status page must make NO authenticated call: checkAuthEnabled()
+    // fetches /api/devices, connect() asks for a WS ticket, and refreshCounts()
+    // hits /api/devices + /api/alarms. Bail out before any of them.
+    // (routeLoaded never fires here — there is no <Router> — so the placeholder
+    // title is set explicitly; PublicSite replaces it with the site name.)
+    if (isPublicView) {
+      document.title = `${$t('pages.public_site')} — ModESP Cloud`
+      return
+    }
+
     // Check if backend has auth enabled
     const enabled = await checkAuthEnabled()
     if (enabled) {
@@ -103,12 +155,13 @@
   })
 
   // Reconnect WS when user logs in
-  $: if ($isAuthenticated && !booting) {
+  $: if ($isAuthenticated && !booting && !isPublicView) {
     reconnect()
     refreshCounts()
   }
 
   onDestroy(() => {
+    if (typeof window !== 'undefined') window.removeEventListener('hashchange', onHashChange)
     disconnect()
     unsubAlarm?.()
     unsubDeviceOnline?.()
@@ -118,6 +171,7 @@
   const pageTitleKeys = {
     '/': 'pages.dashboard',
     '/map': 'pages.map',
+    '/geo-stats': 'pages.geo_stats',
     '/alarms': 'pages.alarms',
     '/pending': 'pages.pending',
     '/firmware': 'pages.firmware',
@@ -138,7 +192,26 @@
   }
 </script>
 
-{#if booting}
+{#if isPublicView}
+  <!--
+    Standalone: no Sidebar, no MobileHeader, no <Router>, no auth gate. Lazily
+    imported so the public page's code never ships in the entry chunk that every
+    logged-in user downloads.
+  -->
+  {#await import('./pages/PublicSite.svelte')}
+    <div class="boot">
+      <div class="boot-spinner" />
+      <span class="boot-text">ModESP Cloud</span>
+    </div>
+  {:then { default: PublicSite }}
+    <PublicSite token={publicToken} />
+  {:catch}
+    <div class="boot">
+      <span class="boot-text">{$t('site.public_load_failed')}</span>
+    </div>
+  {/await}
+  <ToastContainer />
+{:else if booting}
   <div class="boot">
     <div class="boot-spinner" />
     <span class="boot-text">ModESP Cloud</span>
