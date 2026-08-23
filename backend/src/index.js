@@ -265,15 +265,26 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
       if (dev.has_creds && dev.status === 'active') {
         // P0-2 guard: a genuinely factory-reset device cannot authenticate to MQTT
         // (go-auth rejects its erased unique creds), so it is necessarily OFFLINE.
-        // An online or recently-seen active device asking to reset with the SHARED
-        // bootstrap key is illegitimate (replayed key → credential-downgrade / DoS) —
-        // refuse and require an admin to run /api/devices/recover.
+        // A recently-seen active device asking to reset with the SHARED bootstrap key
+        // is illegitimate (replayed key → credential-downgrade / DoS) — refuse and
+        // require an admin to run /api/devices/recover.
+        //
+        // devices.online is NOT part of this test, deliberately. Every writer of that
+        // column is tenant-scoped (handleStatus, stateWriter and offlineDetector in
+        // services/mqtt.js all match on tenant_id), and a device publishing under the
+        // 'pending' slug resolves to the SYSTEM tenant — so for a device stranded on the
+        // wrong prefix the flag is frozen at whatever it was when the assign moved the
+        // row, which for a freshly-assigned device is `true`. Gating on it locked the
+        // exact population this endpoint exists to rescue out of the documented
+        // self-heal, with a 409, permanently. last_seen freezes the same way but is
+        // monotonic, so it ages past the grace window and lets a genuinely stranded
+        // device through while still refusing one that is demonstrably talking.
         const lastSeenMs   = dev.last_seen ? new Date(dev.last_seen).getTime() : 0;
         const offlineForMs = Date.now() - lastSeenMs;
-        if (dev.online || offlineForMs < RESET_OFFLINE_GRACE_MS) {
+        if (offlineForMs < RESET_OFFLINE_GRACE_MS) {
           logger.warn(
             { device_id: mqttDeviceId, online: dev.online, offlineForMs },
-            'Bootstrap reset refused: active device still online/recent — requires admin recover'
+            'Bootstrap reset refused: active device seen too recently — requires admin recover'
           );
           return res.status(409).json({
             error: 'device_active',
@@ -287,7 +298,8 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
         await db.query(
           `UPDATE devices
               SET tenant_id = $1, status = 'pending',
-                  mqtt_username = $2, mqtt_password_hash = $3
+                  mqtt_username = $2, mqtt_password_hash = $3,
+                  assigned_at = NULL
             WHERE mqtt_device_id = $4`,
           [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId]
         );

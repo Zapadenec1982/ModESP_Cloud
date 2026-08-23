@@ -310,7 +310,8 @@ router.post('/:id/reset-pending', maybeAuthorize('admin'), async (req, res, next
         `UPDATE devices
          SET tenant_id = $1, status = 'pending',
              mqtt_username = $2,
-             site_id = NULL
+             site_id = NULL,
+             assigned_at = NULL
          WHERE id = $3`,
         [db.SYSTEM_TENANT_ID, `device_${deviceMqttId}`, deviceUuid]
       );
@@ -415,7 +416,8 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
         `UPDATE devices
          SET status = 'deleted', deleted_at = NOW(),
              tenant_id = $1, name = NULL, comment = NULL,
-             site_id = NULL
+             site_id = NULL,
+             assigned_at = NULL
          WHERE id = $2`,
         [db.SYSTEM_TENANT_ID, deviceUuid]
       );
@@ -478,7 +480,8 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
             `UPDATE devices
              SET status = 'deleted', deleted_at = NOW(),
                  tenant_id = $1, name = NULL, comment = NULL,
-                 site_id = NULL
+                 site_id = NULL,
+                 assigned_at = NULL
              WHERE id = $2`,
             [db.SYSTEM_TENANT_ID, deviceUuid]
           );
@@ -537,9 +540,16 @@ router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
              tenant_id = EXCLUDED.tenant_id,
              mqtt_username = EXCLUDED.mqtt_username,
              mqtt_password_hash = EXCLUDED.mqtt_password_hash,
-             site_id = NULL`,
+             site_id = NULL,
+             assigned_at = NULL`,
       [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash]
     );
+
+    // The device is back to pending; a retained `_set_tenant <old slug>` left by
+    // autoReassignDevice would otherwise be replayed on its next subscribe and undo this.
+    try {
+      mqttSvc.setPendingTenantHint(mqtt_device_id, 'pending');
+    } catch (_) { /* MQTT may be unavailable — the DB reset still stands */ }
 
     await mqttSvc.refreshRegistries();
 
@@ -637,8 +647,14 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     let sentTenant = false;
     try {
       // 2. Send tenant (firmware saves + reconnects with new credentials)
-      // QoS 1 for reliability — this is a critical configuration command
-      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+      // QoS 1 for reliability — this is a critical configuration command.
+      // RETAINED: the DB is about to flip this row to 'active', which revokes the
+      // device's pending prefix everywhere except migration 022's self-closing grant.
+      // A non-retained publish is dropped outright if the device is not subscribed at
+      // this instant, which is precisely the failure this whole change exists to fix.
+      // Retained, the instruction waits on the topic and is delivered on the device's
+      // next subscribe. It is overwritten, never blanked — see setPendingTenantHint.
+      mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
       sentTenant = true;
     } catch (err) {
       // MQTT might be disconnected — device will get the command on reconnect
@@ -653,7 +669,8 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
            name = COALESCE($4, name), location = COALESCE($5, location),
            model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
            comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at),
-           site_id = NULL
+           site_id = NULL,
+           assigned_at = NOW()
        WHERE id = $10`,
       [targetTenantId, newUsername, hash, name || null, location || null,
        model || null, serial_number || null, comment || null, manufactured_at || null, rows[0].id]
@@ -1144,7 +1161,8 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
           sentCreds = true;
         } catch (_) { /* MQTT may be unavailable */ }
         try {
-          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1 });
+          // Retained for the same reason as the single-assign path above.
+          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
           sentTenant = true;
         } catch (_) { /* MQTT may be unavailable */ }
 
@@ -1156,7 +1174,8 @@ router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'),
                name = COALESCE($4, name), location = COALESCE($5, location),
                model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
                comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at),
-               site_id = $10
+               site_id = $10,
+               assigned_at = NOW()
            WHERE id = $11`,
           [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, manufacturedAt, siteId, row._dbId]
         );
@@ -1868,7 +1887,8 @@ router.post('/:id/reassign', async (req, res, next) => {
       await client.query(
         `UPDATE devices SET tenant_id = $1, status = 'active',
                 mqtt_username = $2, mqtt_password_hash = $3,
-                site_id = NULL
+                site_id = NULL,
+                assigned_at = NOW()
          WHERE id = $4`,
         [newTenantId, username, hash, device.id]
       );
@@ -1880,6 +1900,15 @@ router.post('/:id/reassign', async (req, res, next) => {
 
     // Record assign timestamp for stuck-device detection grace period
     mqttSvc.recordAssign(mqttId);
+
+    // Repoint the retained tenant hint on the pending prefix, AFTER the move is
+    // committed. autoReassignDevice may have left `_set_tenant <old slug>` there, and a
+    // retained command is replayed on every future subscribe — it would drag the device
+    // straight back into the tenant it was just moved out of. Overwritten, never blanked
+    // (an empty payload on a cmd topic is itself delivered) — see setPendingTenantHint.
+    try {
+      mqttSvc.setPendingTenantHint(mqttId, newSlug);
+    } catch (_) { /* MQTT may be unavailable — the DB move still stands */ }
 
     // Update in-memory state
     mqttSvc.updateDeviceStateMap(mqttId, newTenantId, newSlug);

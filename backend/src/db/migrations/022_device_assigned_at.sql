@@ -1,0 +1,143 @@
+-- Migration 022: devices.assigned_at — a SELF-CLOSING pending-namespace MQTT ACL grant
+-- Predecessor: 021_sites.sql
+--
+-- ── THE DEADLOCK THIS COLUMN EXISTS TO BREAK ──────────────────────────────────
+--   infra/mosquitto/mosquitto.conf derives a device's allowed topic prefix from
+--   devices.status:  'pending'/'deleted' -> modesp/v1/pending/<mqtt_device_id>
+--                    'active'            -> modesp/v1/<tenant_slug>/<mqtt_device_id>
+--   So the instant an assign flips a row to 'active', the broker stops allowing
+--   modesp/v1/pending/<id>/#. A device that never received the _set_tenant command
+--   still believes it lives on the pending prefix: every publish AND its cmd/+
+--   subscription are denied. Worse, the built-in rescue (checkStuckDevice ->
+--   autoReassignDevice in src/services/mqtt.js) re-sends _set_tenant to that very
+--   pending prefix — so the rescue is blocked by the same rule that caused the fault.
+--   Nothing is logged: mosquitto runs log_type error + warning and ACL denials sit
+--   below that.
+--
+--   Opening the ACL is necessary but not sufficient: a SUBSCRIBE refused at connect
+--   time is not stored by the broker and is not recreated when the ACL later opens, so
+--   the device's publishes resume while it is still subscribed to nothing. That is why
+--   autoReassignDevice publishes the rescue RETAINED and retracts it once the device is
+--   seen under its own tenant slug.
+--
+-- ── WHY A SELF-CLOSING CONDITION, NOT A TIME WINDOW ───────────────────────────
+--   The broker grants the pending prefix to an ACTIVE device for exactly as long as
+--   it has not yet checked in under its own tenant prefix:
+--
+--       d.status = 'active' AND d.deleted_at IS NULL AND d.assigned_at IS NOT NULL
+--         AND (d.last_seen IS NULL OR d.last_seen <= d.assigned_at)
+--
+--   assigned_at IS NOT NULL is load-bearing, not belt-and-braces: an active row that
+--   never went through an assign has no pending prefix to be stuck on. Without it the
+--   `last_seen IS NULL` disjunct short-circuits and grants the pending prefix to every
+--   such row forever — src/scripts/provision-demo-fleet.js writes exactly that shape
+--   (status='active', last_seen NULL) and re-writes it on every re-run.
+--
+--   A fixed window would be a guess — too short and a device that was offline during
+--   the assign stays bricked forever (exactly today's failure), too long and the grant
+--   hangs open for nothing. This condition closes on the device's first successful
+--   publish under its tenant (seconds, in the healthy case) and stays open exactly as
+--   long as the fault persists.
+--
+--   It is self-consistent. last_seen is advanced by the batched writer in
+--   src/services/mqtt.js: UPDATE devices AS d ... WHERE d.tenant_id = v.tid AND
+--   d.mqtt_device_id = v.mid, where v.tid is resolved from the tenant slug in the
+--   topic. While a device is stuck on the pending prefix that slug resolves to the
+--   SYSTEM tenant, d.tenant_id never matches, last_seen cannot advance — and so the
+--   grant correctly stays open until the device really does reach its own namespace.
+--
+--   That argument only holds because the writer persists the OBSERVED timestamp
+--   (state._lastSeen, set only when a message from the device is processed) rather
+--   than NOW(). It used to write NOW(), which made last_seen mean "the last time
+--   anything marked this row dirty" — and two admin-side paths do that without the
+--   device saying a word: updateDeviceStateMap on reassign (which re-points _tenantId
+--   to the new tenant, so the writer's WHERE suddenly matches) and sendCommand's
+--   optimistic echo. Either one closed this grant for a device that had never checked
+--   in, leaving it denied on BOTH prefixes with no way back. If someone ever changes
+--   that writer back to NOW(), this column stops meaning what the ACL assumes.
+--
+--   One hole this condition does NOT cover: the relapse. A device that checks in once
+--   (closing the grant) and later reverts to the pending prefix cannot re-open it —
+--   nothing re-arms assigned_at, and autoReassignDevice only runs for a device that can
+--   already publish on pending. rearmPendingGrant in src/services/mqtt.js re-stamps
+--   active rows silent for longer than ASSIGN_REARM_HOURS (default 24) to close it.
+--
+-- ── BLAST RADIUS (this migration widens an ACL; the bound must be provable) ────
+--   The new ACL branch is keyed on devices.mqtt_username = $1, and mqtt_username
+--   carries the UNIQUE index idx_devices_mqtt_username (migration 008) — at most one
+--   row can match — and the granted topic is built from THAT row's own
+--   mqtt_device_id. An active device therefore gains write access to
+--   modesp/v1/pending/<its own id> and to nothing else: it cannot reach another
+--   device's topics and cannot reach another tenant's namespace. Data it publishes
+--   there is attributed to the SYSTEM tenant — a degradation, not a cross-tenant leak.
+--
+-- ── NO INDEX ON assigned_at — a decision, not an oversight ────────────────────
+--   The ACL query already filters by mqtt_username, served by the UNIQUE index above.
+--   It reaches exactly one row and then evaluates status / last_seen / assigned_at as
+--   filters on that row. An index on assigned_at could never be chosen by the planner
+--   and would only cost write throughput on the hottest table in the schema.
+--
+-- ── THE BACKFILL IS A DELIBERATE UNBLOCK, NOT A DEFAULT ───────────────────────
+--   Stamping assigned_at = NOW() on every currently 'active' device is the recovery
+--   for the fleet that is ALREADY deadlocked (88 of 124 production devices when this
+--   was measured). It opens the grant for every active device whose last_seen is
+--   already stale, so those devices can talk on the pending prefix again and
+--   autoReassignDevice can finally reach them. For a healthy device the grant closes
+--   within seconds — its very next publish under its own tenant prefix pushes
+--   last_seen past assigned_at.
+--
+--   It is a BLANKET stamp, so it also hits active rows that never went through an
+--   assign — everything src/scripts/provision-demo-fleet.js created, which carries
+--   last_seen NULL. For those the grant opens until the device first publishes under
+--   its tenant. That is the price of a one-time repair that cannot tell the two
+--   populations apart; provision-demo-fleet.js writes assigned_at = NULL explicitly, so
+--   the next run of that script takes the stamp back off.
+--
+--   HOW MUCH OF THE FLEET THIS ACTUALLY RECOVERS — be precise, an ACL is only
+--   consulted for a client that is CONNECTED. It recovers the stuck devices that are
+--   still holding a session. A device that has since disconnected cannot get back in
+--   at all: the assign in src/routes/devices.js rotates mqtt_password_hash and publishes
+--   the plaintext non-retained, so a device that was offline at assign time holds a
+--   password the DB no longer has, and auth_opt_pg_userquery's priority-1 row (its own
+--   hash, with no online/recency condition) wins over the bootstrap fallback, so it is
+--   refused at CONNECT. Those devices recover through the firmware's own path —
+--   POST /api/devices/register after 3 auth failures, which resets the row to 'pending'
+--   with the bootstrap hash — or through an admin POST /api/devices/recover. Closing
+--   that second hole means changing the userquery, which is a separate change with its
+--   own blast radius; it is deliberately NOT folded in here.
+--
+--   A future reader: do NOT copy this UPDATE into a later migration as boilerplate.
+--   It is a one-time repair keyed to this specific outage, not the normal way the
+--   column gets populated. Normally src/routes/devices.js stamps it on assign and
+--   clears it on reset-pending / delete.
+--
+-- ── IDEMPOTENCY ───────────────────────────────────────────────────────────────
+--   ADD COLUMN IF NOT EXISTS, and the backfill is guarded by `assigned_at IS NULL`
+--   so a re-run can never move a stamp that a real assign has since written. Re-runs
+--   are a live scenario: test/helpers/migrate.js replays every migration on top of
+--   schema.sql, and the prod runbook has operators apply DDL by hand and then record it.
+--
+-- ── NO GRANT STATEMENT ────────────────────────────────────────────────────────
+--   The broker role holds a table-level `GRANT SELECT ON devices, tenants TO
+--   modesp_mqtt_ro` (docs/DEPLOYMENT.md, scripts/deploy-mqtt-auth.sh), which covers
+--   columns added later. No column-level grant is needed — and one would be stripped
+--   by the ^GRANT regex in test/helpers/migrate.js anyway.
+--
+-- Run (as the schema OWNER — DDL requires table ownership; on prod the app role only
+-- holds DML grants, see src/scripts/migrate.js):
+--   sudo -u postgres psql -d modesp_cloud -f backend/src/db/migrations/022_device_assigned_at.sql
+--   sudo -u postgres psql -d modesp_cloud -c "INSERT INTO schema_migrations (id) VALUES ('022_device_assigned_at.sql')"
+--
+-- NOTE FOR THE OPERATOR: mosquitto.conf sets auth_opt_acl_cache_seconds 60, so the
+-- broker keeps serving cached ACL decisions for up to a minute after this runs.
+
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN devices.assigned_at IS
+  'When this device was last moved to status=''active''. The mosquitto ACL query compares it against last_seen to keep the modesp/v1/pending/<id> grant open until the device first checks in under its own tenant prefix. NULL while pending or deleted.';
+
+-- One-time repair — see "THE BACKFILL IS A DELIBERATE UNBLOCK" above.
+UPDATE devices
+   SET assigned_at = NOW()
+ WHERE status = 'active'
+   AND assigned_at IS NULL;

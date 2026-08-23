@@ -3,7 +3,7 @@
 // globals: true in vitest.config.js
 const request = require('supertest');
 const { createTestApp } = require('./helpers/app');
-const { cleanDatabase, shutdownDb } = require('./helpers/setup');
+const { cleanDatabase, shutdownDb, db } = require('./helpers/setup');
 const { createTenant, createUser, createDevice, authHeader } = require('./helpers/factories');
 
 const app = createTestApp();
@@ -92,5 +92,97 @@ describe('Devices CRUD', () => {
       .set(authHeader(admin, tenant.id));
 
     expect(res.status).toBe(200);
+  });
+
+  // ── devices.assigned_at ─────────────────────────────────
+  // The column is only ever read by the mosquitto ACL query, where it decides how long
+  // an active device keeps modesp/v1/pending/<id> (migration 022). The ACL SQL itself is
+  // covered in device-acl-grace.test.js; these tests pin the write side — that the HTTP
+  // flows keep the column truthful. A missed stamp silently re-creates the deadlock.
+
+  async function readDeviceRow(id) {
+    const { rows } = await db.query('SELECT * FROM devices WHERE id = $1', [id]);
+    return rows[0];
+  }
+
+  it('assigning a pending device stamps assigned_at', async () => {
+    const mqttId = 'AS0001';
+    await db.query(
+      `INSERT INTO devices (tenant_id, mqtt_device_id, mqtt_username, status, online)
+       VALUES ($1, $2, $3, 'pending', false)`,
+      [db.SYSTEM_TENANT_ID, mqttId, `device_${mqttId}`]
+    );
+
+    const res = await request(app)
+      .post(`/api/devices/pending/${mqttId}/assign`)
+      .set(authHeader(admin, tenant.id))
+      .send({ name: 'Freshly assigned' });
+
+    expect(res.status).toBe(200);
+
+    const row = await readDeviceRow(res.body.data.device_id);
+    expect(row.status).toBe('active');
+    expect(row.assigned_at).not.toBeNull();
+    // The grant must be OPEN right after an assign: the device has not checked in yet.
+    expect(row.last_seen === null || new Date(row.last_seen) <= new Date(row.assigned_at)).toBe(true);
+  });
+
+  it('reset-pending clears assigned_at', async () => {
+    const device = await createDevice(tenant.id, { name: 'Back to pending' });
+    await db.query('UPDATE devices SET assigned_at = NOW() WHERE id = $1', [device.id]);
+
+    const res = await request(app)
+      .post(`/api/devices/${device.id}/reset-pending`)
+      .set(authHeader(admin, tenant.id));
+
+    expect(res.status).toBe(200);
+
+    const row = await readDeviceRow(device.id);
+    expect(row.status).toBe('pending');
+    expect(row.assigned_at).toBeNull();
+  });
+
+  it('reassign stamps assigned_at and leaves last_seen alone', async () => {
+    // The grant must be OPEN again after a reassign — the device has not checked in
+    // under the NEW tenant, whatever it did under the old one. An admin action must
+    // never advance last_seen; that is what closes the grant, and doing it here left a
+    // device that was quiet at reassign time denied on both prefixes with no way back.
+    const otherTenant = await createTenant({ slug: 'devices-reassign-target' });
+    const superadmin = await createUser(tenant.id, {
+      role: 'superadmin', email: 'super@devices.test',
+    });
+    const device = await createDevice(tenant.id, { name: 'Moving house' });
+    const seenAt = new Date(Date.now() - 60_000);
+    await db.query(
+      'UPDATE devices SET assigned_at = $1, last_seen = $2 WHERE id = $3',
+      [new Date(Date.now() - 120_000), seenAt, device.id]
+    );
+
+    const res = await request(app)
+      .post(`/api/devices/${device.id}/reassign`)
+      .set(authHeader(superadmin, tenant.id))
+      .send({ tenant_id: otherTenant.id });
+
+    expect(res.status).toBe(200);
+
+    const row = await readDeviceRow(device.id);
+    expect(row.tenant_id).toBe(otherTenant.id);
+    expect(new Date(row.last_seen).getTime()).toBe(seenAt.getTime());
+    expect(new Date(row.last_seen) <= new Date(row.assigned_at)).toBe(true);
+  });
+
+  it('soft delete clears assigned_at', async () => {
+    const device = await createDevice(tenant.id, { name: 'Delete clears stamp' });
+    await db.query('UPDATE devices SET assigned_at = NOW() WHERE id = $1', [device.id]);
+
+    const res = await request(app)
+      .delete(`/api/devices/${device.id}`)
+      .set(authHeader(admin, tenant.id));
+
+    expect(res.status).toBe(200);
+
+    const row = await readDeviceRow(device.id);
+    expect(row.status).toBe('deleted');
+    expect(row.assigned_at).toBeNull();
   });
 });
