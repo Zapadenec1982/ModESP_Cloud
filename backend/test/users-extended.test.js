@@ -24,10 +24,10 @@ describe('Users Extended', () => {
     await shutdownDb();
   });
 
-  // --- Profile (uses admin since /api/users is gated by authorize('admin')) ---
+  // --- Profile (/api/profile — self-service for every role) ---
   it('admin can get own profile', async () => {
     const res = await request(app)
-      .get('/api/users/me')
+      .get('/api/profile')
       .set(authHeader(admin, tenant.id));
 
     expect(res.status).toBe(200);
@@ -37,7 +37,7 @@ describe('Users Extended', () => {
   it('admin can update own email', async () => {
     const testAdmin = await createUser(tenant.id, { role: 'admin', email: 'old@usersext.test' });
     const res = await request(app)
-      .put('/api/users/me')
+      .put('/api/profile')
       .set(authHeader(testAdmin, tenant.id))
       .send({ email: 'new-email@usersext.test' });
 
@@ -52,7 +52,7 @@ describe('Users Extended', () => {
       password: 'OldPass123!Secure',
     });
     const res = await request(app)
-      .put('/api/users/me')
+      .put('/api/profile')
       .set(authHeader(testAdmin, tenant.id))
       .send({ password: 'NewPass456!Secure', old_password: 'OldPass123!Secure' });
 
@@ -61,7 +61,7 @@ describe('Users Extended', () => {
 
   it('rejects password change without old_password', async () => {
     const res = await request(app)
-      .put('/api/users/me')
+      .put('/api/profile')
       .set(authHeader(admin, tenant.id))
       .send({ password: 'NewPass789!' });
 
@@ -69,18 +69,23 @@ describe('Users Extended', () => {
     expect(res.body.error).toBe('validation_failed');
   });
 
-  it('viewer cannot access /users routes (403)', async () => {
+  it('viewer cannot access /users routes (403) but can read their own profile', async () => {
     const res = await request(app)
-      .get('/api/users/me')
+      .get('/api/users')
       .set(authHeader(viewer, tenant.id));
-
     expect(res.status).toBe(403);
+
+    const me = await request(app)
+      .get('/api/profile')
+      .set(authHeader(viewer, tenant.id));
+    expect(me.status).toBe(200);
+    expect(me.body.data.email).toBe(viewer.email);
   });
 
   // --- Telegram ---
   it('admin can generate telegram link code', async () => {
     const res = await request(app)
-      .post('/api/users/me/telegram-link')
+      .post('/api/profile/telegram-link')
       .set(authHeader(admin, tenant.id));
 
     expect(res.status).toBe(200);
@@ -90,7 +95,7 @@ describe('Users Extended', () => {
 
   it('admin can unlink telegram', async () => {
     const res = await request(app)
-      .delete('/api/users/me/telegram-link')
+      .delete('/api/profile/telegram-link')
       .set(authHeader(admin, tenant.id));
 
     expect(res.status).toBe(200);

@@ -281,4 +281,98 @@ function formatDuration(ms) {
   return rem ? `${hrs} год ${rem} хв` : `${hrs} год`;
 }
 
-module.exports = { init, shutdown };
+// ── Transactional mail (invitations, password reset) ─────
+
+const TX = {
+  uk: {
+    invite_subject:  (org) => `Запрошення до «${org}» у ModESP Cloud`,
+    invite_title:    'Вас запрошено до ModESP Cloud',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' запрошує вас' : 'Вас запрошено'} приєднатися до організації «${escHtml(org)}» на платформі моніторингу холодильного обладнання ModESP Cloud.`,
+    invite_cta:      'Прийняти запрошення',
+    invite_expires:  (h) => `Посилання дійсне ${h} год. Якщо ви не очікували цього листа — просто проігноруйте його.`,
+    org:             'Організація',
+    role:            'Роль',
+    roles:           { admin: 'Адміністратор', technician: 'Технік', viewer: 'Перегляд' },
+    reset_subject:   'Скидання пароля ModESP Cloud',
+    reset_title:     'Скидання пароля',
+    reset_intro:     'Хтось (сподіваємось, ви) попросив скинути пароль вашого акаунта ModESP Cloud. Натисніть кнопку, щоб задати новий пароль.',
+    reset_cta:       'Задати новий пароль',
+    reset_code:      'Код (якщо кнопка не працює)',
+    reset_expires:   (m) => `Посилання дійсне ${m} хв. Якщо ви не просили скидання — нічого не робіть, пароль лишиться незмінним.`,
+    link_fallback:   'Або скопіюйте посилання у браузер:',
+  },
+  en: {
+    invite_subject:  (org) => `Invitation to “${org}” on ModESP Cloud`,
+    invite_title:    'You have been invited to ModESP Cloud',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' invites you' : 'You have been invited'} to join the organisation “${escHtml(org)}” on ModESP Cloud, the refrigeration monitoring platform.`,
+    invite_cta:      'Accept invitation',
+    invite_expires:  (h) => `The link is valid for ${h} hours. If you did not expect this email, simply ignore it.`,
+    org:             'Organisation',
+    role:            'Role',
+    roles:           { admin: 'Administrator', technician: 'Technician', viewer: 'Viewer' },
+    reset_subject:   'ModESP Cloud password reset',
+    reset_title:     'Password reset',
+    reset_intro:     'Someone (hopefully you) asked to reset the password of your ModESP Cloud account. Press the button to choose a new password.',
+    reset_cta:       'Choose a new password',
+    reset_code:      'Code (if the button does not work)',
+    reset_expires:   (m) => `The link is valid for ${m} minutes. If you did not request a reset, do nothing — your password stays as it is.`,
+    link_fallback:   'Or copy the link into your browser:',
+  },
+};
+
+function txLang(lang) { return lang === 'en' || lang === 'pl' || lang === 'de' ? 'en' : 'uk'; }
+
+function ctaButton(href, label) {
+  return `<p style="margin:24px 0;">
+    <a href="${href}" style="display:inline-block;padding:12px 24px;background:#3b82f6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;">${label}</a>
+  </p>`;
+}
+
+function txBody(title, intro, rows, button, note, link) {
+  return `<tr><td style="padding:32px;">
+    <h2 style="margin:0 0 16px;color:#f1f5f9;font-size:20px;">${title}</h2>
+    <p style="margin:0 0 16px;color:#cbd5e1;font-size:15px;line-height:1.5;">${intro}</p>
+    ${rows}
+    ${button}
+    <p style="margin:0 0 8px;color:#94a3b8;font-size:13px;line-height:1.5;">${note}</p>
+    <p style="margin:0;color:#64748b;font-size:12px;word-break:break-all;">${link}</p>
+  </td></tr>`;
+}
+
+/** True when RESEND_API_KEY is set and the client initialised. */
+function isConfigured() { return !!resend; }
+
+/**
+ * Invitation email. Resolves false when the channel is not configured — the
+ * caller then shows the link to the admin instead of failing the invite.
+ */
+async function sendInvitation({ to, link, tenantName, role, invitedBy, lang, expiresHours = 72 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const rows = infoRow(L.org, escHtml(tenantName)) + infoRow(L.role, L.roles[role] || escHtml(role));
+  const html = wrapHtml(txBody(
+    L.invite_title, L.invite_intro(tenantName, invitedBy), rows,
+    ctaButton(link, L.invite_cta), L.invite_expires(expiresHours),
+    `${L.link_fallback}<br>${escHtml(link)}`
+  ));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.invite_subject(tenantName), html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** Self-service password reset email. Resolves false when not configured. */
+async function sendPasswordReset({ to, link, code, lang, expiresMinutes = 30 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const rows = infoRow(L.reset_code, `<code style="font-family:monospace;letter-spacing:1px;">${escHtml(code)}</code>`);
+  const html = wrapHtml(txBody(
+    L.reset_title, L.reset_intro, rows,
+    ctaButton(link, L.reset_cta), L.reset_expires(expiresMinutes),
+    `${L.link_fallback}<br>${escHtml(link)}`
+  ));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.reset_subject, html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+module.exports = { init, shutdown, isConfigured, sendInvitation, sendPasswordReset };

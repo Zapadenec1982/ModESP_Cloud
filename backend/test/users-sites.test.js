@@ -477,7 +477,7 @@ describe('User site grants + home base', () => {
       expect(res.body.error).toBe('validation_failed');
     });
 
-    it('exposes the base location on GET /api/users and GET /api/users/me', async () => {
+    it('exposes the base location on GET /api/users and GET /api/profile', async () => {
       const hdr = authHeader(adminA, tenantA.id);
       await request(app).put(`/api/users/${techA.id}`).set(hdr)
         .send({ base_latitude: 46.4843, base_longitude: 30.7406, base_address: 'Дерибасівська 12, Одеса' });
@@ -488,7 +488,7 @@ describe('User site grants + home base', () => {
       expect(Number(listed.base_latitude)).toBeCloseTo(46.4843, 4);
       expect(listed.base_address).toBe('Дерибасівська 12, Одеса');
 
-      const me = await request(app).get('/api/users/me').set(hdr);
+      const me = await request(app).get('/api/profile').set(hdr);
       expect(me.status).toBe(200);
       expect(me.body.data).toHaveProperty('base_latitude');
       expect(me.body.data).toHaveProperty('base_longitude');
@@ -509,10 +509,16 @@ describe('User site grants + home base', () => {
       const res = await request(app).get('/api/profile').set(authHeader(techA, tenantA.id));
 
       expect(res.status).toBe(200);
+      // Plan epic 1.5 widened the row to what the settings menu needs, but it
+      // must never carry a hash, a reset code or a link code.
       expect(Object.keys(res.body.data).sort()).toEqual(
-        ['base_address', 'base_latitude', 'base_longitude', 'email', 'id', 'role'].sort()
+        ['active', 'base_address', 'base_latitude', 'base_longitude', 'created_at', 'email',
+         'id', 'last_login', 'role', 'telegram_id'].sort()
       );
       expect(JSON.stringify(res.body.data)).not.toContain('$2b$');
+      expect(res.body.data).not.toHaveProperty('password_hash');
+      expect(res.body.data).not.toHaveProperty('password_reset_code');
+      expect(res.body.data).not.toHaveProperty('telegram_link_code');
     });
 
     it('lets a technician move their own home base', async () => {

@@ -58,7 +58,7 @@ describe('Password Reset', () => {
     // Reset password
     const res = await request(app)
       .post('/api/auth/reset-password')
-      .send({ email: 'target@reset.test', reset_code: code, new_password: 'NewPass123!' });
+      .send({ email: 'target@reset.test', reset_code: code, new_password: 'NewPass123!Secure' });
 
     expect(res.status).toBe(200);
     expect(res.body.data.message).toMatch(/reset/i);
@@ -75,12 +75,12 @@ describe('Password Reset', () => {
     // Reset to known password
     await request(app)
       .post('/api/auth/reset-password')
-      .send({ email: 'target@reset.test', reset_code: code, new_password: 'ResetTest999' });
+      .send({ email: 'target@reset.test', reset_code: code, new_password: 'ResetTest999Secure' });
 
     // Login with new password
     const loginRes = await request(app)
       .post('/api/auth/login')
-      .send({ email: 'target@reset.test', password: 'ResetTest999' });
+      .send({ email: 'target@reset.test', password: 'ResetTest999Secure' });
 
     expect(loginRes.status).toBe(200);
   });
@@ -103,7 +103,7 @@ describe('Password Reset', () => {
 
     const res = await request(app)
       .post('/api/auth/reset-password')
-      .send({ email: 'target@reset.test', reset_code: 'aaaaaaaaaaaaaaaa', new_password: 'WrongCode123' });
+      .send({ email: 'target@reset.test', reset_code: 'aaaaaaaaaaaaaaaa', new_password: 'WrongCode123Secure' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_code');
@@ -112,7 +112,7 @@ describe('Password Reset', () => {
   it('returns 400 for non-existent email', async () => {
     const res = await request(app)
       .post('/api/auth/reset-password')
-      .send({ email: 'nobody@nowhere.test', reset_code: 'aaaaaaaaaaaaaaaa', new_password: 'NoBody123!' });
+      .send({ email: 'nobody@nowhere.test', reset_code: 'aaaaaaaaaaaaaaaa', new_password: 'NoBody123!Secure' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_code');
@@ -135,7 +135,7 @@ describe('Password Reset', () => {
 
     const res = await request(app)
       .post('/api/auth/reset-password')
-      .send({ email: 'target@reset.test', reset_code: code, new_password: 'Expired123!' });
+      .send({ email: 'target@reset.test', reset_code: code, new_password: 'Expired123!Secure' });
 
     expect(res.status).toBe(400);
   });

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { getDevices, deleteDevicesBulk } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { devices, isSuperAdmin } from '../lib/stores.js'
+  import { devices, isSuperAdmin, isAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
@@ -252,7 +252,7 @@
       <EmptyState
         icon="wifi"
         title={$t('dashboard.no_devices')}
-        message={$t('dashboard.no_devices_hint')}
+        message={$isAdmin ? $t('dashboard.no_devices_hint') : $t('dashboard.no_access_hint')}
       />
     {/if}
   {:else if view === 'list'}

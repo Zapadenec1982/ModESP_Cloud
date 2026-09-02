@@ -1,7 +1,7 @@
 <script>
-  import { login, selectTenant, resetPassword } from '../lib/api.js'
+  import { login, selectTenant, resetPassword, forgotPassword } from '../lib/api.js'
   import { navigate } from '../lib/stores.js'
-  import { t } from '../lib/i18n.js'
+  import { t, locale } from '../lib/i18n.js'
 
   let email = ''
   let password = ''
@@ -18,6 +18,21 @@
   let resetCode = ''
   let newPassword = ''
   let resetSuccess = false
+  let forgotSent = false
+
+  // #/reset?email=…&code=… — the link from the password-reset email lands here
+  // with the code prefilled; the fragment never reaches the server.
+  {
+    const hash = typeof window !== 'undefined' ? (window.location.hash || '') : ''
+    if (hash.startsWith('#/reset')) {
+      const q = new URLSearchParams(hash.split('?')[1] || '')
+      if (q.get('code')) {
+        email = q.get('email') || ''
+        resetCode = q.get('code')
+        step = 'reset_password'
+      }
+    }
+  }
 
   async function handleSubmit() {
     error = ''
@@ -73,6 +88,25 @@
     }
   }
 
+  function showForgotForm() {
+    step = 'forgot'
+    error = ''
+    forgotSent = false
+  }
+
+  async function handleForgot() {
+    error = ''
+    loading = true
+    try {
+      await forgotPassword(email, $locale)
+      forgotSent = true
+    } catch (e) {
+      error = e.message || 'Request failed'
+    } finally {
+      loading = false
+    }
+  }
+
   function showResetForm() {
     step = 'reset_password'
     error = ''
@@ -89,7 +123,11 @@
     resetCode = ''
     newPassword = ''
     resetSuccess = false
+    forgotSent = false
     error = ''
+    if (typeof window !== 'undefined' && window.location.hash.startsWith('#/reset')) {
+      history.replaceState(null, '', '#/')
+    }
   }
 </script>
 
@@ -118,8 +156,38 @@
         {loading ? $t('login.signing_in') : $t('login.sign_in')}
       </button>
 
-      <button type="button" class="btn-forgot" on:click={showResetForm}>
+      <button type="button" class="btn-forgot" on:click={showForgotForm}>
         {$t('login.forgot_password')}
+      </button>
+    </form>
+
+  {:else if step === 'forgot'}
+    <!-- Self-service reset: email → link (plan epic 1.5); the admin code stays as fallback -->
+    <form class="login-form" on:submit|preventDefault={handleForgot}>
+      <div class="login-brand">M</div>
+      <h1 class="login-title">{$t('login.forgot_title')}</h1>
+      <p class="login-subtitle">{$t('login.forgot_subtitle')}</p>
+
+      {#if forgotSent}
+        <div class="success">{$t('login.forgot_sent')}</div>
+      {:else}
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+        <label class="field">
+          <span>{$t('login.email')}</span>
+          <input type="email" bind:value={email} placeholder="admin@example.com" required autocomplete="email" />
+        </label>
+        <button type="submit" class="btn-login" disabled={loading || !email}>
+          {loading ? $t('login.sending') : $t('login.forgot_submit')}
+        </button>
+      {/if}
+
+      <button type="button" class="btn-forgot" on:click={showResetForm}>
+        {$t('login.have_code')}
+      </button>
+      <button type="button" class="btn-back" on:click={backToCredentials}>
+        ← {$t('common.back')}
       </button>
     </form>
 
@@ -150,11 +218,11 @@
 
         <label class="field">
           <span>{$t('login.new_password')}</span>
-          <input type="password" bind:value={newPassword} placeholder="••••••••" required
-                 minlength="8" autocomplete="new-password" />
+          <input type="password" bind:value={newPassword} placeholder={$t('password.min_length')} required
+                 minlength="15" autocomplete="new-password" />
         </label>
 
-        <button type="submit" class="btn-login" disabled={loading || resetCode.length !== 16 || newPassword.length < 8}>
+        <button type="submit" class="btn-login" disabled={loading || resetCode.length !== 16 || newPassword.length < 15}>
           {loading ? $t('login.resetting') : $t('login.reset_submit')}
         </button>
       {/if}

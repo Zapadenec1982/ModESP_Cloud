@@ -87,11 +87,27 @@
   const publicToken = readPublicToken()
   const isPublicView = publicToken !== null
 
+  // ── Invitation acceptance (plan epic 1.5) ───────────────
+  // Same shape as the public page: the token is read once at init and the
+  // page renders standalone, above the auth gate, with no sidebar.
+  const INVITE_PREFIX = '#/invite/'
+
+  function readInviteToken() {
+    const hash = typeof window !== 'undefined' ? (window.location.hash || '') : ''
+    if (!hash.startsWith(INVITE_PREFIX)) return null
+    const raw = hash.slice(INVITE_PREFIX.length).split(/[?&#]/)[0]
+    return raw || null
+  }
+
+  const inviteToken = readInviteToken()
+  const isInviteView = inviteToken !== null
+
   // Pasting a public link into an already-open tab changes the hash without a
   // page load, and the two shells cannot swap in place — reload across that
   // boundary only. Ordinary in-app navigation never crosses it.
   function onHashChange() {
     if ((readPublicToken() !== null) !== isPublicView) window.location.reload()
+    if ((readInviteToken() !== null) !== isInviteView) window.location.reload()
   }
 
   let booting = true
@@ -127,8 +143,8 @@
     // hits /api/devices + /api/alarms. Bail out before any of them.
     // (routeLoaded never fires here — there is no <Router> — so the placeholder
     // title is set explicitly; PublicSite replaces it with the site name.)
-    if (isPublicView) {
-      document.title = `${$t('pages.public_site')} — ModESP Cloud`
+    if (isPublicView || isInviteView) {
+      document.title = isInviteView ? `${$t('invite.title')} — ModESP Cloud` : `${$t('pages.public_site')} — ModESP Cloud`
       return
     }
 
@@ -155,7 +171,7 @@
   })
 
   // Reconnect WS when user logs in
-  $: if ($isAuthenticated && !booting && !isPublicView) {
+  $: if ($isAuthenticated && !booting && !isPublicView && !isInviteView) {
     reconnect()
     refreshCounts()
   }
@@ -208,6 +224,20 @@
   {:catch}
     <div class="boot">
       <span class="boot-text">{$t('site.public_load_failed')}</span>
+    </div>
+  {/await}
+  <ToastContainer />
+{:else if isInviteView}
+  {#await import('./pages/AcceptInvite.svelte')}
+    <div class="boot">
+      <div class="boot-spinner" />
+      <span class="boot-text">ModESP Cloud</span>
+    </div>
+  {:then { default: AcceptInvite }}
+    <AcceptInvite token={inviteToken} />
+  {:catch}
+    <div class="boot">
+      <span class="boot-text">ModESP Cloud</span>
     </div>
   {/await}
   <ToastContainer />

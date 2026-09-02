@@ -2,9 +2,12 @@
 
 const { Router } = require('express');
 const { z }      = require('zod');
+const crypto     = require('crypto');
 const db         = require('../services/db');
 const authSvc    = require('../services/auth');
+const emailSvc   = require('../services/email');
 const { authenticate } = require('../middleware/auth');
+const { passwordSchema } = require('../lib/password-policy');
 
 const router = Router();
 
@@ -438,7 +441,7 @@ const { timingSafeEqual } = require('crypto');
 const resetPasswordSchema = z.object({
   email:        z.string().email(),
   reset_code:   z.string().length(16),
-  new_password: z.string().min(8),
+  new_password: passwordSchema,
 });
 
 router.post('/reset-password', async (req, res) => {
@@ -499,6 +502,209 @@ router.post('/reset-password', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Password reset failed') || console.error('Password reset failed:', err);
     res.status(500).json({ error: 'internal_error', message: 'Password reset failed', status: 500 });
+  }
+});
+
+// ── POST /auth/forgot-password (public) ──────────────────
+//
+// Self-service half of the reset flow. The response is identical whether or
+// not the address exists; the code is the same 16-hex value the admin flow
+// generates, so POST /auth/reset-password serves both. Without an email
+// channel the request is logged and the admin code path remains the fallback.
+
+function appBaseUrl() {
+  return (process.env.EMAIL_APP_URL || process.env.CORS_ORIGIN || 'https://modesp.com.ua').replace(/\/+$/, '');
+}
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email().max(256),
+  lang:  z.enum(['uk', 'en', 'pl', 'de']).optional(),
+});
+
+router.post('/forgot-password', async (req, res) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  const email = parsed.data.email.trim().toLowerCase();
+  const generic = { data: { message: 'If an account with that email exists, a reset link has been sent' } };
+
+  try {
+    const { rows } = await db.query(
+      'SELECT id, email FROM users WHERE lower(email) = $1 AND active = true LIMIT 1', [email]);
+    if (rows.length === 0) return res.json(generic);
+
+    const user    = rows[0];
+    const code    = crypto.randomBytes(8).toString('hex');   // 16 hex chars, as the admin flow
+    const expires = new Date(Date.now() + 30 * 60 * 1000);
+    await db.query(
+      'UPDATE users SET password_reset_code = $1, password_reset_expires = $2 WHERE id = $3',
+      [code, expires, user.id]
+    );
+
+    const link = `${appBaseUrl()}/#/reset?email=${encodeURIComponent(user.email)}&code=${code}`;
+    let sent = false;
+    try {
+      sent = await emailSvc.sendPasswordReset({ to: user.email, link, code, lang: parsed.data.lang, expiresMinutes: 30 });
+    } catch (err) {
+      req.log?.error?.({ err, userId: user.id }, 'Password reset email failed');
+    }
+    if (!sent) {
+      req.log?.warn?.({ userId: user.id }, 'Password reset requested but no email channel is configured — admin reset code path remains');
+    }
+    req.auditContext = { entityId: user.id, action: 'auth.password_reset_request', changes: { email_sent: sent } };
+    res.json(generic);
+  } catch (err) {
+    req.log?.error?.({ err }, 'Forgot password failed');
+    res.status(500).json({ error: 'internal_error', message: 'Password reset request failed', status: 500 });
+  }
+});
+
+// ── Invitations (public) ─────────────────────────────────
+
+async function loadInvitation(token) {
+  if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+  const hash = crypto.createHash('sha256').update(token).digest('hex');
+  const { rows } = await db.query(
+    `SELECT i.*, t.name AS tenant_name, t.slug AS tenant_slug, t.active AS tenant_active
+       FROM invitations i JOIN tenants t ON t.id = i.tenant_id
+      WHERE i.token_hash = $1`,
+    [hash]
+  );
+  return rows[0] || null;
+}
+
+function invitationState(inv) {
+  if (!inv) return 'not_found';
+  if (inv.accepted_at) return 'accepted';
+  if (inv.revoked_at) return 'revoked';
+  if (new Date(inv.expires_at) < new Date()) return 'expired';
+  if (!inv.tenant_active) return 'tenant_inactive';
+  return 'open';
+}
+
+const INVITE_STATE_MESSAGE = {
+  not_found:       'Invitation not found',
+  accepted:        'This invitation has already been used',
+  revoked:         'This invitation was revoked',
+  expired:         'This invitation has expired — ask your administrator for a new one',
+  tenant_inactive: 'This organization is not active',
+};
+
+function rejectInvitation(res, state) {
+  const status = state === 'not_found' ? 404 : 410;
+  return res.status(status).json({ error: `invitation_${state}`, message: INVITE_STATE_MESSAGE[state], status });
+}
+
+// GET /auth/invite/:token — what the invitee is about to accept
+router.get('/invite/:token', async (req, res) => {
+  try {
+    const inv = await loadInvitation(req.params.token);
+    const state = invitationState(inv);
+    if (state !== 'open') return rejectInvitation(res, state);
+
+    const { rows } = await db.query('SELECT id FROM users WHERE lower(email) = $1 LIMIT 1', [inv.email.toLowerCase()]);
+    res.json({
+      data: {
+        email:         inv.email,
+        role:          inv.role,
+        tenant:        { name: inv.tenant_name, slug: inv.tenant_slug },
+        existing_user: rows.length > 0,
+        expires_at:    inv.expires_at,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Load invitation failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to load invitation', status: 500 });
+  }
+});
+
+const acceptInviteSchema = z.object({
+  password:     z.string().min(1).max(256),
+  accept_terms: z.literal(true, { errorMap: () => ({ message: 'The terms of service must be accepted' }) }),
+});
+
+// POST /auth/invite/:token/accept — set a password (new account) or prove the
+// existing one (account joining another organisation); logs the user in.
+router.post('/invite/:token/accept', async (req, res) => {
+  const parsed = acceptInviteSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  const { password } = parsed.data;
+
+  try {
+    const inv = await loadInvitation(req.params.token);
+    const state = invitationState(inv);
+    if (state !== 'open') return rejectInvitation(res, state);
+    const email = inv.email.toLowerCase();
+
+    const outcome = await db.transaction(async (client) => {
+      const { rows: locked } = await client.query(
+        'SELECT accepted_at, revoked_at FROM invitations WHERE id = $1 FOR UPDATE', [inv.id]);
+      if (locked[0].accepted_at || locked[0].revoked_at) return { error: 'gone' };
+
+      const { rows: uRows } = await client.query(
+        'SELECT id, email, role, password_hash, active, tenant_id FROM users WHERE lower(email) = $1 LIMIT 1', [email]);
+
+      let user;
+      let created = false;
+      if (uRows.length) {
+        user = uRows[0];
+        if (!user.active) return { error: 'account_disabled' };
+        const ok = await authSvc.comparePassword(password, user.password_hash);
+        if (!ok) return { error: 'invalid_password' };
+        // Roles are per account (users.role), not per membership: an existing
+        // account joins with the role it already has.
+        await client.query(
+          'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [user.id, inv.tenant_id]);
+      } else {
+        const pw = passwordSchema.safeParse(password);
+        if (!pw.success) return { error: 'weak_password', message: pw.error.issues[0].message };
+        const hash = await authSvc.hashPassword(password);
+        const { rows } = await client.query(
+          `INSERT INTO users (tenant_id, email, password_hash, role)
+           VALUES ($1, $2, $3, $4) RETURNING id, email, role, tenant_id`,
+          [inv.tenant_id, inv.email, hash, inv.role]);
+        user = rows[0];
+        created = true;
+        await client.query(
+          'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [user.id, inv.tenant_id]);
+      }
+      await client.query(
+        'UPDATE invitations SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1', [inv.id, user.id]);
+      return { user, created };
+    });
+
+    if (outcome.error === 'gone')             return rejectInvitation(res, 'accepted');
+    if (outcome.error === 'account_disabled') return res.status(401).json({ error: 'account_disabled', message: 'Account is disabled', status: 401 });
+    if (outcome.error === 'invalid_password') return res.status(401).json({ error: 'invalid_credentials', message: 'Password of the existing account is incorrect', status: 401 });
+    if (outcome.error === 'weak_password')    return res.status(400).json({ error: 'validation_failed', message: outcome.message, status: 400 });
+
+    const { user, created } = outcome;
+    const { accessToken, refreshToken } = await issueTokens(user, inv.tenant_id);
+    await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+    const tenants = await getUserTenants(user.id);
+
+    req.auditContext = {
+      entityId: user.id, action: 'auth.invite_accept',
+      changes: { invitation_id: inv.id, tenant_id: inv.tenant_id, created },
+    };
+    res.status(created ? 201 : 200).json({
+      data: {
+        access_token:  accessToken,
+        refresh_token: refreshToken,
+        user:    { id: user.id, email: user.email, role: user.role },
+        tenant:  { id: inv.tenant_id, name: inv.tenant_name, slug: inv.tenant_slug },
+        tenants,
+        created,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Accept invitation failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to accept invitation', status: 500 });
   }
 });
 

@@ -93,7 +93,7 @@ app.use(helmet({
       scriptSrc:     ["'self'"],
       styleSrc:      ["'self'", "'unsafe-inline'"], // Svelte inline styles
       imgSrc:        ["'self'", "data:", "https://tile.openstreetmap.org", "https://*.tile.openstreetmap.org"], // OSM tiles (map page)
-      connectSrc:    ["'self'", "wss:", "ws:"],     // WebSocket
+      connectSrc:    ["'self'", "wss:", "ws:", "https://api.pwnedpasswords.com"], // WebSocket + HIBP k-anonymity check
       fontSrc:       ["'self'"],
       objectSrc:     ["'none'"],
       frameAncestors: ["'none'"],
@@ -108,6 +108,22 @@ app.use(helmet({
 const authLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 50,                    // 50 attempts per IP per 5 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
+});
+// Self-service password reset and invitation acceptance: public, email-keyed
+// flows. 10 per IP per hour is generous for a human and useless for enumeration.
+const resetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
+});
+const inviteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
@@ -391,6 +407,9 @@ if (AUTH_ENABLED) {
   // Public auth routes (no JWT required)
   // Rate limit login only — refresh fires automatically and shouldn't count
   app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/forgot-password', resetLimiter);
+  app.use('/api/auth/reset-password', resetLimiter);
+  app.use('/api/auth/invite', inviteLimiter);
   app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT

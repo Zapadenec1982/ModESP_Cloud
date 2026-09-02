@@ -302,10 +302,13 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 
 ### Authentication
 - **JWT tokens** — 15-minute access token, 30-day refresh token with rotation
-- **Password policy** — 15-character minimum (NIST SP 800-63B aligned, no complexity rules)
-- **HaveIBeenPwned check** — client-side k-anonymity check against breached password database
-- **Rate limiting** — 50 login attempts / 5 minutes / IP
-- **Password change** — requires old password verification, issues new tokens
+- **Password policy** — 15-character minimum on every path (create, change, reset, invitation, seed script), NIST SP 800-63B aligned, no complexity rules
+- **HaveIBeenPwned check** — client-side k-anonymity check against breached password database (allowed in CSP)
+- **Rate limiting** — 50 login attempts / 5 minutes / IP; 10 reset requests / hour / IP
+- **Password change** — requires old password verification
+- **Invitations** — admins invite an email with a role; the invitee opens `#/invite/<token>` (72 h), accepts the terms and sets a password, or proves an existing account's password to join a second organisation; the link is always shown to the admin so onboarding works before email is configured
+- **Self-service reset** — "Forgot password?" emails a `#/reset` link with a 30-minute code (same code path as the admin-generated code, which stays as the fallback)
+- **Self-service router** — `/api/profile` carries own profile, email/password, Telegram link and Web Push subscription for every role; technician sessions survive a reload
 
 ### Role-Based Access Control
 

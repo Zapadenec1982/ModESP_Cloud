@@ -95,6 +95,55 @@ Authorization: Bearer <access_token>
 
 ---
 
+### `POST /auth/forgot-password`
+Самостійне скидання пароля (публічний, ліміт 10 запитів/год з IP). Відповідь однакова незалежно від того,
+чи існує адреса. Для активного акаунта генерується той самий 16-символьний код, що й в адмінському
+потоці, і надсилається листом (Resend) як посилання `#/reset?email=…&code=…`; без налаштованої пошти
+залишається адмінський код.
+
+```json
+{ "email": "tech@example.com", "lang": "uk" }
+```
+
+**Response 200:** `{ "data": { "message": "If an account with that email exists, a reset link has been sent" } }`
+
+### `POST /auth/reset-password`
+Завершення скидання (публічний): код + новий пароль (політика — мінімум 15 символів). Скидає всі
+refresh-токени користувача.
+
+```json
+{ "email": "tech@example.com", "reset_code": "0a1b2c3d4e5f6789", "new_password": "…15+ символів…" }
+```
+
+### `GET /auth/invite/:token`
+Публічний перегляд запрошення (`#/invite/<token>`). `404` — невідомий токен; `410` з
+`error: invitation_accepted | invitation_revoked | invitation_expired | invitation_tenant_inactive`.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "email": "new.tech@example.com",
+    "role": "technician",
+    "tenant": { "name": "Org A", "slug": "org-a" },
+    "existing_user": false,
+    "expires_at": "2026-09-05T09:00:00.000Z"
+  }
+}
+```
+
+### `POST /auth/invite/:token/accept`
+Прийняття запрошення. Новий акаунт: `password` (мінімум 15 символів) стає паролем; наявний акаунт
+(`existing_user: true`): `password` — його поточний пароль, після перевірки акаунт додається до
+організації зі своєю поточною роллю. `accept_terms` має бути `true`. Відповідь — як у `POST /auth/login`
+(`201` для нового акаунта, `200` для наявного), плюс `created`.
+
+```json
+{ "password": "…", "accept_terms": true }
+```
+
+---
+
 ## Пристрої
 
 ### `GET /devices`
@@ -1314,6 +1363,28 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 
 **Response 200:** оновлений профіль тієї ж форми.
 
+### `PUT /profile`
+Власні email та/або пароль (колишній `PUT /users/me`). Зміна пароля вимагає `old_password`; політика —
+мінімум 15 символів.
+
+```json
+{ "email": "new@example.com", "password": "…15+…", "old_password": "…" }
+```
+
+### `PUT /profile/password`
+```json
+{ "old_password": "…", "new_password": "…15+ символів…" }
+```
+
+### `POST /profile/telegram-link` · `DELETE /profile/telegram-link`
+Код прив'язки Telegram для власного акаунта (16 символів, 15 хв) / відв'язати.
+
+### `POST /profile/push-subscription` · `DELETE /profile/push-subscription`
+Зберегти / видалити Web Push підписку поточного браузера:
+```json
+{ "endpoint": "https://…", "keys": { "p256dh": "…", "auth": "…" } }
+```
+
 ---
 
 ## Публічна сторінка статусу точки
@@ -1504,6 +1575,36 @@ superadmin, що діє в тенанті A, видав би користува�
 
 **Ролі:** admin
 
+### `POST /users/invite`
+Запросити email до організації (admin — у власну; superadmin може передати `tenant_id`). Створює
+одноразове посилання на 72 години і надсилає лист (Resend), якщо пошта налаштована; посилання
+завжди повертається адміністратору, щоб онбординг працював і без пошти. Для email, який уже має
+акаунт, прийняття додає цей акаунт до організації (`existing_user: true`). Повторне запрошення тієї
+самої адреси відкликає попереднє. `409`, якщо користувач уже є учасником.
+
+```json
+{ "email": "new.tech@example.com", "role": "technician", "tenant_id": "uuid (лише superadmin)", "lang": "uk" }
+```
+
+**Response 201:**
+```json
+{
+  "data": {
+    "id": "uuid", "email": "new.tech@example.com", "role": "technician", "tenant_id": "uuid",
+    "existing_user": false, "email_sent": false,
+    "invite_url": "https://modesp.com.ua/#/invite/<64 hex>",
+    "created_at": "…", "expires_at": "…"
+  }
+}
+```
+
+### `GET /users/invitations`
+Відкриті (не прийняті, не відкликані, не протерміновані) запрошення організації; superadmin — усі або
+`?tenant_id=`.
+
+### `DELETE /users/invitations/:id`
+Відкликати запрошення. `404`, якщо його нема, воно вже прийняте або належить іншій організації.
+
 ---
 
 ## Per-Device RBAC (Phase 7a) + Per-Site RBAC (Phase 14)
@@ -1560,31 +1661,10 @@ superadmin, що діє в тенанті A, видав би користува�
 
 ## Push сповіщення
 
-### `POST /users/me/push-token`
-Зареєструвати FCM токен.
-
-```json
-{ "token": "fcm_token_here" }
-```
-
-### `POST /users/me/telegram`
-Прив'язати Telegram акаунт.
-
-```json
-{ "telegram_id": 123456789 }
-```
-
-### `GET /users/me/notifications`
-Налаштування підписок на сповіщення.
-
-### `PUT /users/me/notifications`
-```json
-{
-  "alarm_critical": true,
-  "alarm_warning": false,
-  "device_offline": true
-}
-```
+Самообслуговування каналів живе на `/api/profile` (див. «Профіль користувача»):
+`POST/DELETE /profile/telegram-link` (код прив'язки бота) і `POST/DELETE /profile/push-subscription`
+(Web Push підписка браузера). Адміністратор генерує код прив'язки для іншого користувача через
+`POST /users/:id/telegram-link`. Підписки на сповіщення організації — `/api/notifications`.
 
 ---
 

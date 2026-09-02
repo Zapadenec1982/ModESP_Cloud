@@ -325,6 +325,40 @@ export async function resetPassword(email, resetCode, newPassword) {
   return json.data;
 }
 
+/** POST /auth/forgot-password — always resolves; the server never reveals whether the email exists. */
+export async function forgotPassword(email, lang) {
+  return requestRaw('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, lang }),
+  });
+}
+
+// ── Invitation acceptance (public, #/invite/<token>) ─────
+
+/** GET /auth/invite/:token → { email, role, tenant: {name, slug}, existing_user, expires_at } */
+export function getInvite(token) {
+  return requestRaw(`/auth/invite/${encodeURIComponent(token)}`);
+}
+
+/**
+ * POST /auth/invite/:token/accept — sets the password (new account) or proves
+ * the existing one, then signs the user in exactly like login().
+ */
+export async function acceptInvite(token, password, acceptTerms) {
+  const data = await requestRaw(`/auth/invite/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
+    body: JSON.stringify({ password, accept_terms: acceptTerms === true }),
+  });
+  setTokens(data.access_token, data.refresh_token);
+  authUser.set(data.user);
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return data;
+}
+
 function clearAuth() {
   clearTimeout(refreshTimer);
   setTokens(null, null);
@@ -348,7 +382,7 @@ export async function restoreSession() {
 
   // Fetch user profile
   try {
-    const user = await request('/users/me');
+    const user = await request('/profile');
     authUser.set({ id: user.id, email: user.email, role: user.role });
 
     // Decode tenantId from JWT to set currentTenant
@@ -643,10 +677,28 @@ export function updateUser(id, data) {
 }
 
 export function changePassword(oldPassword, newPassword) {
-  return request('/users/me', {
+  return request('/profile/password', {
     method: 'PUT',
-    body: JSON.stringify({ old_password: oldPassword, password: newPassword }),
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
   });
+}
+
+// ── Invitations (admin) ─────────────────────────────────
+
+/** POST /users/invite → { id, email, role, tenant_id, existing_user, invite_url, email_sent, expires_at } */
+export function inviteUser({ email, role, tenant_id, lang }) {
+  return request('/users/invite', {
+    method: 'POST',
+    body: JSON.stringify({ email, role, tenant_id: tenant_id || undefined, lang }),
+  });
+}
+
+export function getInvitations() {
+  return request('/users/invitations');
+}
+
+export function revokeInvitation(id) {
+  return request(`/users/invitations/${id}`, { method: 'DELETE' });
 }
 
 export function deleteUser(id) {
@@ -692,11 +744,11 @@ export function generateTelegramLink(userId) {
 }
 
 export function generateMyTelegramLink() {
-  return request('/users/me/telegram-link', { method: 'POST' });
+  return request('/profile/telegram-link', { method: 'POST' });
 }
 
 export function unlinkMyTelegram() {
-  return request('/users/me/telegram-link', { method: 'DELETE' });
+  return request('/profile/telegram-link', { method: 'DELETE' });
 }
 
 // ── Password reset (admin) ──────────────────────────────
