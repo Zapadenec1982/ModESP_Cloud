@@ -133,7 +133,7 @@ async function request(path, options = {}) {
     const err = new Error(body.message || `HTTP ${res.status}`);
     err.status = res.status;
     err.body = body;
-    if (res.status === 402) notifyPlanLimit(body);
+    if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
     throw err;
   }
 
@@ -984,7 +984,7 @@ async function downloadFile(path, filename) {
     const err = new Error(body.message || `Export failed: ${res.status}`);
     err.status = res.status;
     err.body = body;
-    if (res.status === 402) notifyPlanLimit(body);
+    if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
     throw err;
   }
   const blob = await res.blob();
@@ -1180,7 +1180,8 @@ export function geocodePendingSites({ retryFailed = false } = {}) {
  * 'unavailable') tells those three apart.
  */
 export function getSiteWeather(id, { hours } = {}) {
-  return requestFull(`/sites/${id}/weather${geoQuery({ hours })}`);
+  // quiet: weather is a plan feature — a 402 hides the widget, it is not a warning
+  return requestFull(`/sites/${id}/weather${geoQuery({ hours })}`, { quiet: true });
 }
 
 /**
@@ -1189,7 +1190,7 @@ export function getSiteWeather(id, { hours } = {}) {
  * a partial period instead of drawing it as complete.
  */
 export function getSiteWeatherHistory(id, { from, to } = {}) {
-  return requestFull(`/sites/${id}/weather/history${geoQuery({ from, to })}`);
+  return requestFull(`/sites/${id}/weather/history${geoQuery({ from, to })}`, { quiet: true });
 }
 
 // ── Nearest technicians (Part 2 §7.4) ────────────────────

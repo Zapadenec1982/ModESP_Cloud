@@ -1027,7 +1027,7 @@ router.post('/:id/geocode', maybeAuthorize('admin'), async (req, res, next) => {
 // Registered before /:id/weather for clarity — Express matches exact paths.
 // Any role that may READ THE SITE: outdoor weather is public data, but "which
 // site ids exist in this tenant" is not — hence the same gate as GET /:id.
-router.get('/:id/weather/history', filterDeviceAccess(), async (req, res, next) => {
+router.get('/:id/weather/history', planMw.requireFeature('weather'), filterDeviceAccess(), async (req, res, next) => {
   try {
     if (!isUuidFormat(req.params.id)) return siteNotFound(res);
 
@@ -1070,7 +1070,7 @@ router.get('/:id/weather/history', filterDeviceAccess(), async (req, res, next) 
 // the endpoint degrades to { data: null } with a reason — never a 500.
 // Any role that may READ THE SITE — same gate as GET /:id, so an unentitled
 // caller cannot use this endpoint to enumerate the tenant's site ids.
-router.get('/:id/weather', filterDeviceAccess(), async (req, res, next) => {
+router.get('/:id/weather', planMw.requireFeature('weather'), filterDeviceAccess(), async (req, res, next) => {
   try {
     if (!isUuidFormat(req.params.id)) return siteNotFound(res);
 

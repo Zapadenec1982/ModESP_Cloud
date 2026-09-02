@@ -642,7 +642,7 @@ function googleMapsUrl(stops, roundtrip) {
   return url.toString();
 }
 
-router.post('/route', maybeAuthorize('admin', 'technician'), filterDeviceAccess(), async (req, res, next) => {
+router.post('/route', maybeAuthorize('admin', 'technician'), requireFeature('routing'), filterDeviceAccess(), async (req, res, next) => {
   const parsed = routeSchema.safeParse(req.body);
   if (!parsed.success) {
     return badRequest(res, parsed.error.issues[0]?.message || 'Invalid input');

@@ -647,3 +647,4 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 - 2026-09-02 — Міграція 028: `telemetry_hourly` (погодинний архів на 3 роки) і `report_exports` (реєстр звітів HACCP з кодом перевірки та SHA-256); `cleanup-telemetry.js` перенесено в щоденний `modesp-retention-cleanup`, ретенція сирої телеметрії — за `plan_limits.retention_days`.
 - 2026-09-02 — Міграція 029: `site_public_links.rate_limit_exempt` (showcase-посилання без ліміту переглядів). Права ролі застосунку — `infra/sql/app-grants.sql`, перевірка — `infra/sql/check-grants.sql` (CI, `setup.sh`, `deploy.sh`).
 - 2026-09-02 — Міграція 030: ціни в `plan_limits`, таблиця `pilot_requests`.
+- 2026-09-02 — Міграція 031: функції планів `weather` і `routing` для `pro`/`enterprise`/`partner`.

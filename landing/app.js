@@ -85,7 +85,7 @@
   }
 
   // ── Pricing from the catalogue (/api/public/plans) ─────
-  var FEATURE_LABELS = { geo: 'Точки і карта', energy: 'Енергомоніторинг', reports: 'HACCP PDF і планові звіти', ota_rollout: 'OTA-ролаути', api: 'API-ключі', branding: 'Брендовані сторінки і PDF', partner: 'Партнерський рахунок' };
+  var FEATURE_LABELS = { geo: 'Точки і карта', energy: 'Енергомоніторинг', reports: 'HACCP PDF і планові звіти', weather: 'Погода на точках', routing: 'Планувальник об\'їзду', ota_rollout: 'OTA-ролаути', api: 'API-ключі', branding: 'Брендовані сторінки і PDF', partner: 'Партнерський рахунок' };
   function priceLine(p) {
     if (p.price_base_uah) return fmt(p.price_base_uah) + ' грн<small>/міс</small> + ' + fmt(p.price_controller_uah || 0) + ' грн<small>/контролер</small>';
     if (p.price_site_uah) return fmt(p.price_site_uah) + ' грн<small>/точка</small> + ' + fmt(p.price_controller_uah || 0) + ' грн<small>/контролер</small>';

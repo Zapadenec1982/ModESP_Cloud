@@ -144,6 +144,16 @@ Ubuntu 24.04
 
 ---
 
+## Гео-сервіси в продакшені
+
+З `NODE_ENV=production` бекенд не стартує, поки в `.env` лишаються публічний Nominatim, демо
+OSRM, Open-Meteo без ключа або тайли OSM у `MAP_TILE_HOSTS` (`src/lib/licensing-check.js`);
+`ALLOW_NONCOMMERCIAL_GEO=true` — свідомий обхід для демо-сервера. Self-hosted OSRM і
+Nominatim на витягу України — `infra/geo/` (Docker, README там же); погода — платний ключ
+`WEATHER_API_KEY`; тайли — платний провайдер у `webui/.env`, `MAP_TILE_HOSTS` і обох CSP
+`modesp.conf`. Погода і планувальник об'їзду — функції планів `pro`/`enterprise`/`partner`
+(міграція 031), інші плани отримують `402 plan_feature`.
+
 ## Ліцензування третіх сторін — прочитати ДО продакшну
 
 ModESP Cloud — комерційний продукт. Гео-функціонал спирається на п'ять зовнішніх сервісів, які зараз
@@ -957,6 +967,7 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — Гео-ліцензування (епік 1.2): `licensing-check.js` (відмова старту в продакшені з некомерційними хостами, `ALLOW_NONCOMMERCIAL_GEO`), `infra/geo/` (OSRM + Nominatim у Docker, `prepare-osrm.sh`), `WEATHER_API_KEY` (customer host Open-Meteo), `MAP_TILE_HOSTS` для CSP helmet, міграція 031 (функції `weather`, `routing`), розділ «Гео-сервіси в продакшені».
 - 2026-09-02 — Лендінг (епік 1.11): `landing/` на `/`, WebUI переїхав на `/cloud/` (`vite.config.js` `base`, редирект старих hash-посилань), `/legal/*` з `docs/legal` через `build-legal.js`, окрема CSP для лендінгу в `modesp.conf`; міграція 030 (ціни в `plan_limits`, `pilot_requests`); `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `EMAIL_APP_URL` → `…/cloud`, нові `PUBLIC_BASE_URL`, `PILOT_REQUEST_EMAIL`; `setup.sh`/`deploy.sh` ставлять посилання `/var/www/modesp/landing`.
 - 2026-09-02 — Релізи (епік 1.10): `infra/deploy.sh` (init / release / rollback / status з health-гейтом і автоматичним відкатом), розкладка `/opt/modesp-releases` із символьним посиланням `/opt/modesp-cloud`, `infra/scripts/build-release.sh`, workflow `release.yml` (тег → GitHub Release) і `deploy-staging.yml` (main → staging), CI-джоб міграцій і GRANT-ів на порожній БД, `infra/sql/app-grants.sql` + `check-grants.sql` (використовує і `setup.sh`), розділ «Релізи, staging і демо», `purge-demo.js`, `CHANGELOG.md`, версія 1.0.0.
 - 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.

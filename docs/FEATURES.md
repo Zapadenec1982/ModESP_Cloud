@@ -459,6 +459,10 @@ Production-ready deployment with TLS, backups, and monitoring.
 - Every green `main` is installed on the staging/demo server automatically once `STAGING_HOST` and the SSH key are configured
 - Production carries no synthetic data: `purge-demo.js` removes demo organisations, the provisioning scripts refuse `NODE_ENV=production` without `--allow-production`, and a showcase status link (`rate_limit_exempt`) serves the landing page
 
+### Geo services licensing
+- Production refuses to start with the public Nominatim endpoint, the OSRM demo server, keyless Open-Meteo or public OSM tile hosts configured (`ALLOW_NONCOMMERCIAL_GEO=true` overrides knowingly); `infra/geo/` runs OSRM and Nominatim on the Ukraine extract in Docker; Open-Meteo uses a paid key on the customer host; tile hosts for the CSP come from `MAP_TILE_HOSTS`
+- Weather and the service-round planner are plan features (`weather`, `routing`) of the network, enterprise and partner plans
+
 ### Landing page and public pages
 - `landing/` (static, no build, own CSP) at `/`: what the controller does, three customer segments, a 30-day chart, a fine-vs-subscription calculator, prices read live from `plan_limits` (`GET /api/public/plans`), a partner page, legal pages generated from `docs/legal`, `robots.txt` and `sitemap.xml`
 - Pilot request form → `POST /api/public/pilot-request` (stored in `pilot_requests`, e-mailed to the founder, honeypot-protected); superadmin reads leads at `GET /api/pilot-requests`

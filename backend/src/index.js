@@ -46,29 +46,14 @@ if (AUTH_ENABLED) {
   }
 }
 
-// ── Third-party licensing reminder ────────────────────────
-// Nominatim, Open-Meteo, the OSRM demo server and OpenRouteService are all free for
-// NON-COMMERCIAL use only. ModESP Cloud is a commercial product, so every enabled
-// service needs a paid plan or a self-hosted instance before production.
-// Warn only — never process.exit: breaking a running production system over a
-// licensing note would be worse than the note being missed.
-function logThirdPartyLicensing() {
-  const enabled = [];
-  if (geocodeSvc.isEnabled())         enabled.push('Nominatim (geocoding)');
-  if (weatherSvc.isEnabled())         enabled.push('Open-Meteo (outdoor weather, site timezones)');
-  if (routingSvc.isEnabled())         enabled.push('OSRM (route / service-round planning)');
-  if (routingSvc.isochronesEnabled()) enabled.push('OpenRouteService (isochrones)');
-  if (enabled.length === 0) return;
-
-  const message = 'Third-party geo services are enabled under free / non-commercial terms — '
-    + 'buy a plan or self-host before production. See docs/THIRD_PARTY_LICENSING.md';
-  if (process.env.NODE_ENV === 'production') {
-    logger.warn({ services: enabled }, message);
-  } else {
-    logger.info({ services: enabled }, message);
-  }
+// ── Third-party licensing guard (plan epic 1.2) ───────────
+// Nominatim's public endpoint, the OSRM demo server, Open-Meteo without a key and
+// the public OSM tiles are non-commercial only. In production the process refuses
+// to start with any of them configured unless ALLOW_NONCOMMERCIAL_GEO=true.
+const licensing = require('./lib/licensing-check');
+if (!licensing.enforce({ env: process.env, logger })) {
+  process.exit(1);
 }
-logThirdPartyLicensing();
 
 // ── Express ───────────────────────────────────────────
 const app    = express();
@@ -87,6 +72,11 @@ app.use(cors({
   credentials: true,
 }));
 
+// Map tile origins allowed by the CSP. Must match the host in VITE_MAP_TILE_URL
+// (webui/.env) and the two CSP headers in infra/nginx/modesp.conf.
+const MAP_TILE_HOSTS = (process.env.MAP_TILE_HOSTS || 'https://tile.openstreetmap.org,https://*.tile.openstreetmap.org')
+  .split(',').map(h => h.trim()).filter(Boolean);
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: {
@@ -94,7 +84,7 @@ app.use(helmet({
       defaultSrc:    ["'self'"],
       scriptSrc:     ["'self'"],
       styleSrc:      ["'self'", "'unsafe-inline'"], // Svelte inline styles
-      imgSrc:        ["'self'", "data:", "https://tile.openstreetmap.org", "https://*.tile.openstreetmap.org"], // OSM tiles (map page)
+      imgSrc:        ["'self'", "data:", ...MAP_TILE_HOSTS], // map tiles — MAP_TILE_HOSTS (webui VITE_MAP_TILE_URL host)
       connectSrc:    ["'self'", "wss:", "ws:", "https://api.pwnedpasswords.com"], // WebSocket + HIBP k-anonymity check
       fontSrc:       ["'self'"],
       objectSrc:     ["'none'"],
