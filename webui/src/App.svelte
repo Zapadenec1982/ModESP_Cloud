@@ -51,6 +51,8 @@
     // write controls inside the page are behind $isAdmin, matching the backend.
     '/sites':           wrap({ asyncComponent: () => import('./pages/Sites.svelte') }),
     '/alarms':          Alarms,
+    // Every role: own notification preferences; the subscriber sections inside are admin-only.
+    '/notifications':   wrap({ asyncComponent: () => import('./pages/Notifications.svelte') }),
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
@@ -189,6 +191,7 @@
     '/map': 'pages.map',
     '/geo-stats': 'pages.geo_stats',
     '/alarms': 'pages.alarms',
+    '/notifications': 'pages.notifications',
     '/pending': 'pages.pending',
     '/firmware': 'pages.firmware',
     '/tenants': 'pages.tenants',

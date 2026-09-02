@@ -1,8 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getAlarms, exportAlarmsCsv } from '../lib/api.js'
+  import { getAlarms, exportAlarmsCsv, ackAlarm } from '../lib/api.js'
   import { on } from '../lib/ws.js'
-  import { navigate } from '../lib/stores.js'
+  import { navigate, canWrite } from '../lib/stores.js'
   import { timeAgo, alarmLabel } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
@@ -20,6 +20,7 @@
   let loadingMore = false
   let hasMore = true
   let wsUnsub
+  let wsUnsubAck
   let severityFilter = null  // null = all, 'critical', 'warning', 'info'
 
   const PAGE_SIZE = 50
@@ -104,6 +105,24 @@
     load()
   }
 
+  // ── Acknowledge (plan epic 1.6) ──
+  let ackingId = null
+
+  async function handleAck(alarm) {
+    const note = prompt($t('alarm.ack_note_prompt'), '')
+    if (note === null) return
+    ackingId = alarm.id
+    try {
+      await ackAlarm(alarm.id, note.trim() || null)
+      toast.success($t('alarm.acked'))
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      ackingId = null
+    }
+  }
+
   function severityVariant(severity) {
     if (severity === 'critical') return 'danger'
     if (severity === 'warning') return 'warning'
@@ -129,6 +148,7 @@
   onMount(() => {
     load()
     wsUnsub = on('alarm', () => load())
+    wsUnsubAck = on('alarm_ack', () => load())
     // Poll every 30s as fallback for missed WS events
     pollInterval = setInterval(() => { if (!loading) load() }, 30000)
   })
@@ -212,23 +232,36 @@
       {:else}
         <div class="active-list">
           {#each activeAlarms as alarm}
-            <button
-              class="alarm-row active"
-              on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
-              aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
-            >
-              <div class="alarm-severity">
-                <Badge variant={severityVariant(alarm.severity)} pulse>
-                  {(alarm.severity || 'warning').toUpperCase()}
-                </Badge>
-              </div>
-              <div class="alarm-info">
-                <span class="alarm-type">{alarmLabel(alarm.alarm_code)}</span>
-                <span class="alarm-device font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
-              </div>
-              <div class="alarm-time">{timeAgo(alarm.triggered_at || alarm.created_at)}</div>
-              <Icon name="chevron-right" size={16} />
-            </button>
+            <div class="alarm-item" class:acked={alarm.acknowledged_at}>
+              <button
+                class="alarm-row active"
+                on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
+                aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
+              >
+                <div class="alarm-severity">
+                  <Badge variant={severityVariant(alarm.severity)} pulse={!alarm.acknowledged_at}>
+                    {(alarm.severity || 'warning').toUpperCase()}
+                  </Badge>
+                </div>
+                <div class="alarm-info">
+                  <span class="alarm-type">{alarmLabel(alarm.alarm_code)}</span>
+                  <span class="alarm-device font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                  {#if alarm.acknowledged_at}
+                    <span class="ack-info">{$t('alarm.acked_by', alarm.acknowledged_by_email || '—')} · {timeAgo(alarm.acknowledged_at)}{alarm.ack_note ? ' — ' + alarm.ack_note : ''}</span>
+                  {:else if alarm.escalated_at}
+                    <span class="ack-info escalated">{$t('alarm.escalated')}</span>
+                  {/if}
+                </div>
+                <div class="alarm-time">{timeAgo(alarm.triggered_at || alarm.created_at)}</div>
+                <Icon name="chevron-right" size={16} />
+              </button>
+              {#if $canWrite && !alarm.acknowledged_at}
+                <button class="ack-btn" on:click={() => handleAck(alarm)} disabled={ackingId === alarm.id} title={$t('alarm.ack')}>
+                  <Icon name="check" size={14} />
+                  <span>{$t('alarm.ack')}</span>
+                </button>
+              {/if}
+            </div>
           {/each}
         </div>
       {/if}
@@ -495,6 +528,36 @@
     color: var(--accent-green);
     font-size: var(--text-sm);
   }
+
+  .alarm-item {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  .alarm-item .alarm-row.active { flex: 1; min-width: 0; }
+  .alarm-item.acked .alarm-row.active { opacity: 0.75; }
+  .ack-info {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .ack-info.escalated { color: var(--accent-orange, #f59e0b); }
+  .ack-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .ack-btn:hover:not(:disabled) { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .ack-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .active-list {
     display: flex;

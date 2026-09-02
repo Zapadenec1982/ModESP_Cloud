@@ -557,6 +557,28 @@ Max range: 31 day.
 
 ---
 
+### `POST /alarms/:id/ack`
+Взяти аварію в роботу (admin, technician з доступом до пристрою). Один раз на аварію: повторно —
+`409 already_acknowledged`. Розсилає WebSocket-подію `alarm_ack`. Списки аварій віддають
+`acknowledged_at`, `acknowledged_by_email`, `ack_note`, `escalated_at`.
+
+```json
+{ "note": "Виїжджаю, буду за 30 хв" }
+```
+
+### `GET /alarms/:id/deliveries`
+Журнал доставки сповіщень цієї аварії (admin): канал, статус, помилка, користувач або підписник.
+
+Правила розсилки (push.js): адміністратори організації; техніки/глядачі — через `user_devices ∪
+user_sites`; superadmin — лише з `users.receive_all_tenant_alerts`; налаштування користувача
+(`GET/PUT /profile/notifications`): увімкнено, мінімальна важливість, канали, тихі години (критичні
+й ескалації проходять завжди). Критична аварія без підтвердження за `ALARM_ACK_ESCALATION_MIN`
+(15) хв один раз повторно надсилається адміністраторам (`alarms.escalated_at`). Втрата зв'язку —
+аварія `device_offline` (warning) через `OFFLINE_ALARM_DELAY_MS` (2 хв) після виявлення офлайну,
+закривається першим повідомленням пристрою.
+
+---
+
 ## Events (Phase 11a)
 
 ### `GET /devices/:id/events`
@@ -1368,6 +1390,15 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 Зберегти / видалити Web Push підписку поточного браузера:
 ```json
 { "endpoint": "https://…", "keys": { "p256dh": "…", "auth": "…" } }
+```
+
+---
+
+### `GET /profile/notifications` · `PUT /profile/notifications`
+Власні налаштування сповіщень (часткове оновлення):
+```json
+{ "enabled": true, "min_severity": "warning", "telegram": true, "webpush": true, "email": false,
+  "quiet_from": "22:00", "quiet_to": "07:00", "quiet_tz": "Europe/Kyiv" }
 ```
 
 ---

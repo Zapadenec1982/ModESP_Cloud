@@ -372,6 +372,7 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
   }
 
   // Update state
+  if (!state._online || state._offlineSince) clearOfflineAlarm(state, deviceId);
   state[key]       = value;
   state._lastSeen  = now;
   state._online    = true;
@@ -438,6 +439,7 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   // Log event
   if (online) {
     insertEvent(tenantInfo.id, deviceId, 'device_online');
+    clearOfflineAlarm(state, deviceId);
   } else {
     insertEvent(tenantInfo.id, deviceId, 'device_offline');
   }
@@ -482,6 +484,7 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
     };
     stateMap.set(deviceId, state);
   }
+  if (!state._online || state._offlineSince) clearOfflineAlarm(state, deviceId);
   state._lastSeen = now;
   state._online   = true;
 
@@ -748,12 +751,16 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
     }
     // Alarm cleared — await DB before emitting to avoid race condition
     let cleared;
+    let clearedId = null;
     try {
-      ({ rowCount: cleared } = await db.query(
+      const res = await db.query(
         `UPDATE alarms SET active = false, cleared_at = NOW()
-         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true
+         RETURNING id`,
         [tenantInfo.id, deviceId, alarmCode]
-      ));
+      );
+      cleared = res.rowCount;
+      clearedId = res.rows[0]?.id ?? null;
     } catch (err) {
       // Never announce a clear we failed to persist — the alarm row is still
       // active = true, so the UI reading it would contradict the broadcast.
@@ -766,22 +773,24 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
     // (429) and drowned out the clears that carried real information.
     if (cleared === 0) return;
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
-    emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: false, severity });
+    emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmId: clearedId, alarmCode, active: false, severity });
   }
 }
 
 async function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
   logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
+  let alarmId = null;
   try {
-    await db.query(
+    const { rows } = await db.query(
       `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
-       VALUES ($1, $2, $3, $4, true, NOW())`,
+       VALUES ($1, $2, $3, $4, true, NOW()) RETURNING id`,
       [tenantInfo.id, deviceId, alarmCode, severity]
     );
+    alarmId = rows[0].id;
   } catch (err) {
     logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm');
   }
-  emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: true, severity });
+  emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmId, alarmCode, active: true, severity });
 }
 
 function alarmSeverity(code) {
@@ -1360,6 +1369,61 @@ function stateSweeper() {
   if (evicted) logger.debug({ evicted, remaining: stateMap.size }, 'StateMap sweep');
 }
 
+// ── Offline as an alarm (plan epic 1.6) ───────────────────
+//
+// A device that stays offline for OFFLINE_ALARM_DELAY after the detector marked
+// it offline gets a `device_offline` alarm row (severity warning); it is closed
+// the moment the device is heard from again. The row makes an outage visible in
+// the alarm list, acknowledgeable and part of the HACCP history, and the push
+// service notifies through the ordinary alarm path.
+
+const OFFLINE_ALARM_DELAY = parseInt(process.env.OFFLINE_ALARM_DELAY_MS, 10) || 120_000;
+
+async function raiseOfflineAlarm(state, deviceId) {
+  if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
+  try {
+    const { rows: existing } = await db.query(
+      `SELECT id FROM alarms
+        WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = 'device_offline' AND active = true LIMIT 1`,
+      [state._tenantId, deviceId]
+    );
+    if (existing.length) return;
+    const { rows } = await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+       VALUES ($1, $2, 'device_offline', 'warning', true, NOW()) RETURNING id`,
+      [state._tenantId, deviceId]
+    );
+    logger.warn({ tenantSlug: state._tenantSlug, deviceId }, 'Device offline alarm raised');
+    emitter.emit('alarm', {
+      tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId,
+      alarmId: rows[0].id, alarmCode: 'device_offline', active: true, severity: 'warning',
+      lastSeen: state._lastSeen ? new Date(state._lastSeen).toISOString() : null,
+    });
+  } catch (err) {
+    logger.error({ err, deviceId }, 'Failed to raise offline alarm');
+  }
+}
+
+function clearOfflineAlarm(state, deviceId) {
+  state._offlineSince = 0;
+  state._offlineAlarmed = false;
+  if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
+  db.query(
+    `UPDATE alarms SET active = false, cleared_at = NOW()
+      WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = 'device_offline' AND active = true
+      RETURNING id`,
+    [state._tenantId, deviceId]
+  ).then(({ rows }) => {
+    for (const r of rows) {
+      logger.info({ tenantSlug: state._tenantSlug, deviceId }, 'Device offline alarm cleared');
+      emitter.emit('alarm', {
+        tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId,
+        alarmId: r.id, alarmCode: 'device_offline', active: false, severity: 'warning',
+      });
+    }
+  }).catch(err => logger.error({ err, deviceId }, 'Failed to clear offline alarm'));
+}
+
 // ── Periodic: Offline detector (every 30s) ────────────────
 
 async function offlineDetector() {
@@ -1381,11 +1445,21 @@ async function offlineDetector() {
     ).catch(err => logger.error({ err, deviceId }, 'Failed to mark device offline'));
 
     insertEvent(state._tenantId, deviceId, 'device_offline');
+    state._offlineSince = now;
+    state._offlineAlarmed = false;
 
     emitter.emit('device_status', {
       tenantSlug: state._tenantSlug, deviceId, online: false,
       lastSeen: new Date(state._lastSeen).toISOString(),
     });
+  }
+
+  // Second pass: devices offline for longer than OFFLINE_ALARM_DELAY get an alarm.
+  for (const [deviceId, state] of stateMap) {
+    if (state._online || !state._offlineSince || state._offlineAlarmed) continue;
+    if (now - state._offlineSince < OFFLINE_ALARM_DELAY) continue;
+    state._offlineAlarmed = true;
+    await raiseOfflineAlarm(state, deviceId);
   }
 }
 
@@ -1871,7 +1945,8 @@ module.exports = {
   // restart path without a broker. Not part of the service API.
   __test: {
     setLogger(l) { logger = l; },
-    handleStateKey, bootstrapStateMap, rearmPendingAlarms, stateWriter,
+    handleStateKey, handleStatus, bootstrapStateMap, rearmPendingAlarms, stateWriter,
+    offlineDetector, OFFLINE_ALARM_DELAY,
     stateMap, pendingAlarms, NUISANCE_DELAY,
     reset() {
       stateMap.clear();

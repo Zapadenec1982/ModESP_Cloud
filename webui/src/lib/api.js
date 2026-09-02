@@ -615,6 +615,32 @@ export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
   return request(`/alarms${qs ? '?' + qs : ''}`);
 }
 
+/** POST /alarms/:id/ack — take the alarm into work (admin, technician). */
+export function ackAlarm(alarmId, note) {
+  return request(`/alarms/${alarmId}/ack`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  });
+}
+
+/** GET /alarms/:id/deliveries (admin) — who was notified about the alarm and how. */
+export function getAlarmDeliveries(alarmId) {
+  return request(`/alarms/${alarmId}/deliveries`);
+}
+
+/** GET /profile/notifications — own notification preferences. */
+export function getMyNotificationPrefs() {
+  return request('/profile/notifications');
+}
+
+/** PUT /profile/notifications — partial update of own notification preferences. */
+export function updateMyNotificationPrefs(data) {
+  return request('/profile/notifications', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
 export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);

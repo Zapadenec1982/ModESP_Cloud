@@ -325,4 +325,73 @@ router.delete('/push-subscription', async (req, res) => {
   }
 });
 
+// ── Notification preferences (own) ─────────────────────────
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const prefsSchema = z.object({
+  enabled:      z.boolean().optional(),
+  min_severity: z.enum(['info', 'warning', 'critical']).optional(),
+  telegram:     z.boolean().optional(),
+  webpush:      z.boolean().optional(),
+  email:        z.boolean().optional(),
+  quiet_from:   z.string().regex(HHMM, 'quiet_from must be HH:MM').nullable().optional(),
+  quiet_to:     z.string().regex(HHMM, 'quiet_to must be HH:MM').nullable().optional(),
+  quiet_tz:     z.string().min(1).max(64).optional(),
+}).refine(d => (d.quiet_from === undefined) === (d.quiet_to === undefined) || d.quiet_from === null || d.quiet_to === null, {
+  message: 'quiet_from and quiet_to must be set together',
+});
+
+const PREF_DEFAULTS = {
+  enabled: true, min_severity: 'info', telegram: true, webpush: true, email: true,
+  quiet_from: null, quiet_to: null, quiet_tz: 'Europe/Kyiv',
+};
+const PREF_COLUMNS = 'enabled, min_severity, telegram, webpush, email, quiet_from, quiet_to, quiet_tz, updated_at';
+
+router.get('/notifications', async (req, res) => {
+  try {
+    const { rows } = await db.query(`SELECT ${PREF_COLUMNS} FROM user_notification_prefs WHERE user_id = $1`, [req.user.id]);
+    res.json({ data: rows[0] ? { ...rows[0], quiet_from: rows[0].quiet_from?.trim() || null, quiet_to: rows[0].quiet_to?.trim() || null } : { ...PREF_DEFAULTS, updated_at: null } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Get notification prefs failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to load preferences', status: 500 });
+  }
+});
+
+router.put('/notifications', async (req, res) => {
+  const parsed = prefsSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  const d = parsed.data;
+  if (d.quiet_tz) {
+    try { new Intl.DateTimeFormat('en-GB', { timeZone: d.quiet_tz }); }
+    catch { return res.status(400).json({ error: 'validation_failed', message: 'quiet_tz must be an IANA time zone', status: 400 }); }
+  }
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO user_notification_prefs (user_id, enabled, min_severity, telegram, webpush, email, quiet_from, quiet_to, quiet_tz, updated_at)
+       VALUES ($1, COALESCE($2, true), COALESCE($3, 'info'), COALESCE($4, true), COALESCE($5, true), COALESCE($6, true), $7, $8, COALESCE($9, 'Europe/Kyiv'), now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         enabled      = COALESCE($2, user_notification_prefs.enabled),
+         min_severity = COALESCE($3, user_notification_prefs.min_severity),
+         telegram     = COALESCE($4, user_notification_prefs.telegram),
+         webpush      = COALESCE($5, user_notification_prefs.webpush),
+         email        = COALESCE($6, user_notification_prefs.email),
+         quiet_from   = CASE WHEN $10 THEN $7 ELSE user_notification_prefs.quiet_from END,
+         quiet_to     = CASE WHEN $10 THEN $8 ELSE user_notification_prefs.quiet_to END,
+         quiet_tz     = COALESCE($9, user_notification_prefs.quiet_tz),
+         updated_at   = now()
+       RETURNING ${PREF_COLUMNS}`,
+      [req.user.id, d.enabled ?? null, d.min_severity ?? null, d.telegram ?? null, d.webpush ?? null, d.email ?? null,
+       d.quiet_from ?? null, d.quiet_to ?? null, d.quiet_tz ?? null, d.quiet_from !== undefined || d.quiet_to !== undefined]
+    );
+    req.auditContext = { entityId: req.user.id, action: 'profile.notification_prefs' };
+    const row = rows[0];
+    res.json({ data: { ...row, quiet_from: row.quiet_from?.trim() || null, quiet_to: row.quiet_to?.trim() || null } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Update notification prefs failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to save preferences', status: 500 });
+  }
+});
+
 module.exports = router;

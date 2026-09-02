@@ -30,6 +30,7 @@
     // Any authenticated role: GET /api/stats/geo narrows by RBAC rather than by role.
     { path: '/geo-stats',     icon: 'globe',    label: $t('nav.geo_stats') },
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
+    { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
     { section: $t('nav.sections.management') },
     // Any authenticated role: GET /api/sites narrows by RBAC rather than by role,
     // and the page hides its own write controls from a non-admin.

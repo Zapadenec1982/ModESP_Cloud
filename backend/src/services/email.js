@@ -21,6 +21,7 @@ const ALARM_NAMES = {
     'protection.continuous_run_alarm':  'Безперервна робота',
     'protection.pulldown_alarm':        'Повільне охолодження',
     'protection.rate_alarm':            'Швидка зміна температури',
+    'device_offline':                   'Пристрій офлайн',
     'test_notification':                'Тестове сповіщення',
   },
   en: {
@@ -34,6 +35,7 @@ const ALARM_NAMES = {
     'protection.continuous_run_alarm':  'Continuous Run',
     'protection.pulldown_alarm':        'Slow Pulldown',
     'protection.rate_alarm':            'Rate of Change',
+    'device_offline':                   'Device offline',
     'test_notification':                'Test Notification',
   },
 };
@@ -110,6 +112,11 @@ async function send(emailAddress, payload) {
 
 // ── Email builder ─────────────────────────────────────────
 
+function alarmNameFor(lang, code) {
+  const names = ALARM_NAMES[lang] || ALARM_NAMES.uk;
+  return names[code] || names[`protection.${code}`] || code;
+}
+
 function buildEmail(payload) {
   const lang = 'uk'; // default Ukrainian; can be extended per-user later
 
@@ -139,7 +146,7 @@ function buildTestEmail(lang) {
 }
 
 function buildAlarmRaisedEmail(payload, lang) {
-  const alarmName = (ALARM_NAMES[lang] || ALARM_NAMES.uk)[payload.alarmCode] || payload.alarmCode;
+  const alarmName = alarmNameFor(lang, payload.alarmCode);
   const severity = payload.severity || 'warning';
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const sevLabel = (SEVERITY_LABELS[lang] || SEVERITY_LABELS.uk)[severity] || severity;
@@ -150,7 +157,8 @@ function buildAlarmRaisedEmail(payload, lang) {
   const time = formatTime(payload.timestamp);
   const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
 
-  const subject = `🚨 ${alarmName} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
+  const escalation = payload.escalation ? (lang === 'uk' ? `⏫ Не підтверджено ${payload.escalation.minutes} хв: ` : `⏫ Not acknowledged for ${payload.escalation.minutes} min: `) : '';
+  const subject = `${escalation}🚨 ${alarmName} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
 
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:${color};height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
@@ -178,7 +186,7 @@ function buildAlarmRaisedEmail(payload, lang) {
 }
 
 function buildAlarmClearedEmail(payload, lang) {
-  const alarmName = (ALARM_NAMES[lang] || ALARM_NAMES.uk)[payload.alarmCode] || payload.alarmCode;
+  const alarmName = alarmNameFor(lang, payload.alarmCode);
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
   const time = formatTime(payload.timestamp);

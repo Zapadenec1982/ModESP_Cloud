@@ -50,6 +50,7 @@ function attach(server, log) {
   // Listen to MQTT events
   mqttSvc.on('state_delta',       onStateDelta);
   mqttSvc.on('alarm',             onAlarm);
+  mqttSvc.on('alarm_ack',         onAlarmAck);
   mqttSvc.on('device_status',     onDeviceStatus);
   mqttSvc.on('pending_device',    onPendingDevice);
   mqttSvc.on('backfill_complete', onBackfillComplete);
@@ -290,6 +291,19 @@ function onAlarm({ tenantSlug, tenantId, deviceId, alarmCode, active, severity }
   broadcast(deviceId, payload);
   // Send to global listeners (Alarms page) with tenant context for filtering
   broadcastGlobal({ ...payload, tenant_slug: tenantSlug, tenant_id: tenantId || null });
+}
+
+function onAlarmAck({ tenantId, deviceId, alarmId, alarmCode, acknowledgedBy }) {
+  const payload = {
+    type: 'alarm_ack',
+    alarm_id: alarmId,
+    device_id: deviceId,
+    alarm_code: alarmCode,
+    acknowledged_by: acknowledgedBy,
+    time: new Date().toISOString(),
+  };
+  broadcast(deviceId, payload);
+  broadcastGlobal({ ...payload, tenant_id: tenantId || null });
 }
 
 function onDeviceStatus({ deviceId, online, lastSeen }) {

@@ -241,6 +241,13 @@ Operational events beyond alarms — equipment cycles, status changes, device co
 
 ## 10. Notifications & Alerting
 
+### Correctness and acknowledgement (plan epic 1.6)
+- Recipients: organisation admins; technicians and viewers through per-device grants **or** site grants (the same rule the API uses); superadmins only when `receive_all_tenant_alerts` is set
+- Per-user preferences ("My notifications", every role): on/off, minimum severity, channels, quiet hours with time zone — critical alarms and escalations always get through
+- Acknowledge: `POST /alarms/:id/ack` with an optional note, button on the Alarms page, shown in device alarm history; an unacknowledged critical alarm is re-sent once to admins after `ALARM_ACK_ESCALATION_MIN` (15) minutes, tracked in the database so restarts neither lose nor duplicate it
+- Offline is an alarm: `device_offline` (warning) is raised two minutes after the offline detector fires and closed by the device's next message, so outages show up in alarm lists, HACCP history and acknowledgement flows
+- Every user-path delivery (Telegram, Web Push, email) is logged with user and alarm; admins see it via `GET /alarms/:id/deliveries`
+
 Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
 ### Telegram Bot

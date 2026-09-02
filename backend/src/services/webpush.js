@@ -62,7 +62,8 @@ async function send(subscriptionJson, payload) {
     throw new Error('Invalid subscription data');
   }
 
-  const alarmName = ALARM_NAMES[payload.alarmCode] || payload.alarmCode || '';
+  const alarmName = ALARM_NAMES[payload.alarmCode] || ALARM_NAMES[`protection.${payload.alarmCode}`]
+    || (payload.alarmCode === 'device_offline' ? 'Пристрій офлайн' : payload.alarmCode) || '';
   const deviceName = payload.deviceName || payload.deviceId || '';
   const location = payload.location ? ` (${payload.location})` : '';
 
@@ -86,7 +87,7 @@ async function send(subscriptionJson, payload) {
     // Alarm raised
     const tempStr = payload.airTemp != null && isFinite(payload.airTemp)
       ? ` | ${Number(payload.airTemp).toFixed(1)}°C` : '';
-    title = `🚨 ${alarmName}`;
+    title = payload.escalation ? `⏫ ${payload.escalation.minutes} хв без підтвердження: ${alarmName}` : `🚨 ${alarmName}`;
     body  = `${deviceName}${location}${tempStr}`;
     tag   = `alarm-${payload.deviceId}-${payload.alarmCode}`;
   }
