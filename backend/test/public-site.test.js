@@ -137,6 +137,7 @@ const DEVICE_KEYS = ['air_temp', 'alarm_active', 'name', 'online'];
 const SITE_KEYS = [
   'alarm_count', 'city', 'country', 'device_count', 'devices',
   'generated_at', 'name', 'online_count', 'region',
+  'organisation', 'link_expires_at',   // plan epic 1.11: whose page + expiry warning
 ];
 
 describe('GET /api/public/site', () => {
@@ -149,6 +150,12 @@ describe('GET /api/public/site', () => {
     await cleanDatabase();
 
     tenant      = await createTenant({ slug: 'public-site-a' });
+
+    // The organisation name IS public since plan epic 1.11 (the page says whose it is);
+
+    // give it a value distinct from the slug so the leak test below keeps guarding the slug.
+
+    await db.query(`UPDATE tenants SET name = 'Публічна мережа' WHERE id = $1`, [tenant.id]);
     otherTenant = await createTenant({ slug: 'public-site-b' });
     admin       = await createUser(tenant.id, { role: 'admin', email: 'admin@public-site.test' });
 

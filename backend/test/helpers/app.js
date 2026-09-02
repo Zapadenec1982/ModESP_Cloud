@@ -112,6 +112,7 @@ function createTestApp() {
 
   // Superadmin-only
   app.use('/api/audit-log', requireSuperadmin, require('../../src/routes/audit'));
+  app.use('/api/pilot-requests', requireSuperadmin, require('../../src/routes/pilot-requests'));
 
   // Routes that all authed users can access
   app.use('/api/devices', require('../../src/routes/devices'));

@@ -375,7 +375,8 @@ async function registerExport({ query, code, kind, tenantId, deviceId, siteId, f
 }
 
 function verifyUrlFor(code) {
-  const base = (process.env.EMAIL_APP_URL || process.env.CORS_ORIGIN || 'https://modesp.com.ua').replace(/\/+$/, '');
+  // Site root, not the app URL: EMAIL_APP_URL points at the SPA (…/cloud) since the landing page took "/"
+  const base = (process.env.PUBLIC_BASE_URL || (process.env.EMAIL_APP_URL || process.env.CORS_ORIGIN || 'https://modesp.com.ua').replace(/\/cloud\/?$/, '')).replace(/\/+$/, '');
   return `${base}/api/public/report/${code}`;
 }
 

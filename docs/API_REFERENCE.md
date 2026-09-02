@@ -1459,6 +1459,29 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 змонтований під `/api/public` **вище** `app.use('/api', authenticate)` — Express виконує middleware у
 порядку реєстрації, тож перенесення цього рядка нижче зламає тест, а не поверне 401.
 
+### `GET /api/public/plans`
+Публічні плани для сторінки цін лендінгу. **Без автентифікації**, `Cache-Control: public, max-age=300`.
+Ті самі рядки `plan_limits`, за якими платформа рахує ліміти: `plan`, `name`, `tagline`,
+`max_devices/sites/users`, `retention_days`, `sampling_sec`, `features`, `price_controller_uah`,
+`price_site_uah`, `price_base_uah`, `price_note` (грн на місяць без ПДВ, `null` — за запитом).
+
+### `POST /api/public/pilot-request`
+Форма «Запит на пілот» з лендінгу. **Без автентифікації**, лімітер `/api/public`.
+
+```json
+{ "name": "Олена", "company": "Аптека №7", "email": "olena@example.com", "phone": "+380…",
+  "segment": "pharma", "sites": 3, "message": "…", "source": "landing", "lang": "uk", "website": "" }
+```
+
+`name` і коректний `email` обов'язкові (`400 validation_failed`); `segment` — `service | retail |
+horeca | pharma | other` (інше → `other`). `website` — honeypot: заповнений відповідає `200`
+і нічого не зберігає. Запит спершу пишеться в `pilot_requests`, потім надсилається на
+`PILOT_REQUEST_EMAIL`; відповідь `201 { "received": true, "emailed": true|false }`.
+
+### `GET /api/pilot-requests`
+Список запитів на пілот (тільки superadmin), `?limit=50&offset=0`, `meta.total`; IP не
+повертається.
+
 ### `GET /api/public/site`
 Публічний read-only статус однієї точки. **Без автентифікації.**
 
@@ -1479,6 +1502,8 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 {
   "data": {
     "name": "АТБ №142",
+    "organisation": "ТОВ «Мережа»",
+    "link_expires_at": "2026-12-01T00:00:00.000Z",
     "city": "Львів",
     "region": "Львівська область",
     "country": "Україна",
@@ -2267,3 +2292,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-08-23 — Phase 14 (Sites & Geo): Sites CRUD (`/sites`) з геокодуванням, погодою, найближчими техніками та публічними посиланнями; геокодер-проксі (`/geo/search`, `/geo/reverse`); карта (`/map/devices`, `/map/filters`, `/map/alarm-heatmap`, `/map/isochrones`, `POST /map/route`); гео-статистика (`/stats/geo` + `export.csv`); профіль з домашньою базою (`/profile`); гранти на точки (`/users/:id/sites`); неавтентифікована публічна сторінка статусу (`/api/public/site` + заголовок `X-Site-Token`); `site_id` у PATCH /devices/:id і `site_*` поля у видачі пристроїв; нові колонки CSV-імпорту; окремий rate limiter 30/хв на користувача для ендпоінтів із зовнішніми сервісами.
 - 2026-09-02 — HACCP (епік 1.9): `GET /devices/:id/telemetry/export.pdf` перероблено (локалізація uk/en/pl/de, реквізити організації і точки, місцевий час, підпис, код перевірки й SHA-256, погодинний архів для старих періодів), новий `GET /sites/:id/export.pdf`, публічна перевірка `GET /api/public/report/:code`, інвентаризація переїхала на `GET /devices/export/inventory.csv`; усі експорти пишуться в `audit_log`.
 - 2026-09-02 — Епік 1.10: showcase-посилання без ліміту переглядів (`rate_limit_exempt`); `DELETE /tenants/:id` виконує спільну з `purge-demo.js` процедуру (`services/tenant-delete.js`).
+- 2026-09-02 — Епік 1.11: `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `GET /api/public/site` додає `organisation` і `link_expires_at` (сторінка каже, чия вона, і попереджає за тиждень до закінчення посилання).

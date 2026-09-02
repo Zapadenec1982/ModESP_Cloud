@@ -459,6 +459,11 @@ Production-ready deployment with TLS, backups, and monitoring.
 - Every green `main` is installed on the staging/demo server automatically once `STAGING_HOST` and the SSH key are configured
 - Production carries no synthetic data: `purge-demo.js` removes demo organisations, the provisioning scripts refuse `NODE_ENV=production` without `--allow-production`, and a showcase status link (`rate_limit_exempt`) serves the landing page
 
+### Landing page and public pages
+- `landing/` (static, no build, own CSP) at `/`: what the controller does, three customer segments, a 30-day chart, a fine-vs-subscription calculator, prices read live from `plan_limits` (`GET /api/public/plans`), a partner page, legal pages generated from `docs/legal`, `robots.txt` and `sitemap.xml`
+- Pilot request form → `POST /api/public/pilot-request` (stored in `pilot_requests`, e-mailed to the founder, honeypot-protected); superadmin reads leads at `GET /api/pilot-requests`
+- The WebUI moved to `/cloud/`; old `#/…` links are redirected by the landing; the login page links to the terms, privacy policy and platform status; public site pages show the organisation, "Powered by ModESP Cloud", a warning a week before the link expires and a "I want this for my sites" call to action
+
 ### Backups & Maintenance
 - Daily archive at 02:00 via `modesp-backup.timer` (`infra/scripts/backup-postgres.sh`): `pg_dump` custom format + roles + `.env`/firmware/TLS/broker config in one tarball with a sha256 manifest; 14-day local retention, optional GPG encryption, off-site rsync with 30-day remote pruning, `last-success` marker; restore runbook in `docs/runbooks/restore.md`
 - Row retention by `modesp-retention-cleanup.timer` (`cleanup-weather.js`, `cleanup-aux.js`): weather observations, events, notification log, cleared alarms, expired refresh tokens; every script is a dry-run without `--apply`

@@ -569,6 +569,14 @@ CREATE TABLE report_exports (
 оновлюється щохвилини. Виставляє `seed-demo.js` або superadmin у SQL; невідомий, відкликаний
 чи протермінований токен лімітується як і раніше.
 
+### Ціни планів і запити на пілот (migration 030)
+`plan_limits` отримує `tagline`, `price_controller_uah`, `price_site_uah`, `price_base_uah`,
+`price_note` — прайс лендінгу (`GET /api/public/plans`) і каталог лімітів в одному рядку;
+значення з `docs/BUSINESS_ANALYSIS_SAAS_UA.md` §5.2, `NULL` — «за запитом».
+`pilot_requests (id, name, company, email, phone, segment, sites, message, source, lang, ip,
+emailed_at, created_at)` — форма з лендінгу; зберігається завжди, `emailed_at` ставиться після
+листа на `PILOT_REQUEST_EMAIL`. Роль застосунку: SELECT, INSERT, UPDATE (без DELETE).
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -638,3 +646,4 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
   немає тригера `updated_at`, `geocode_cache` без `tenant_id`.
 - 2026-09-02 — Міграція 028: `telemetry_hourly` (погодинний архів на 3 роки) і `report_exports` (реєстр звітів HACCP з кодом перевірки та SHA-256); `cleanup-telemetry.js` перенесено в щоденний `modesp-retention-cleanup`, ретенція сирої телеметрії — за `plan_limits.retention_days`.
 - 2026-09-02 — Міграція 029: `site_public_links.rate_limit_exempt` (showcase-посилання без ліміту переглядів). Права ролі застосунку — `infra/sql/app-grants.sql`, перевірка — `infra/sql/check-grants.sql` (CI, `setup.sh`, `deploy.sh`).
+- 2026-09-02 — Міграція 030: ціни в `plan_limits`, таблиця `pilot_requests`.

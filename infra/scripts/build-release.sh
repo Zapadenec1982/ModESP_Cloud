@@ -30,6 +30,8 @@ cp -r "$ROOT/backend/src" "$ROOT/backend/scripts" "$STAGE/$NAME/backend/"
 find "$STAGE/$NAME/backend" \( -name 'emulator-fleet*.csv' -o -name '.env' -o -name '*.bin' \) -delete
 cp -r "$ROOT/webui/dist" "$STAGE/$NAME/webui/dist"
 [ -f "$ROOT/webui/.env.example" ] && cp "$ROOT/webui/.env.example" "$STAGE/$NAME/webui/"
+node "$ROOT/infra/scripts/build-legal.js" >/dev/null
+cp -r "$ROOT/landing" "$STAGE/$NAME/landing"
 cp -r "$ROOT/infra" "$STAGE/$NAME/infra"
 rm -f "$STAGE/$NAME/infra/backup.env"
 cp -r "$ROOT/docs" "$STAGE/$NAME/docs"

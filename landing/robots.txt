@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /cloud/
+Disallow: /api/
+Disallow: /app/
+Sitemap: https://modesp.com.ua/sitemap.xml

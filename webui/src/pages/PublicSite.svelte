@@ -86,6 +86,14 @@
   // for, so it never assumes a field is present.
   $: devices = site && Array.isArray(site.devices) ? site.devices : []
   $: deviceCount = site && Number.isFinite(site.device_count) ? site.device_count : devices.length
+
+  // Days until the link stops working; a warning shows during the last week so the
+  // person who put this page on a back-office screen asks for a new link in time.
+  $: expiresInDays = site && site.link_expires_at
+    ? Math.ceil((new Date(site.link_expires_at).getTime() - Date.now()) / 86400000)
+    : null
+  const LANDING_URL = '/'
+  const PILOT_URL = '/#pilot'
   $: onlineCount = site && Number.isFinite(site.online_count)
     ? site.online_count
     : devices.filter(d => d.online).length
@@ -191,6 +199,9 @@
     {:else}
       <header class="head">
         <div class="head-title">
+          {#if site.organisation}
+            <p class="head-org">{site.organisation}</p>
+          {/if}
           <h1>{site.name}</h1>
           {#if locationLine}
             <p class="head-place">
@@ -237,13 +248,18 @@
         </ul>
       {/if}
 
+      {#if expiresInDays !== null && expiresInDays <= 7}
+        <p class="expiry" role="status">{$t('public.expires_soon', Math.max(expiresInDays, 0))}</p>
+      {/if}
+
       <footer class="foot">
         {#if site.generated_at}
           <span>{$t('public.updated', formatDate(site.generated_at))}</span>
         {/if}
         <span>{$t('public.read_only')}</span>
-        <span class="foot-brand">{$t('public.powered_by')}</span>
+        <a class="foot-brand" href={LANDING_URL} rel="noopener">{$t('public.powered_by_link')}</a>
       </footer>
+      <a class="cta" href={PILOT_URL} rel="noopener">{$t('public.cta')}</a>
     {/if}
   </div>
 </div>
@@ -503,5 +519,47 @@
     .head h1 {
       font-size: var(--text-lg);
     }
+  }
+  .head-org {
+    margin: 0 0 2px;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .expiry {
+    margin: var(--space-3) 0 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-orange, #f59e0b) 15%, transparent);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+  }
+
+  a.foot-brand {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a.foot-brand:hover {
+    text-decoration: underline;
+  }
+
+  .cta {
+    display: block;
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    text-align: center;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    text-decoration: none;
+  }
+
+  .cta:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
   }
 </style>

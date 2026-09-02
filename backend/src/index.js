@@ -447,6 +447,7 @@ if (AUTH_ENABLED) {
   app.use('/api/firmware', require('./routes/firmware'));
   app.use('/api/ota',      require('./routes/ota'));
   app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
+  app.use('/api/pilot-requests', requireSuperadmin, require('./routes/pilot-requests'));
 } else {
   // Dev fallback: tenant from header
   app.use('/api', tenantMw);

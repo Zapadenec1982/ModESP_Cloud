@@ -335,6 +335,9 @@ export default {
 
   // ── Publiczna strona statusu punktu ──
   public: {
+    powered_by_link: 'Działa na ModESP Cloud',
+    expires_soon: 'Ten link wygasa za {0} dni. Poproś administratora o nowy.',
+    cta: 'Chcę to dla swoich lokalizacji',
     site_status: 'Status punktu',
     read_only: 'Widok publiczny — tylko do odczytu',
     loading: 'Wczytywanie...',
@@ -408,6 +411,10 @@ export default {
 
   // ── Login ──
   login: {
+    about: 'O produkcie',
+    terms: 'Regulamin',
+    privacy: 'Prywatność',
+    status: 'Status platformy',
     title: 'ModESP Cloud',
     subtitle: 'Zaloguj się na swoje konto',
     email: 'Email',

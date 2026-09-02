@@ -335,6 +335,9 @@ export default {
 
   // ── Öffentliche Standort-Statusseite ──
   public: {
+    powered_by_link: 'Betrieben mit ModESP Cloud',
+    expires_soon: 'Dieser Link läuft in {0} Tag(en) ab. Bitten Sie Ihren Administrator um einen neuen.',
+    cta: 'Das möchte ich für meine Standorte',
     site_status: 'Standortstatus',
     read_only: 'Öffentliche Ansicht — nur lesen',
     loading: 'Wird geladen...',
@@ -408,6 +411,10 @@ export default {
 
   // ── Login ──
   login: {
+    about: 'Über das Produkt',
+    terms: 'AGB',
+    privacy: 'Datenschutz',
+    status: 'Plattformstatus',
     title: 'ModESP Cloud',
     subtitle: 'Melden Sie sich bei Ihrem Konto an',
     email: 'E-Mail',

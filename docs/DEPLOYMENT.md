@@ -124,6 +124,26 @@ Ubuntu 24.04
 
 ---
 
+## Адреси на домені
+
+| Шлях | Що | Звідки |
+|---|---|---|
+| `/` | Лендінг: продукт, сегменти, ціни з `plan_limits`, калькулятор, форма пілота | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
+| `/partners.html` | Партнерська програма | `landing/` |
+| `/legal/offer`, `/legal/privacy`, `/legal/service`, `/legal/dpa`, `/legal/partner` | Юридичні документи | `landing/legal/*.html`, генерує `infra/scripts/build-legal.js` з `docs/legal/*.md` |
+| `/cloud/` | WebUI (Svelte SPA, hash-маршрути `#/…`) | `webui/dist` → `/var/www/modesp/webui`; `vite.config.js` `base: '/cloud/'` |
+| `/app/` | Мобільний PWA (окремий проєкт ModESP_PWA) | `/var/www/modesp/pwa` |
+| `/api/`, `/ws` | Бекенд | proxy на `127.0.0.1:3000` |
+
+Старі посилання на застосунок (`https://modesp.com.ua/#/…`) далі працюють: `landing/app.js`
+бачить hash-маршрут і перенаправляє на `/cloud/#/…`. У `backend/.env` `EMAIL_APP_URL` має
+вказувати на застосунок (`https://modesp.com.ua/cloud`), а `PUBLIC_BASE_URL` — на корінь
+(`https://modesp.com.ua`; використовується в URL перевірки звіту HACCP). `landing/config.js`
+задає адреси демо-точки, демо-кабінету, статус-сторінки і контактну пошту; форма пілота
+пише в `pilot_requests` і надсилає лист на `PILOT_REQUEST_EMAIL`.
+
+---
+
 ## Ліцензування третіх сторін — прочитати ДО продакшну
 
 ModESP Cloud — комерційний продукт. Гео-функціонал спирається на п'ять зовнішніх сервісів, які зараз
@@ -937,6 +957,7 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — Лендінг (епік 1.11): `landing/` на `/`, WebUI переїхав на `/cloud/` (`vite.config.js` `base`, редирект старих hash-посилань), `/legal/*` з `docs/legal` через `build-legal.js`, окрема CSP для лендінгу в `modesp.conf`; міграція 030 (ціни в `plan_limits`, `pilot_requests`); `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `EMAIL_APP_URL` → `…/cloud`, нові `PUBLIC_BASE_URL`, `PILOT_REQUEST_EMAIL`; `setup.sh`/`deploy.sh` ставлять посилання `/var/www/modesp/landing`.
 - 2026-09-02 — Релізи (епік 1.10): `infra/deploy.sh` (init / release / rollback / status з health-гейтом і автоматичним відкатом), розкладка `/opt/modesp-releases` із символьним посиланням `/opt/modesp-cloud`, `infra/scripts/build-release.sh`, workflow `release.yml` (тег → GitHub Release) і `deploy-staging.yml` (main → staging), CI-джоб міграцій і GRANT-ів на порожній БД, `infra/sql/app-grants.sql` + `check-grants.sql` (використовує і `setup.sh`), розділ «Релізи, staging і демо», `purge-demo.js`, `CHANGELOG.md`, версія 1.0.0.
 - 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).

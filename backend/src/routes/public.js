@@ -31,6 +31,7 @@ const crypto     = require('crypto');
 const rateLimit  = require('express-rate-limit');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
+const emailSvc   = require('../services/email');
 
 const router = Router();
 
@@ -149,7 +150,7 @@ router.get('/site', async (req, res) => {
         WHERE token_hash = $1
           AND revoked_at IS NULL
           AND expires_at > NOW()
-        RETURNING id, tenant_id, site_id`,
+        RETURNING id, tenant_id, site_id, expires_at`,
       [tokenHash]
     );
 
@@ -162,9 +163,9 @@ router.get('/site', async (req, res) => {
     // is belt-and-braces — but it is also what keeps an explicit tenant predicate
     // on every statement in this file, as the codebase requires.
     const { rows: siteRows } = await db.query(
-      `SELECT name, city, region, country
-         FROM sites
-        WHERE id = $1 AND tenant_id = $2`,
+      `SELECT s.name, s.city, s.region, s.country, t.name AS organisation
+         FROM sites s JOIN tenants t ON t.id = s.tenant_id
+        WHERE s.id = $1 AND s.tenant_id = $2`,
       [link.site_id, link.tenant_id]
     );
 
@@ -217,9 +218,11 @@ router.get('/site', async (req, res) => {
     res.json({
       data: {
         name:         site.name,
+        organisation: site.organisation,       // whose page this is (plan epic 1.11)
         city:         site.city,
         region:       site.region,
         country:      site.country,
+        link_expires_at: link.expires_at,      // lets the page warn a week ahead
         devices,
         device_count: devices.length,
         online_count: devices.filter(d => d.online).length,
@@ -230,6 +233,79 @@ router.get('/site', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Public site page failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to load site', status: 500 });
+  }
+});
+
+// ── GET /api/public/plans — pricing for the landing page (plan epic 1.11) ──
+// The landing renders what the catalogue says, so the price list and the
+// limits the platform enforces come from the same rows. Only public plans.
+router.get('/plans', async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  try {
+    const { rows } = await db.query(
+      `SELECT plan, name, tagline, max_devices, max_sites, max_users, retention_days, sampling_sec, features,
+              price_controller_uah, price_site_uah, price_base_uah, price_note
+         FROM plan_limits WHERE public = true ORDER BY sort_order`);
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Public plans failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to load plans', status: 500 });
+  }
+});
+
+// ── POST /api/public/pilot-request — the landing form (plan epic 1.11) ──
+// Stored first (no lead is lost when e-mail is not configured), then mailed
+// to PILOT_REQUEST_EMAIL. `website` is a honeypot: bots fill it, people never
+// see it; a filled honeypot answers 200 and stores nothing.
+const SEGMENTS = new Set(['service', 'retail', 'horeca', 'pharma', 'other']);
+
+function clean(v, max) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+}
+
+router.post('/pilot-request', async (req, res) => {
+  publicHeaders(res);
+  const body = req.body || {};
+  if (clean(body.website, 10)) return res.status(200).json({ data: { received: true } });
+
+  const name  = clean(body.name, 120);
+  const email = clean(body.email, 254);
+  if (!name || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'validation_failed', message: 'name and a valid email are required', status: 400 });
+  }
+  const segment = clean(body.segment, 32);
+  const sites = Number.isInteger(body.sites) ? body.sites : parseInt(body.sites, 10);
+  const lang = ['uk', 'en', 'pl', 'de'].includes(body.lang) ? body.lang : 'uk';
+  const row = {
+    name, email,
+    company: clean(body.company, 160),
+    phone:   clean(body.phone, 40),
+    segment: segment && SEGMENTS.has(segment) ? segment : (segment ? 'other' : null),
+    sites:   Number.isFinite(sites) && sites >= 0 && sites <= 100000 ? sites : null,
+    message: clean(body.message, 4000),
+    source:  clean(body.source, 64),
+    lang,
+  };
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO pilot_requests (name, company, email, phone, segment, sites, message, source, lang, ip)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at`,
+      [row.name, row.company, row.email, row.phone, row.segment, row.sites, row.message, row.source, row.lang, req.ip || null]);
+    const id = rows[0].id;
+    let emailed = false;
+    try {
+      emailed = await emailSvc.sendPilotRequest({ to: process.env.PILOT_REQUEST_EMAIL, request: { id, ...row, created_at: rows[0].created_at } });
+      if (emailed) await db.query('UPDATE pilot_requests SET emailed_at = NOW() WHERE id = $1', [id]);
+    } catch (err) {
+      req.log?.warn?.({ err }, 'Pilot request stored but not e-mailed');
+    }
+    req.log?.info?.({ id, segment: row.segment, emailed }, 'Pilot request received');
+    res.status(201).json({ data: { received: true, emailed } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Pilot request failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to store the request', status: 500 });
   }
 });
 

@@ -383,4 +383,31 @@ async function sendPasswordReset({ to, link, code, lang, expiresMinutes = 30 }) 
   return true;
 }
 
-module.exports = { init, shutdown, isConfigured, sendInvitation, sendPasswordReset };
+/**
+ * A pilot request from the landing page, to the founder (PILOT_REQUEST_EMAIL).
+ * Resolves false when e-mail or the recipient is not configured — the request
+ * is already stored in pilot_requests by then.
+ */
+async function sendPilotRequest({ to, request }) {
+  if (!resend || !to) return false;
+  const r = request || {};
+  const rows =
+    infoRow('Ім\'я', escHtml(r.name || '')) +
+    infoRow('Компанія', escHtml(r.company || '—')) +
+    infoRow('E-mail', escHtml(r.email || '')) +
+    infoRow('Телефон', escHtml(r.phone || '—')) +
+    infoRow('Сегмент', escHtml(r.segment || '—')) +
+    infoRow('Точок', escHtml(r.sites == null ? '—' : String(r.sites))) +
+    infoRow('Джерело', escHtml(r.source || 'landing')) +
+    infoRow('Мова', escHtml(r.lang || 'uk'));
+  const message = r.message ? `<p style="white-space:pre-wrap;">${escHtml(r.message)}</p>` : '';
+  const html = wrapHtml(`<h2 style="margin:0 0 12px;">Запит на пілот</h2><table>${rows}</table>${message}<p style="color:#888;font-size:12px;">id ${escHtml(String(r.id || ''))}</p>`);
+  const { error } = await resend.emails.send({
+    from: fromAddress, to, replyTo: r.email || undefined,
+    subject: `Запит на пілот: ${r.company || r.name || 'з лендінгу'}`, html,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+module.exports = { init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest };

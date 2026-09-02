@@ -141,6 +141,11 @@ echo "  → Start backend: systemctl start modesp-backend"
 # ── 8. Nginx + TLS ────────────────────────────────────────
 echo "[8/8] Setting up Nginx..."
 cp "$APP_DIR/infra/nginx/modesp.conf" /etc/nginx/sites-available/modesp
+
+# Static roots: the landing page at "/", the app at /cloud/
+mkdir -p /var/www/modesp
+ln -sfn "$APP_DIR/landing"    /var/www/modesp/landing
+ln -sfn "$APP_DIR/webui/dist" /var/www/modesp/webui
 # Defines the `zone=api` rate-limit zone referenced by modesp.conf
 cp "$APP_DIR/infra/nginx/ratelimit.conf" /etc/nginx/conf.d/modesp-ratelimit.conf
 ln -sf /etc/nginx/sites-available/modesp /etc/nginx/sites-enabled/

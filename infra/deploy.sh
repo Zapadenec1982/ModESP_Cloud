@@ -83,6 +83,7 @@ install_units() {  # install_units RELEASE_DIR
   cp "$1"/infra/systemd/modesp-*.timer   /etc/systemd/system/
   mkdir -p "$(dirname "$WEBROOT_LINK")"
   ln -sfn "$APP_LINK/webui/dist" "$WEBROOT_LINK"
+  ln -sfn "$APP_LINK/landing" "$(dirname "$WEBROOT_LINK")/landing"
   systemctl daemon-reload
 }
 

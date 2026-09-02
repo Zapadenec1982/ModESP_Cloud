@@ -335,6 +335,9 @@ export default {
 
   // ── Public site status page ──
   public: {
+    powered_by_link: 'Powered by ModESP Cloud',
+    expires_soon: 'This link expires in {0} day(s). Ask your administrator for a new one.',
+    cta: 'I want this for my sites',
     site_status: 'Site status',
     read_only: 'Public view — read only',
     loading: 'Loading...',
@@ -408,6 +411,10 @@ export default {
 
   // ── Login ──
   login: {
+    about: 'About',
+    terms: 'Terms',
+    privacy: 'Privacy',
+    status: 'Platform status',
     title: 'ModESP Cloud',
     subtitle: 'Sign in to your account',
     email: 'Email',

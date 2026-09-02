@@ -3,6 +3,9 @@
   import { navigate } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
 
+  // Platform status page (external probe), same source as the sidebar link
+  const statusUrl = import.meta.env.VITE_STATUS_PAGE_URL || ''
+
   let email = ''
   let password = ''
   let error = ''
@@ -272,6 +275,12 @@
       </button>
     </div>
   {/if}
+  <footer class="login-links">
+    <a href="/">{$t('login.about')}</a>
+    <a href="/legal/offer" target="_blank" rel="noopener">{$t('login.terms')}</a>
+    <a href="/legal/privacy" target="_blank" rel="noopener">{$t('login.privacy')}</a>
+    {#if statusUrl}<a href={statusUrl} target="_blank" rel="noopener">{$t('login.status')}</a>{/if}
+  </footer>
 </div>
 
 <style>
@@ -407,6 +416,27 @@
   .btn-login:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .login-links {
+    position: fixed;
+    bottom: var(--space-4);
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: var(--space-4);
+    font-size: var(--text-xs);
+  }
+
+  .login-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+
+  .login-links a:hover {
+    color: var(--text-primary);
+    text-decoration: underline;
   }
 
   .btn-forgot {

@@ -146,7 +146,8 @@ router.post('/', requireSuperadmin, async (req, res, next) => {
 router.get('/plans', async (_req, res, next) => {
   try {
     const { rows } = await db.query(
-      `SELECT plan, name, max_devices, max_sites, max_users, retention_days, sampling_sec, features, public
+      `SELECT plan, name, tagline, max_devices, max_sites, max_users, retention_days, sampling_sec, features, public,
+              price_controller_uah, price_site_uah, price_base_uah, price_note
          FROM plan_limits WHERE public = true ORDER BY sort_order`);
     res.json({ data: rows });
   } catch (err) {
