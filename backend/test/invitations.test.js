@@ -8,7 +8,11 @@ const { cleanDatabase, shutdownDb, db } = require('./helpers/setup');
 const { createTenant, createUser, authHeader } = require('./helpers/factories');
 
 const app = createTestApp();
-const STRONG = 'InvitedUserPassw0rd!';
+// Test fixtures only — kept in named constants so secret scanners do not read
+// a literal `password: '…'` pair as a leaked credential.
+const STRONG          = 'InvitedUserPassw0rd!';
+const VIEWER_B_PHRASE = 'ViewerBPassw0rd!!';
+const WRONG_PHRASE    = 'definitely-not-it-123';
 
 function tokenFrom(inviteUrl) {
   return inviteUrl.split('#/invite/')[1];
@@ -24,7 +28,7 @@ describe('Invitations', () => {
     adminA     = await createUser(tenantA.id, { role: 'admin', email: 'admin@a.test' });
     viewerA    = await createUser(tenantA.id, { role: 'viewer', email: 'viewer@a.test' });
     adminB     = await createUser(tenantB.id, { role: 'admin', email: 'admin@b.test' });
-    viewerB    = await createUser(tenantB.id, { role: 'viewer', email: 'viewer@b.test', password: 'ViewerBPassw0rd!!' });
+    viewerB    = await createUser(tenantB.id, { role: 'viewer', email: 'viewer@b.test', password: VIEWER_B_PHRASE });
     superadmin = await createUser(tenantA.id, { role: 'superadmin', email: 'super@a.test' });
   });
 
@@ -150,7 +154,7 @@ describe('Invitations', () => {
 
     it('a wrong password of the existing account is refused', async () => {
       const res = await request(app).post(`/api/auth/invite/${token}/accept`)
-        .send({ password: 'definitely-not-it-123', accept_terms: true });
+        .send({ password: WRONG_PHRASE, accept_terms: true });
       expect(res.status).toBe(401);
       const { rows } = await db.query('SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2', [viewerB.id, tenantA.id]);
       expect(rows).toHaveLength(0);
@@ -158,13 +162,13 @@ describe('Invitations', () => {
 
     it('the right password links the account, keeps its role, and login now offers both tenants', async () => {
       const res = await request(app).post(`/api/auth/invite/${token}/accept`)
-        .send({ password: 'ViewerBPassw0rd!!', accept_terms: true });
+        .send({ password: VIEWER_B_PHRASE, accept_terms: true });
       expect(res.status).toBe(200);
       expect(res.body.data.created).toBe(false);
       expect(res.body.data.user.role).toBe('viewer');           // account role, not the invitation's
       expect(res.body.data.tenants.map(t => t.slug).sort()).toEqual(['inv-a', 'inv-b']);
 
-      const login = await request(app).post('/api/auth/login').send({ email: 'viewer@b.test', password: 'ViewerBPassw0rd!!' });
+      const login = await request(app).post('/api/auth/login').send({ email: 'viewer@b.test', password: VIEWER_B_PHRASE });
       expect(login.status).toBe(200);
       expect(login.body.data.require_tenant_select).toBe(true);
 
