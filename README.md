@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-130%2B-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-579-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -50,7 +50,7 @@ Node.js Backend (port 3000)
 ├── WsService         → WebSocket real-time delta broadcasts
 ├── ApiService        → Express REST API (60+ mutation + query endpoints)
 ├── PushService       → FCM + Telegram Bot + Web Push orchestrator
-├── OtaService        → Fleet firmware deployment with rollback
+├── OtaService        → Fleet firmware deployment (staged rollouts, auto-pause; image rollback is on-device)
 ├── AuditMiddleware   → Automatic mutation logging (fire-and-forget)
 └── AuthService       → JWT access/refresh tokens, multi-tenant sessions
     │
@@ -141,7 +141,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 130+ tests across 15 test files
+│   ├── test/                        # 579 tests across 31 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -219,7 +219,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 | **Users** | User management, per-device assignment, multi-tenant membership (admin) |
 | **Organizations** | Tenant CRUD, device count, user count (superadmin) |
 | **Pending Devices** | Auto-discovery onboarding — accept/reject new controllers |
-| **Notifications** | FCM / Telegram / Web Push subscription management |
+| **Notifications** | FCM / Telegram / Web Push subscription management (API; the page is not linked in the navigation of this release) |
 | **Audit Log** | Immutable activity log — who, what, when, before/after changes (superadmin) |
 | **Login** | JWT authentication with multi-tenant picker |
 
@@ -243,7 +243,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**130+ integration tests** across 15 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance:
+**579 integration tests** across 31 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -345,7 +345,7 @@ sudo systemctl restart modesp-backend
 | 8b | Multi-Tenant Users (M:N memberships, tenant picker/switcher) | ✅ Complete |
 | 8c | Telegram Bot Redesign (auth, RBAC, i18n, persistent keyboard) | ✅ Complete |
 | 9 | Audit Logging (immutable log, middleware, before/after changes) | ✅ Complete |
-| 10 | Test Infrastructure (Vitest, 130+ tests, 15 test suites) | ✅ Complete |
+| 10 | Test Infrastructure (Vitest, 579 tests, 31 test suites) | ✅ Complete |
 | 11 | Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity) | ✅ Complete |
 | — | VPS Production Deployment | ✅ Production |
 
@@ -401,7 +401,7 @@ This project demonstrates production-grade skills across the full IoT stack:
 
 **DevOps & Testing:**
 - Production VPS deployment with systemd, Nginx (HTTPS/WSS), Let's Encrypt auto-renewal
-- 130+ integration tests against real PostgreSQL (not mocks)
+- 579 integration tests against real PostgreSQL (not mocks)
 - Structured JSON logging (Pino), rate limiting, security headers (Helmet)
 
 ---
@@ -411,7 +411,7 @@ This project demonstrates production-grade skills across the full IoT stack:
 This project is licensed under the [**PolyForm Noncommercial License 1.0.0**](LICENSE).
 
 You are free to view, learn from, and use this code for personal and non-commercial purposes.
-**Commercial use requires written permission** from the author.
+**Commercial use requires written permission** from the author. Terms for self-hosted, partner/white-label and OEM use are outlined in [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md); the hosted service's own terms are drafted in [`docs/legal/`](docs/legal/README.md).
 
 For commercial licensing inquiries, contact: [github.com/Zapadenec1982](https://github.com/Zapadenec1982)
 

@@ -106,7 +106,7 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 
 ### PDF Report
 - **HACCP temperature report** — professional PDF with summary statistics, alarm timeline, hourly temperature log
-- Cyrillic support (Roboto font) — ready for Ukrainian regulatory submissions
+- Cyrillic support (Roboto font). Current limits: one device per report, up to 31 days, English headings, UTC timestamps, no operator identity or tamper-evidence; an inspection-grade localised report is planned (docs/IMPLEMENTATION_PLAN_SAAS_UA.md, epic 1.9)
 - Server-side generation (pdfmake) — no browser dependency
 
 ### Rate Limiting
@@ -416,7 +416,7 @@ Production-ready deployment with TLS, backups, and monitoring.
 ### Database
 - PostgreSQL 16 with connection pooling (max 30 connections)
 - Statement timeout (30s) prevents runaway queries
-- Monthly telemetry partitions with automatic creation and 90-day cleanup
+- Monthly telemetry partitions with automatic creation; 90-day cleanup runs only where the cleanup job is installed with `--apply` (see DEPLOYMENT.md)
 - 18+ tables with proper indexes, foreign keys, and constraints
 
 ### Monitoring
@@ -425,8 +425,8 @@ Production-ready deployment with TLS, backups, and monitoring.
 - Pino structured logging (JSON in production)
 
 ### Backups & Maintenance
-- Daily PostgreSQL dump at 2:00 AM (30-day retention)
-- Telemetry partition cleanup at 3:00 AM daily
+- Daily PostgreSQL dump at 2:00 AM via `infra/scripts/backup-postgres.sh` (14-day local retention, optional GPG encryption and off-site rsync)
+- Telemetry partition cleanup by `backend/scripts/cleanup-telemetry.js --apply` (dry-run without the flag)
 - Monthly partition pre-creation (25th of each month)
 
 ### Deployment

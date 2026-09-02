@@ -410,9 +410,8 @@ DB_NAME=modesp_cloud
 DB_USER=modesp_cloud
 DB_PASS=STRONG_PASSWORD_HERE
 
-# MQTT
-MQTT_HOST=localhost
-MQTT_PORT=1883
+# MQTT (бекенд читає лише MQTT_URL; MQTT_HOST/MQTT_PORT не використовуються)
+MQTT_URL=mqtt://localhost:1883
 MQTT_USER=modesp_backend
 MQTT_PASS=MQTT_BACKEND_PASSWORD
 
@@ -428,8 +427,8 @@ AUTH_ENABLED=true
 MQTT_BOOTSTRAP_PASSWORD=shared_bootstrap_password_here
 MQTT_PUBLIC_HOST=modesp.com.ua
 
-# Firebase FCM (опціонально)
-FCM_SERVER_KEY=your_fcm_server_key
+# Firebase FCM (опціонально) — шлях до JSON сервісного акаунта, не server key
+FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-cloud/backend/fcm-service-account.json
 
 # Telegram (опціонально)
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -485,7 +484,7 @@ ORS_TIMEOUT_MS=10000
 
 ```bash
 cd /opt/modesp-cloud/backend
-node src/db/seed-admin.js
+node src/db/seed-admin.js --email admin@example.com --password '<мінімум 15 символів>' --role superadmin
 ```
 
 ### 5. systemd юніт для Node.js
