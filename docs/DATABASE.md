@@ -517,6 +517,52 @@ CREATE POLICY tenant_isolation ON devices
 
 ---
 
+## Звіти HACCP і погодинний архів (migration 028)
+
+### `telemetry_hourly` — архів на 3 роки
+```sql
+CREATE TABLE telemetry_hourly (
+  tenant_id UUID NOT NULL,
+  device_id VARCHAR(16) NOT NULL,
+  channel   VARCHAR(16) NOT NULL,
+  hour      TIMESTAMPTZ NOT NULL,     -- date_trunc('hour', time)
+  min REAL NOT NULL, max REAL NOT NULL, avg REAL NOT NULL,
+  samples   INT NOT NULL,
+  PRIMARY KEY (tenant_id, device_id, channel, hour)
+);
+CREATE INDEX idx_telemetry_hourly_hour ON telemetry_hourly (hour);
+```
+Заповнюється `cleanup-telemetry.js` (upsert, ідемпотентно). Сирі рядки живуть стільки, скільки
+дозволяє план організації; звіт HACCP за старіший період будується з цієї таблиці (`source =
+'hourly'`). Не партиціонується: ~26 KB на пристрій-канал на рік.
+
+### `report_exports` — реєстр сформованих звітів
+```sql
+CREATE TABLE report_exports (
+  code         VARCHAR(16) PRIMARY KEY,    -- 12 символів, друкується XXXX-XXXX-XXXX
+  kind         VARCHAR(8)  NOT NULL CHECK (kind IN ('device', 'site')),
+  tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  device_id    VARCHAR(16),                -- mqtt_device_id для kind = device
+  site_id      UUID REFERENCES sites(id) ON DELETE SET NULL,
+  period_from  TIMESTAMPTZ NOT NULL,
+  period_to    TIMESTAMPTZ NOT NULL,
+  bucket       VARCHAR(4)  NOT NULL,
+  source       VARCHAR(8)  NOT NULL,       -- raw | hourly
+  lang         VARCHAR(2)  NOT NULL,
+  sha256       CHAR(64)    NOT NULL,       -- відбиток канонічних даних звіту
+  generated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+Один рядок на кожен сформований PDF. `GET /api/public/report/:code` читає звідси й повертає
+тільки те, що вже є у надрукованому документі. Таблиця не чиститься ретенцією.
+
+### `tenant_settings.raw_retention_days` — grandfathering
+`INT NULL CHECK (7..1100)`. Коли задано — має пріоритет над `plan_limits.retention_days` і для
+`cleanup-telemetry.js`, і для вибору джерела звіту HACCP. Міграція 028 виставляє 400 усім
+організаціям, що існували на момент застосування і чий план дає менше; змінює лише superadmin
+(`PATCH /tenants/:id/settings`), явна зміна плану скидає в `NULL`.
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -536,7 +582,7 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 | Скрипт | Таймер | Що робить |
 |---|---|---|
 | `backend/src/scripts/ensure-partitions.js` | `modesp-telemetry-partition.timer`, 25-го | партиції на поточний місяць + `PARTITION_MONTHS_AHEAD` (6) уперед |
-| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-telemetry-cleanup.timer`, 1-го | видаляє партиції, чий кінець старший за `TELEMETRY_RETENTION_DAYS` (90) |
+| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`; видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90); скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
 
 ---
 
@@ -584,3 +630,4 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
   `users.base_latitude` / `base_longitude` / `base_address`; backfill точок з `devices.location`.
   Свідомі рішення на запис: немає композитного FK `devices → sites`, немає RLS на нових таблицях,
   немає тригера `updated_at`, `geocode_cache` без `tenant_id`.
+- 2026-09-02 — Міграція 028: `telemetry_hourly` (погодинний архів на 3 роки) і `report_exports` (реєстр звітів HACCP з кодом перевірки та SHA-256); `cleanup-telemetry.js` перенесено в щоденний `modesp-retention-cleanup`, ретенція сирої телеметрії — за `plan_limits.retention_days`.

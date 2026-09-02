@@ -94,7 +94,6 @@ Ubuntu 24.04
     │   ├── modesp-alert@.service                        # OnFailure= кожного юніта нижче
     │   ├── modesp-backup.service / .timer               # 02:00 щодня
     │   ├── modesp-telemetry-partition.service / .timer  # 25-го, 03:00
-    │   ├── modesp-telemetry-cleanup.service / .timer    # 1-го, 03:00
     │   └── modesp-retention-cleanup.service / .timer    # 03:30 щодня
     ├── nginx/                       # modesp.conf + ratelimit.conf
     └── mosquitto/
@@ -516,8 +515,8 @@ systemctl daemon-reload
 systemctl enable modesp-backend
 systemctl start modesp-backend
 
-# Таймери: бекап, партиції (+6 місяців), ретенція партицій, ретенція рядків
-for t in modesp-backup modesp-telemetry-partition modesp-telemetry-cleanup modesp-retention-cleanup; do
+# Таймери: бекап, партиції (+6 місяців), ретенція (погодинний архів, партиції, рядки)
+for t in modesp-backup modesp-telemetry-partition modesp-retention-cleanup; do
   systemctl enable --now "$t.timer"
 done
 
@@ -666,20 +665,24 @@ Cron не використовується. Усі періодичні зада
 |---|---|---|---|
 | `modesp-backup.timer` | щодня 02:00 | `infra/scripts/backup-postgres.sh` — архів `modesp_backup_<UTC>.tar[.gpg]` у `/var/backups/modesp`, off-site копія, маркер `last-success` | root (`pg_dump` через `runuser -u postgres`) |
 | `modesp-telemetry-partition.timer` | 25-го, 03:00 | `src/scripts/ensure-partitions.js` — партиції телеметрії на `PARTITION_MONTHS_AHEAD` (6) місяців уперед | modesp |
-| `modesp-telemetry-cleanup.timer` | 1-го, 03:00 | `scripts/cleanup-telemetry.js --apply` — видаляє партиції старші за `TELEMETRY_RETENTION_DAYS` (90) | modesp |
-| `modesp-retention-cleanup.timer` | щодня 03:30 | `scripts/cleanup-weather.js --apply`, потім `scripts/cleanup-aux.js --apply` — `weather_observations`, `events`, `notification_log`, неактивні `alarms`, протерміновані `refresh_tokens` | modesp |
+| `modesp-retention-cleanup.timer` | щодня 03:30 | `scripts/cleanup-telemetry.js --apply` (згортає сирі вимірювання за останні `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`, видаляє сирі рядки старші за `plan_limits.retention_days` організації, скидає партиції старші за найдовшу ретенцію планів, чистить архів старший за `HOURLY_RETENTION_DAYS` (1095)), потім `cleanup-weather.js --apply` і `cleanup-aux.js --apply` — `weather_observations`, `events`, `notification_log`, неактивні `alarms`, протерміновані `refresh_tokens` | modesp |
 
-Значення ретенції задаються в `backend/.env` (блок «Data retention» у `.env.example`); `0` вимикає
-окремий sweep. `audit_log` незмінний і не чиститься. `drop_telemetry_partition()` відмовляється
+Ретенція сирої телеметрії береться з плану організації (`plan_limits.retention_days`);
+`TELEMETRY_RETENTION_DAYS` — лише запасне значення для організацій без плану. Інші значення
+задаються в `backend/.env` (блок «Data retention» у `.env.example`); `0` вимикає окремий sweep.
+`audit_log` і `report_exports` незмінні й не чистяться. `drop_telemetry_partition()` відмовляється
 видаляти партицію, що закрилася менш ніж 7 днів тому, незалежно від налаштувань.
+
+Після першого розгортання епіка 1.9 архів треба наповнити історією один раз:
+`sudo -u modesp node backend/scripts/cleanup-telemetry.js --apply --backfill-days 400`.
 
 ```bash
 # Стан і наступні запуски
 systemctl list-timers 'modesp-*'
 
 # Запустити задачу зараз і подивитися лог
-systemctl start modesp-telemetry-cleanup.service
-journalctl -u modesp-telemetry-cleanup -n 50 --no-pager
+systemctl start modesp-retention-cleanup.service
+journalctl -u modesp-retention-cleanup -n 50 --no-pager
 
 # Dry-run будь-якого скрипта (без --apply нічого не видаляє)
 sudo -u modesp node /opt/modesp-cloud/backend/scripts/cleanup-telemetry.js
@@ -767,7 +770,7 @@ curl -s localhost:3000/api/health/details -H "Authorization: Bearer $TOKEN" | jq
 systemctl status modesp-backend mosquitto nginx postgresql
 journalctl -u modesp-backend -f                 # live
 journalctl -u modesp-backend --no-pager -n 100
-journalctl -u modesp-backup -u modesp-telemetry-cleanup -u modesp-retention-cleanup --since -7d
+journalctl -u modesp-backup -u modesp-telemetry-partition -u modesp-retention-cleanup --since -7d
 tail -f /var/log/mosquitto/mosquitto.log
 sudo -u postgres psql -d modesp_cloud -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
 systemctl list-timers 'modesp-*'
@@ -828,7 +831,8 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
-- 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; чотири таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-telemetry-cleanup`, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
+- 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

@@ -198,6 +198,55 @@ router.get('/site', async (req, res) => {
   }
 });
 
+// ── GET /api/public/report/:code — HACCP report verification (plan epic 1.9) ──
+// An inspector holding a printed report checks that the platform generated it:
+// the code is on the footer, the SHA-256 covers the report data. Nothing
+// beyond what the report itself already shows is returned — no ids, no
+// telemetry, no user data — and an unknown code is the same 404 as a revoked one.
+router.get('/report/:code', async (req, res) => {
+  const code = String(req.params.code || '').replace(/[\s-]/g, '').toUpperCase();
+  if (!/^[A-Z0-9]{12}$/.test(code)) {
+    return res.status(404).json({ error: 'not_found', message: 'Report not found', status: 404 });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT r.code, r.kind, r.period_from, r.period_to, r.bucket, r.source, r.lang, r.sha256, r.generated_at,
+              COALESCE(t.legal_name, t.name) AS organisation,
+              s.name AS site_name, d.name AS device_name
+         FROM report_exports r
+         JOIN tenants t ON t.id = r.tenant_id
+         LEFT JOIN sites s ON s.id = r.site_id
+         LEFT JOIN devices d ON d.mqtt_device_id = r.device_id AND d.tenant_id = r.tenant_id
+        WHERE r.code = $1`,
+      [code]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Report not found', status: 404 });
+    }
+    const r = rows[0];
+    res.json({
+      data: {
+        code:         r.code.replace(/(.{4})(?=.)/g, '$1-'),
+        kind:         r.kind,
+        organisation: r.organisation,
+        site:         r.site_name || null,
+        device:       r.device_name || null,
+        period_from:  r.period_from,
+        period_to:    r.period_to,
+        bucket:       r.bucket,
+        source:       r.source,
+        lang:         r.lang,
+        sha256:       r.sha256,
+        generated_at: r.generated_at,
+        valid:        true,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Report verification failed');
+    res.status(500).json({ error: 'internal_error', message: 'Verification failed', status: 500 });
+  }
+});
+
 module.exports = router;
 
 // Test hook: the limiter above lives for the lifetime of the router and a

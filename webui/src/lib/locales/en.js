@@ -458,6 +458,8 @@ export default {
     plan_hint: 'To change the plan or its limits, contact support.',
     retention: 'Telemetry retention',
     days: 'days',
+    retention_override: 'Raw retention override, days',
+    retention_override_hint: 'Superadmin only. Empty — the plan retention applies. An explicit plan change clears the override.',
     general: 'General',
     timezone: 'Time zone (IANA)',
     locale: 'Notification language',
@@ -1078,6 +1080,14 @@ export default {
     export_alarms: 'Export Alarms',
     export_telemetry: 'Export Telemetry',
     haccp_report: 'HACCP Report',
+    report_code: 'Report generated. Verification code: {0}',
+    hourly_source: 'Period is older than the raw data retention — the report was built from the hourly archive',
+    export_inventory: 'Export inventory',
+    period_from: 'Period from',
+    period_to: 'to',
+    site_report_hint: 'One document for every active device of the site ({0}). The report uses the current interface language.',
+    verify_hint: 'Every report gets a verification code and a SHA-256 fingerprint that an inspector can check on the public page.',
+    no_data: 'No data for the selected period',
   },
 
   // ── Energy Monitoring ──

@@ -104,10 +104,14 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Device inventory CSV** — all devices with properties (name, model, location, serial number, firmware)
 - **Alarm history CSV** — filterable by severity and date range (up to 90 days)
 
-### PDF Report
-- **HACCP temperature report** — professional PDF with summary statistics, alarm timeline, hourly temperature log
-- Cyrillic support (Roboto font). Current limits: one device per report, up to 31 days, English headings, UTC timestamps, no operator identity or tamper-evidence; an inspection-grade localised report is planned (docs/IMPLEMENTATION_PLAN_SAAS_UA.md, epic 1.9)
-- Server-side generation (pdfmake) — no browser dependency
+### PDF Report (inspection-grade)
+- **HACCP temperature log per device or per site** (`GET /devices/:id/telemetry/export.pdf`, `GET /sites/:id/export.pdf`, up to 50 devices in one document)
+- Localised uk / en / pl / de (follows the interface language); organisation legal name and tax id, site address and time zone, timestamps in the site's local time
+- Summary per channel, alarms during the period with acknowledgement marks, temperature log, sensor note with the last service record, responsible-person signature block
+- **Tamper evidence:** every report gets a 12-character verification code and a SHA-256 of its data, printed in the footer; anyone can confirm it at `GET /api/public/report/:code` without logging in; every download is written to the audit log
+- **Three-year history:** recent periods come from raw telemetry (up to 31 days per report); periods beyond the plan's raw retention are served from the hourly archive `telemetry_hourly` (up to a year per report, kept 1095 days)
+- Cyrillic support (Roboto font), server-side generation (pdfmake) — no browser dependency
+- Empty periods answer `404 no_data` instead of producing a blank document
 
 ### Rate Limiting
 - 10 exports per minute per user — prevents abuse without blocking legitimate use
@@ -437,7 +441,7 @@ Production-ready deployment with TLS, backups, and monitoring.
 ### Database
 - PostgreSQL 16 with connection pooling (max 30 connections)
 - Statement timeout (30s) prevents runaway queries
-- Monthly telemetry partitions: created 6 months ahead by `modesp-telemetry-partition.timer`, dropped after `TELEMETRY_RETENTION_DAYS` (90) by `modesp-telemetry-cleanup.timer`; `drop_telemetry_partition()` refuses anything younger than 7 days
+- Monthly telemetry partitions: created 6 months ahead by `modesp-telemetry-partition.timer`; raw rows are folded into `telemetry_hourly` and purged per the organisation's plan retention by `cleanup-telemetry.js` (daily, `modesp-retention-cleanup.timer`), partitions are dropped once older than the longest plan retention; `drop_telemetry_partition()` refuses anything younger than 7 days
 - 18+ tables with proper indexes, foreign keys, and constraints
 
 ### Monitoring

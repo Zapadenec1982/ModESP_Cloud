@@ -130,7 +130,7 @@ systemctl restart systemd-journald
 
 systemctl daemon-reload
 systemctl enable modesp-backend
-for t in modesp-backup modesp-telemetry-partition modesp-telemetry-cleanup modesp-retention-cleanup; do
+for t in modesp-backup modesp-telemetry-partition modesp-retention-cleanup; do
   systemctl enable --now "$t.timer"
 done
 
@@ -173,7 +173,7 @@ echo "  5. Start: systemctl start modesp-backend"
 echo "  6. Verify: curl http://localhost:3000/api/health"
 echo "  7. Backups: edit $APP_DIR/infra/backup.env, run the first one by hand:"
 echo "     systemctl start modesp-backup.service && cat /var/backups/modesp/last-success"
-echo "  8. Timers: systemctl list-timers 'modesp-*'   (backup, partitions, 2 cleanups)"
+echo "  8. Timers: systemctl list-timers 'modesp-*'   (backup, partitions, daily retention)"
 echo "  9. Alerts: set PLATFORM_ALERT_CHAT_ID in backend/.env, then test:"
 echo "     systemctl start 'modesp-alert@smoke-test.service'"
 echo "     Restore procedure: $APP_DIR/docs/runbooks/restore.md"

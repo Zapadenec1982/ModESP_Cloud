@@ -39,6 +39,7 @@
       offline_sec: toSec(data.offline_threshold_ms),
       offline_alarm_min: toMin(data.offline_alarm_delay_ms),
       ack_min: data.ack_escalation_min ?? '',
+      raw_retention_days: data.raw_retention_days ?? '',
     }
   }
 
@@ -69,6 +70,7 @@
         offline_threshold_ms: fromSec(form.offline_sec),
         offline_alarm_delay_ms: fromMin(form.offline_alarm_min),
         ack_escalation_min: form.ack_min === '' ? null : Number(form.ack_min),
+        ...($isSuperAdmin ? { raw_retention_days: form.raw_retention_days === '' ? null : Number(form.raw_retention_days) } : {}),
       })
       fill(data)
       toast.success($t('settings.saved'))
@@ -100,7 +102,7 @@
           <div><span class="k">{$t('tenants.col_devices')}</span><strong>{tenant.device_count ?? 0}{tenant.max_devices ? ' / ' + tenant.max_devices : ''}</strong></div>
           <div><span class="k">{$t('tenants.col_sites')}</span><strong>{tenant.site_count ?? 0}{tenant.max_sites ? ' / ' + tenant.max_sites : ''}</strong></div>
           <div><span class="k">{$t('tenants.col_users')}</span><strong>{tenant.user_count ?? 0}{tenant.max_users ? ' / ' + tenant.max_users : ''}</strong></div>
-          <div><span class="k">{$t('settings.retention')}</span><strong>{tenant.retention_days ?? '—'} {$t('settings.days')}</strong></div>
+          <div><span class="k">{$t('settings.retention')}</span><strong>{settings.retention_days ?? tenant.retention_days ?? '—'} {$t('settings.days')}</strong>{#if settings.raw_retention_days}<span class="k"> · {$t('settings.retention_override')}</span>{/if}</div>
           <div><span class="k">{$t('tenants.col_status')}</span><strong>{$t('tenants.status_' + (tenant.status || 'active'))}</strong></div>
         </div>
         <p class="hint">{$t('settings.plan_hint')}</p>
@@ -127,6 +129,14 @@
         <label class="field"><span>{$t('settings.offline_alarm_delay')}</span><input class="input" type="number" min="0" max="1440" bind:value={form.offline_alarm_min} placeholder={toMin(settings.defaults.offline_alarm_delay_ms)} /></label>
         <label class="field"><span>{$t('settings.ack_escalation')}</span><input class="input" type="number" min="1" max="1440" bind:value={form.ack_min} placeholder={settings.defaults.ack_escalation_min} /></label>
       </div>
+
+      {#if $isSuperAdmin}
+        <div class="section-header"><Icon name="clock" size={16} /><span>{$t('settings.retention')}</span></div>
+        <p class="hint">{$t('settings.retention_override_hint')}</p>
+        <div class="form-grid">
+          <label class="field"><span>{$t('settings.retention_override')}</span><input class="input" type="number" min="7" max="1100" bind:value={form.raw_retention_days} placeholder={$t('settings.not_set')} /></label>
+        </div>
+      {/if}
       <div class="actions">
         <Button variant="primary" type="submit" loading={saving} icon="check">{$t('common.save')}</Button>
       </div>

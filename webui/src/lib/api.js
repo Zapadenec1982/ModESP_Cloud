@@ -970,13 +970,22 @@ export async function getAuditLog(params = {}) {
 
 // ── Data Export (CSV / PDF) ──────────────────────────────
 
+/**
+ * Fetch a file with the bearer token and trigger a browser download.
+ * Resolves with the response headers so callers can surface report metadata
+ * (`X-Report-Code`, `X-Report-Source`) that the server exposes on HACCP PDFs.
+ */
 async function downloadFile(path, filename) {
   const headers = {};
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
   const res = await fetch(`${BASE}${path}`, { headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `Export failed: ${res.status}`);
+    const err = new Error(body.message || `Export failed: ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    if (res.status === 402) notifyPlanLimit(body);
+    throw err;
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -987,6 +996,11 @@ async function downloadFile(path, filename) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  return {
+    code: res.headers.get('x-report-code') || null,
+    source: res.headers.get('x-report-source') || null,
+    sha256: res.headers.get('x-report-sha256') || null,
+  };
 }
 
 export function exportTelemetryCsv(deviceId, from, to) {
@@ -995,10 +1009,21 @@ export function exportTelemetryCsv(deviceId, from, to) {
   return downloadFile(`/devices/${deviceId}/telemetry/export.csv?${qs}`, fname);
 }
 
-export function exportTelemetryPdf(deviceId, from, to, bucket = '1h') {
-  const qs = new URLSearchParams({ from, to, bucket }).toString();
+export function exportTelemetryPdf(deviceId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
   const fname = `haccp_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
   return downloadFile(`/devices/${deviceId}/telemetry/export.pdf?${qs}`, fname);
+}
+
+/** One HACCP document for every active device of a site (admins, or a granted technician). */
+export function exportSitePdf(siteId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
+  const fname = `haccp_site_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/sites/${siteId}/export.pdf?${qs}`, fname);
 }
 
 export function exportAlarmsCsv(from, to, severity) {
@@ -1013,7 +1038,7 @@ export function exportAlarmsCsv(from, to, severity) {
 
 export function exportDevicesCsv() {
   const fname = `devices_${new Date().toISOString().slice(0, 10)}.csv`;
-  return downloadFile('/devices/export.csv', fname);
+  return downloadFile('/devices/export/inventory.csv', fname);
 }
 
 // ── Device Models ────────────────────────────────────────

@@ -458,6 +458,8 @@ export default {
     plan_hint: 'Aby zmienić plan lub limity, skontaktuj się z pomocą.',
     retention: 'Retencja telemetrii',
     days: 'dni',
+    retention_override: 'Nadpisanie retencji danych surowych, dni',
+    retention_override_hint: 'Tylko superadmin. Puste — obowiązuje retencja planu. Jawna zmiana planu usuwa nadpisanie.',
     general: 'Ogólne',
     timezone: 'Strefa czasowa (IANA)',
     locale: 'Język powiadomień',
@@ -1078,6 +1080,14 @@ export default {
     export_alarms: 'Eksport alarmów',
     export_telemetry: 'Eksport telemetrii',
     haccp_report: 'Raport HACCP',
+    report_code: 'Raport wygenerowany. Kod weryfikacyjny: {0}',
+    hourly_source: 'Okres jest starszy niż retencja danych surowych — raport zbudowano z archiwum godzinowego',
+    export_inventory: 'Eksport inwentarza',
+    period_from: 'Okres od',
+    period_to: 'do',
+    site_report_hint: 'Jeden dokument dla wszystkich aktywnych urządzeń lokalizacji ({0}). Raport używa bieżącego języka interfejsu.',
+    verify_hint: 'Każdy raport otrzymuje kod weryfikacyjny i odcisk SHA-256, które inspektor może sprawdzić na stronie publicznej.',
+    no_data: 'Brak danych za wybrany okres',
   },
 
   // ── Monitorowanie energii ──

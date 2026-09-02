@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevices, deleteDevicesBulk } from '../lib/api.js'
+  import { getDevices, deleteDevicesBulk, exportDevicesCsv } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { devices, isSuperAdmin, isAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
@@ -195,6 +195,21 @@
     interval = setInterval(load, 30000)
   })
 
+  // ── Inventory export (admin) ──────────────────────────
+  let exportingInventory = false
+
+  async function handleExportInventory() {
+    exportingInventory = true
+    try {
+      await exportDevicesCsv()
+      toast.success($t('export.export_success'))
+    } catch (e) {
+      if (e.status !== 402) toast.error(e.message || $t('export.export_error'))
+    } finally {
+      exportingInventory = false
+    }
+  }
+
   onDestroy(() => {
     clearInterval(interval)
     for (const id of subscribedIds) unsubscribe(id)
@@ -204,7 +219,13 @@
 </script>
 
 <div class="dashboard">
-  <PageHeader title={$t('pages.dashboard')} subtitle={$t('pages.dashboard_sub')} />
+  <PageHeader title={$t('pages.dashboard')} subtitle={$t('pages.dashboard_sub')}>
+    {#if $isAdmin && totalCount > 0}
+      <Button variant="secondary" size="sm" icon="download" loading={exportingInventory} on:click={handleExportInventory}>
+        {$t('export.export_inventory')}
+      </Button>
+    {/if}
+  </PageHeader>
 
   <FleetSummaryBar
     online={onlineCount}

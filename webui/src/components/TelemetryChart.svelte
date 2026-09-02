@@ -4,7 +4,7 @@
   import 'uplot/dist/uPlot.min.css';
   import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf, getSiteWeatherHistory } from '../lib/api.js';
   import { liveState } from '../lib/stores.js';
-  import { t } from '../lib/i18n.js';
+  import { t, locale } from '../lib/i18n.js';
   import { toast } from '../lib/toast.js';
   import { on as wsOn } from '../lib/ws.js';
 
@@ -792,8 +792,10 @@
     try {
       const fromISO = new Date(range.from).toISOString();
       const toISO = new Date(range.to).toISOString();
-      await exportTelemetryPdf(deviceId, fromISO, toISO);
-      toast.success($t('export.export_success'));
+      const meta = await exportTelemetryPdf(deviceId, fromISO, toISO, '1h', $locale);
+      if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000);
+      else toast.success($t('export.export_success'));
+      if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000);
     } catch (e) {
       toast.error(e.message || $t('export.export_error'));
     } finally {

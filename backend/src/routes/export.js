@@ -2,18 +2,18 @@
 
 const { Router }    = require('express');
 const { stringify } = require('csv-stringify');
-const pdfmake       = require('pdfmake/build/pdfmake');
-const vfs_fonts     = require('pdfmake/build/vfs_fonts');
 const db            = require('../services/db');
-const { requireFeature } = require('../middleware/plan');
+const planMw        = require('../middleware/plan');
+const { requireFeature } = planMw;
+const haccp         = require('../services/haccp-report');
 const { checkDeviceAccess, filterDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
 
 // Register bundled Roboto fonts (includes Cyrillic glyphs)
-pdfmake.addVirtualFileSystem(vfs_fonts);
 
 const deviceRouter = Router();
 const alarmRouter  = Router();
+const siteRouter   = Router();
 
 // ── Rate limiter (10 exports / min / user) ────────────────
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -25,6 +25,7 @@ const exportLimiter = rateLimit({
 });
 deviceRouter.use(exportLimiter);
 alarmRouter.use(exportLimiter);
+siteRouter.use(exportLimiter);
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ function shortDate(d) {
 
 // ── GET /api/devices/:id/telemetry/export.csv ─────────────
 deviceRouter.get('/:id/telemetry/export.csv', checkDeviceAccess(), async (req, res, next) => {
+  req.auditContext = { action: 'export.telemetry_csv', entityId: req.params.id };
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
@@ -125,8 +127,10 @@ deviceRouter.get('/:id/telemetry/export.csv', checkDeviceAccess(), async (req, r
   }
 });
 
-// ── GET /api/devices/export.csv ───────────────────────────
-deviceRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => {
+// ── GET /api/devices/export/inventory.csv ─────────────────
+// (was /devices/export.csv, which routes/devices.js's GET /:id shadowed)
+deviceRouter.get('/export/inventory.csv', filterDeviceAccess(), async (req, res, next) => {
+  req.auditContext = { action: 'export.inventory_csv' };
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
 
@@ -190,6 +194,7 @@ deviceRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => 
 
 // ── GET /api/alarms/export.csv ────────────────────────────
 alarmRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => {
+  req.auditContext = { action: 'export.alarms_csv' };
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const range = parseTimeRange(req.query, 90);
@@ -268,264 +273,154 @@ alarmRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => {
   }
 });
 
-// ── GET /api/devices/:id/telemetry/export.pdf (HACCP) ────
+// ── HACCP PDF (plan epic 1.9) ─────────────────────────────
+// Localised, headed with the organisation's legal name and the site address,
+// local time, signature block, verification code + SHA-256 in the footer.
+// Recent periods come from raw telemetry; anything older than the plan's raw
+// retention from telemetry_hourly, up to a year per report.
+
+async function loadTenant(tenantId) {
+  const { rows } = await db.query(
+    `SELECT t.id, t.name, t.slug, t.legal_name, t.tax_id, COALESCE(s.timezone, 'Europe/Kyiv') AS timezone,
+            COALESCE(s.raw_retention_days, p.retention_days, 90) AS retention_days
+       FROM tenants t
+       LEFT JOIN tenant_settings s ON s.tenant_id = t.id
+       LEFT JOIN plan_limits p ON p.plan = t.plan
+      WHERE t.id = $1`,
+    [tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function loadSite(siteId, tenantId) {
+  if (!siteId) return null;
+  const { rows } = await db.query(
+    `SELECT id, name, address_line, city, region, country, timezone FROM sites WHERE id = $1 AND tenant_id = $2`,
+    [siteId, tenantId]
+  );
+  return rows[0] || null;
+}
+
+function parseChannels(query) {
+  return query.channels ? query.channels.split(',').map(c => c.trim()).filter(Boolean) : ['air', 'evap', 'setpoint'];
+}
+
+function sendPdf(res, result, filename) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', result.buffer.length);
+  res.setHeader('X-Report-Code', haccp.fmtCode(result.code));
+  res.setHeader('X-Report-Sha256', result.hash);
+  res.setHeader('X-Report-Source', result.source);
+  res.setHeader('Access-Control-Expose-Headers', 'X-Report-Code, X-Report-Sha256, X-Report-Source');
+  res.end(result.buffer);
+}
+
+function reportError(res, err, next) {
+  if (err.code === 'too_much_data') {
+    return res.status(400).json({ error: 'too_much_data', message: err.message, status: 400 });
+  }
+  next(err);
+}
+
 deviceRouter.get('/:id/telemetry/export.pdf', requireFeature('reports'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
     if (!device) {
-      return res.status(404).json({ error: 'not_found', message: `Device ${req.params.id} not found` });
+      return res.status(404).json({ error: 'not_found', message: `Device ${req.params.id} not found`, status: 404 });
     }
-
-    const range = parseTimeRange(req.query);
+    const tenant = await loadTenant(device.tenant_id);
+    const range = parseTimeRange(req.query, haccp.HOURLY_MAX_DAYS);
     if (!range) {
-      return res.status(400).json({ error: 'validation_failed', message: 'Invalid from/to dates' });
+      return res.status(400).json({ error: 'validation_failed', message: 'Invalid from/to dates', status: 400 });
     }
-
-    const tempChannels = req.query.channels
-      ? req.query.channels.split(',').map(c => c.trim()).filter(Boolean)
-      : ['air', 'evap', 'setpoint'];
     const bucketKey = req.query.bucket || '1h';
-    const validBuckets = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 86400 };
-    const bucketSec = validBuckets[bucketKey];
-    if (!bucketSec) {
-      return res.status(400).json({
-        error: 'validation_failed',
-        message: `Invalid bucket. Use: ${Object.keys(validBuckets).join(', ')}`,
-      });
+    if (!haccp.BUCKETS[bucketKey]) {
+      return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
     }
+    const lang = haccp.pickLang(req.query.lang);
+    const { rows: siteRows } = await db.query('SELECT site_id FROM devices WHERE id = $1', [device.id]);
+    const site = await loadSite(siteRows[0]?.site_id, device.tenant_id);
 
-    // ── Fetch aggregated telemetry ──
-    const bucketExpr = `to_timestamp(floor(extract(epoch FROM time) / ${bucketSec}) * ${bucketSec})`;
-    const telSql = `
-      SELECT
-        ${bucketExpr} AS bucket,
-        channel,
-        MIN(value)   AS min,
-        MAX(value)   AS max,
-        AVG(value)   AS avg,
-        COUNT(*)::int AS samples
-      FROM telemetry
-      WHERE tenant_id = $1 AND device_id = $2
-        AND time >= $3 AND time < $4
-        AND channel = ANY($5)
-      GROUP BY bucket, channel
-      ORDER BY bucket ASC, channel
-    `;
-    const telRows = (await db.query(telSql, [
-      device.tenant_id, device.mqtt_device_id, range.from, range.to, tempChannels,
-    ])).rows;
-
-    if (telRows.length === 0) {
-      return res.status(404).json({ error: 'no_data', message: 'No telemetry data for this period' });
+    const result = await haccp.generate({
+      query: (sql, params) => db.query(sql, params),
+      kind: 'device', tenant, site, devices: [device], channels: parseChannels(req.query),
+      from: range.from, to: range.to, bucketKey, lang, rawRetentionDays: tenant.retention_days,
+      generatedBy: req.user?.email || 'system',
+    });
+    if (result.empty) {
+      return res.status(404).json({ error: 'no_data', message: 'No telemetry data for this period', status: 404 });
     }
-
-    // Guard: max 10k rows for PDF
-    if (telRows.length > 10000) {
-      return res.status(400).json({
-        error: 'too_much_data',
-        message: 'Too many data points for PDF. Use a larger bucket or shorter time range.',
-      });
-    }
-
-    // ── Build summary ──
-    const summaryAcc = {};
-    const bucketMap = new Map();
-
-    for (const row of telRows) {
-      const t = row.bucket.toISOString();
-      if (!bucketMap.has(t)) bucketMap.set(t, { time: t });
-      bucketMap.get(t)[row.channel] = {
-        min: parseFloat(row.min),
-        max: parseFloat(row.max),
-        avg: parseFloat(parseFloat(row.avg).toFixed(2)),
-        samples: row.samples,
-      };
-
-      if (!summaryAcc[row.channel]) {
-        summaryAcc[row.channel] = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
-      }
-      const acc = summaryAcc[row.channel];
-      acc.min = Math.min(acc.min, parseFloat(row.min));
-      acc.max = Math.max(acc.max, parseFloat(row.max));
-      acc.sum += parseFloat(row.avg) * row.samples;
-      acc.count += row.samples;
-    }
-
-    const summary = {};
-    for (const [ch, acc] of Object.entries(summaryAcc)) {
-      summary[ch] = {
-        min: acc.min.toFixed(2),
-        max: acc.max.toFixed(2),
-        avg: (acc.sum / acc.count).toFixed(2),
-        samples: acc.count,
-      };
-    }
-
-    // ── Fetch alarms during period ──
-    const alarmSql = `
-      SELECT alarm_code, severity, value, limit_value, triggered_at, cleared_at
-      FROM alarms
-      WHERE tenant_id = $1 AND device_id = $2
-        AND triggered_at >= $3 AND triggered_at < $4
-      ORDER BY triggered_at ASC
-      LIMIT 200
-    `;
-    const alarmRows = (await db.query(alarmSql, [
-      device.tenant_id, device.mqtt_device_id, range.from, range.to,
-    ])).rows;
-
-    // ── Build PDF ──
-    const deviceName = device.name || device.mqtt_device_id;
-    const generatedBy = req.user?.email || 'system';
-    const fromStr = shortDate(range.from);
-    const toStr   = shortDate(range.to);
-
-    // Summary table
-    const summaryTable = {
-      table: {
-        headerRows: 1,
-        widths: ['*', 'auto', 'auto', 'auto', 'auto'],
-        body: [
-          [
-            { text: 'Channel', bold: true },
-            { text: 'Min °C', bold: true },
-            { text: 'Max °C', bold: true },
-            { text: 'Avg °C', bold: true },
-            { text: 'Samples', bold: true },
-          ],
-          ...Object.entries(summary).map(([ch, s]) => [
-            ch, s.min, s.max, s.avg, s.samples.toString(),
-          ]),
-        ],
-      },
-      layout: 'lightHorizontalLines',
-      margin: [0, 5, 0, 15],
+    req.auditContext = {
+      action: 'export.haccp_pdf', entityId: device.mqtt_device_id,
+      changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, lang },
     };
-
-    // Alarms table (if any)
-    const alarmsSection = alarmRows.length > 0
-      ? [
-          { text: 'Alarms During Period', style: 'sectionHeader' },
-          {
-            table: {
-              headerRows: 1,
-              widths: ['auto', '*', 'auto', 'auto', 'auto'],
-              body: [
-                [
-                  { text: 'Time', bold: true },
-                  { text: 'Code', bold: true },
-                  { text: 'Severity', bold: true },
-                  { text: 'Value', bold: true },
-                  { text: 'Cleared', bold: true },
-                ],
-                ...alarmRows.map(a => [
-                  fmtDate(a.triggered_at),
-                  a.alarm_code,
-                  a.severity || 'warning',
-                  a.value != null ? a.value.toString() : '-',
-                  a.cleared_at ? fmtDate(a.cleared_at) : 'Active',
-                ]),
-              ],
-            },
-            layout: 'lightHorizontalLines',
-            margin: [0, 5, 0, 15],
-          },
-        ]
-      : [{ text: 'No alarms during this period.', italics: true, margin: [0, 5, 0, 15] }];
-
-    // Temperature log table
-    const buckets = [...bucketMap.values()];
-    const chCols = Object.keys(summary);
-    const logTable = {
-      table: {
-        headerRows: 1,
-        widths: ['auto', ...chCols.map(() => '*')],
-        body: [
-          [
-            { text: 'Time', bold: true },
-            ...chCols.map(ch => ({ text: `${ch} °C`, bold: true })),
-          ],
-          ...buckets.map(b => [
-            fmtDate(b.time),
-            ...chCols.map(ch => b[ch] ? b[ch].avg.toFixed(2) : '-'),
-          ]),
-        ],
-      },
-      layout: 'lightHorizontalLines',
-      fontSize: 8,
-    };
-
-    const docDefinition = {
-      defaultStyle: { font: 'Roboto', fontSize: 9 },
-      pageSize: 'A4',
-      pageMargins: [40, 40, 40, 60],
-      header: {
-        text: 'ModESP — HACCP Temperature Compliance Log',
-        alignment: 'center',
-        margin: [0, 15, 0, 0],
-        fontSize: 10,
-        bold: true,
-        color: '#555555',
-      },
-      footer: (currentPage, pageCount) => ({
-        text: `Page ${currentPage} / ${pageCount}  —  ModESP HACCP Report`,
-        alignment: 'center',
-        margin: [0, 15, 0, 0],
-        fontSize: 8,
-        color: '#999999',
-      }),
-      content: [
-        { text: 'HACCP Temperature Compliance Log', style: 'title' },
-        {
-          columns: [
-            {
-              width: '*',
-              text: [
-                { text: 'Device: ', bold: true }, `${deviceName} (${device.mqtt_device_id})\n`,
-                { text: 'Location: ', bold: true }, `${device.location || '—'}\n`,
-                { text: 'Serial: ', bold: true }, `${device.serial_number || '—'}`,
-                device.model ? `    Model: ${device.model}` : '',
-              ],
-            },
-            {
-              width: 'auto',
-              text: [
-                { text: 'Period: ', bold: true }, `${fromStr} — ${toStr}\n`,
-                { text: 'Bucket: ', bold: true }, `${bucketKey}\n`,
-                { text: 'Generated: ', bold: true }, `${shortDate(new Date())} by ${generatedBy}`,
-              ],
-              alignment: 'right',
-            },
-          ],
-          margin: [0, 0, 0, 15],
-        },
-
-        { text: 'Summary', style: 'sectionHeader' },
-        summaryTable,
-
-        ...alarmsSection,
-
-        { text: `Temperature Log (${bucketKey} intervals)`, style: 'sectionHeader' },
-        logTable,
-      ],
-      styles: {
-        title: { fontSize: 16, bold: true, margin: [0, 0, 0, 10] },
-        sectionHeader: { fontSize: 12, bold: true, margin: [0, 10, 0, 5], color: '#333333' },
-      },
-    };
-
-    const pdf = pdfmake.createPdf(docDefinition);
-    const buffer = await pdf.getBuffer();
-
-    const filename = `haccp_${device.mqtt_device_id}_${fromStr}_${toStr}.pdf`;
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', buffer.length);
-    res.end(Buffer.from(buffer));
+    sendPdf(res, result, `haccp_${device.mqtt_device_id}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`);
   } catch (err) {
-    next(err);
+    reportError(res, err, next);
   }
 });
 
-module.exports = { deviceRouter, alarmRouter };
+// ── GET /api/sites/:id/export.pdf — one document for every device of a site ──
+siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isUuidFormat(id)) {
+      return res.status(404).json({ error: 'not_found', message: 'Site not found', status: 404 });
+    }
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const { rows: siteRows } = await db.query(
+      `SELECT id, tenant_id, name, address_line, city, region, country, timezone FROM sites WHERE id = $1${isSuperadmin ? '' : ' AND tenant_id = $2'}`,
+      isSuperadmin ? [id] : [id, req.tenantId]
+    );
+    if (siteRows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Site not found', status: 404 });
+    }
+    const site = siteRows[0];
+    // Technicians / viewers need a site grant (admins see every site of their organisation)
+    if (req.user && req.user.role !== 'admin' && !isSuperadmin) {
+      const { rows: grant } = await db.query(
+        'SELECT 1 FROM user_sites WHERE site_id = $1 AND tenant_id = $2 AND user_id = $3', [site.id, site.tenant_id, req.user.id]);
+      if (grant.length === 0) {
+        return res.status(403).json({ error: 'forbidden', message: 'Site access denied', status: 403 });
+      }
+    }
+    const tenant = await loadTenant(site.tenant_id);
+    const range = parseTimeRange(req.query, haccp.HOURLY_MAX_DAYS);
+    if (!range) {
+      return res.status(400).json({ error: 'validation_failed', message: 'Invalid from/to dates', status: 400 });
+    }
+    const bucketKey = req.query.bucket || '1h';
+    if (!haccp.BUCKETS[bucketKey]) {
+      return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
+    }
+    const { rows: devices } = await db.query(
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model
+         FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
+      [site.id, site.tenant_id]
+    );
+    if (devices.length === 0) {
+      return res.status(404).json({ error: 'no_data', message: 'No devices on this site', status: 404 });
+    }
+    const lang = haccp.pickLang(req.query.lang);
+    const result = await haccp.generate({
+      query: (sql, params) => db.query(sql, params),
+      kind: 'site', tenant, site, devices, channels: parseChannels(req.query),
+      from: range.from, to: range.to, bucketKey, lang, rawRetentionDays: tenant.retention_days,
+      generatedBy: req.user?.email || 'system',
+    });
+    if (result.empty) {
+      return res.status(404).json({ error: 'no_data', message: 'No telemetry data for this period', status: 404 });
+    }
+    req.auditContext = {
+      action: 'export.haccp_site_pdf', entityId: site.id,
+      changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, devices: devices.length, lang },
+    };
+    sendPdf(res, result, `haccp_site_${site.name.replace(/[^\w-]+/g, '_')}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`);
+  } catch (err) {
+    reportError(res, err, next);
+  }
+});
+
+module.exports = { deviceRouter, alarmRouter, siteRouter };

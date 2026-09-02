@@ -122,9 +122,10 @@ function createTestApp() {
   app.use('/api/fleet',   require('../../src/routes/fleet'));
   // Sites and exports, mounted as index.js does (plan-limit and feature gates live there)
   app.use('/api/sites',   require('../../src/routes/sites'));
-  const { deviceRouter: exportDevices, alarmRouter: exportAlarms } = require('../../src/routes/export');
+  const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('../../src/routes/export');
   app.use('/api/devices', exportDevices);
   app.use('/api/alarms',  exportAlarms);
+  app.use('/api/sites',   exportSites);
 
   // Error handler
   app.use((err, _req, res, _next) => {

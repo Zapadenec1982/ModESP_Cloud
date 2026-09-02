@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-679-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-690-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -141,7 +141,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 679 tests across 46 test files
+│   ├── test/                        # 690 tests across 47 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -246,7 +246,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**679 integration tests** across 46 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**690 integration tests** across 47 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -348,7 +348,7 @@ sudo systemctl restart modesp-backend
 | 8b | Multi-Tenant Users (M:N memberships, tenant picker/switcher) | ✅ Complete |
 | 8c | Telegram Bot Redesign (auth, RBAC, i18n, persistent keyboard) | ✅ Complete |
 | 9 | Audit Logging (immutable log, middleware, before/after changes) | ✅ Complete |
-| 10 | Test Infrastructure (Vitest, 679 tests, 46 test suites) | ✅ Complete |
+| 10 | Test Infrastructure (Vitest, 690 tests, 47 test suites) | ✅ Complete |
 | 11 | Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity) | ✅ Complete |
 | — | VPS Production Deployment | ✅ Production |
 
@@ -404,7 +404,7 @@ This project demonstrates production-grade skills across the full IoT stack:
 
 **DevOps & Testing:**
 - Production VPS deployment with systemd, Nginx (HTTPS/WSS), Let's Encrypt auto-renewal
-- 679 integration tests against real PostgreSQL (not mocks)
+- 690 integration tests against real PostgreSQL (not mocks)
 - Structured JSON logging (Pino), rate limiting, security headers (Helmet)
 
 ---

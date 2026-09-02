@@ -17,13 +17,15 @@ const TENANT_SELECT = `
   SELECT t.id, t.name, t.slug, t.plan, t.active, t.status, t.created_at,
          t.trial_expires_at, t.suspended_at, t.billing_email, t.legal_name, t.tax_id,
          t.billing_currency, t.contract_started_at,
-         p.name AS plan_name, p.max_devices, p.max_sites, p.max_users, p.retention_days, p.sampling_sec, p.features,
+         p.name AS plan_name, p.max_devices, p.max_sites, p.max_users, p.sampling_sec, p.features,
+         COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.raw_retention_days,
          (SELECT COUNT(*)::int FROM devices d WHERE d.tenant_id = t.id AND d.status = 'active') AS device_count,
          (SELECT COUNT(*)::int FROM devices d WHERE d.claimed_by_tenant_id = t.id AND d.status = 'pending') AS pending_count,
          (SELECT COUNT(*)::int FROM sites s WHERE s.tenant_id = t.id) AS site_count,
          (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = t.id AND u.active = true) AS user_count
     FROM tenants t
-    LEFT JOIN plan_limits p ON p.plan = t.plan`;
+    LEFT JOIN plan_limits p ON p.plan = t.plan
+    LEFT JOIN tenant_settings s ON s.tenant_id = t.id`;
 
 const RESERVED_SLUGS = new Set(['__system__', 'pending', 'system', 'admin', 'api']);
 
@@ -61,6 +63,8 @@ const settingsSchema = z.object({
   offline_threshold_ms:    z.number().int().min(30_000).max(3_600_000).nullable().optional(),
   offline_alarm_delay_ms:  z.number().int().min(0).max(86_400_000).nullable().optional(),
   ack_escalation_min:      z.number().int().min(1).max(1440).nullable().optional(),
+  // Superadmin only: raw telemetry retention that wins over the plan (grandfathering)
+  raw_retention_days:      z.number().int().min(7).max(1100).nullable().optional(),
 });
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -155,8 +159,11 @@ const SETTINGS_SELECT = `
   SELECT t.id AS tenant_id, t.electricity_rate, t.electricity_currency,
          COALESCE(s.timezone, 'Europe/Kyiv') AS timezone, COALESCE(s.locale, 'uk') AS locale,
          s.door_alarm_delay_ms, s.pulldown_alarm_delay_ms, s.offline_threshold_ms, s.offline_alarm_delay_ms,
-         s.ack_escalation_min, s.updated_at
-    FROM tenants t LEFT JOIN tenant_settings s ON s.tenant_id = t.id
+         s.ack_escalation_min, s.raw_retention_days,
+         COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.updated_at
+    FROM tenants t
+    LEFT JOIN tenant_settings s ON s.tenant_id = t.id
+    LEFT JOIN plan_limits p ON p.plan = t.plan
    WHERE t.id = $1`;
 
 function settingsDefaults() {
@@ -206,6 +213,9 @@ router.patch('/:id/settings', async (req, res, next) => {
     if (Object.keys(d).length === 0) {
       return res.status(400).json({ error: 'validation_failed', message: 'No fields to update', status: 400 });
     }
+    if (d.raw_retention_days !== undefined && !isSuperAdmin(req)) {
+      return res.status(403).json({ error: 'forbidden', message: 'raw_retention_days can only be changed by a superadmin', status: 403 });
+    }
     if (d.timezone) {
       try { new Intl.DateTimeFormat('en-GB', { timeZone: d.timezone }); }
       catch { return res.status(400).json({ error: 'validation_failed', message: 'timezone must be an IANA time zone', status: 400 }); }
@@ -224,7 +234,7 @@ router.patch('/:id/settings', async (req, res, next) => {
         await client.query('UPDATE tenants SET electricity_currency = $2 WHERE id = $1', [id, d.electricity_currency]);
       }
       const cols = ['timezone', 'locale', 'door_alarm_delay_ms', 'pulldown_alarm_delay_ms',
-                    'offline_threshold_ms', 'offline_alarm_delay_ms', 'ack_escalation_min'];
+                    'offline_threshold_ms', 'offline_alarm_delay_ms', 'ack_escalation_min', 'raw_retention_days'];
       const present = cols.filter(c => d[c] !== undefined);
       if (present.length) {
         const insertCols = ['tenant_id', ...present, 'updated_at', 'updated_by'];
@@ -351,6 +361,12 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
         message: 'Tenant not found',
         status: 404,
       });
+    }
+
+    // An explicit plan change ends the grandfathered raw retention: from now on
+    // the organisation keeps what its plan says (plan epic 1.9).
+    if (updates.plan !== undefined && beforeTenant && updates.plan !== beforeTenant.plan) {
+      await db.query('UPDATE tenant_settings SET raw_retention_days = NULL WHERE tenant_id = $1', [id]);
     }
 
     // Audit: before/after

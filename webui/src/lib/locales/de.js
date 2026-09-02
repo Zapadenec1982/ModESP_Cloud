@@ -458,6 +458,8 @@ export default {
     plan_hint: 'Um Plan oder Limits zu ändern, wenden Sie sich an den Support.',
     retention: 'Telemetrie-Aufbewahrung',
     days: 'Tage',
+    retention_override: 'Überschreibung der Rohdaten-Aufbewahrung, Tage',
+    retention_override_hint: 'Nur Superadmin. Leer — es gilt die Aufbewahrung des Plans. Eine ausdrückliche Planänderung hebt die Überschreibung auf.',
     general: 'Allgemein',
     timezone: 'Zeitzone (IANA)',
     locale: 'Sprache der Benachrichtigungen',
@@ -1078,6 +1080,14 @@ export default {
     export_alarms: 'Alarme exportieren',
     export_telemetry: 'Telemetrie exportieren',
     haccp_report: 'HACCP-Bericht',
+    report_code: 'Bericht erstellt. Prüfcode: {0}',
+    hourly_source: 'Der Zeitraum liegt außerhalb der Rohdaten-Aufbewahrung – der Bericht wurde aus dem Stundenarchiv erstellt',
+    export_inventory: 'Inventar exportieren',
+    period_from: 'Zeitraum von',
+    period_to: 'bis',
+    site_report_hint: 'Ein Dokument für alle aktiven Geräte des Standorts ({0}). Der Bericht verwendet die aktuelle Oberflächensprache.',
+    verify_hint: 'Jeder Bericht erhält einen Prüfcode und einen SHA-256-Fingerabdruck, die ein Prüfer auf der öffentlichen Seite abgleichen kann.',
+    no_data: 'Keine Daten für den gewählten Zeitraum',
   },
 
   // ── Energieüberwachung ──
