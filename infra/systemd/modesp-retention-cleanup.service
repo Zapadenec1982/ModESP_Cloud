@@ -1,0 +1,23 @@
+[Unit]
+Description=Row retention sweep (weather, events, notification log, alarms, tokens)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=modesp
+Group=modesp
+WorkingDirectory=/opt/modesp-cloud/backend
+# Both scripts read their retention from backend/.env and delete in batches of
+# 10 000 rows; a value of 0 disables the corresponding sweep.
+ExecStart=/usr/bin/node scripts/cleanup-weather.js --apply
+ExecStart=/usr/bin/node scripts/cleanup-aux.js --apply
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-retention-cleanup

@@ -4,11 +4,11 @@
 # Run as root: bash setup.sh
 #
 # Prerequisites: fresh VPS with SSH access
-# Domain: cloud.modesp.com (DNS A record pointing to VPS IP)
+# Domain: modesp.com.ua (DNS A record pointing to VPS IP) — override with DOMAIN=...
 
 set -euo pipefail
 
-DOMAIN="cloud.modesp.com"
+DOMAIN="${DOMAIN:-modesp.com.ua}"
 APP_DIR="/opt/modesp-cloud"
 APP_USER="modesp"
 DB_NAME="modesp_cloud"
@@ -77,7 +77,7 @@ mkdir -p "$APP_DIR"
 # git clone https://github.com/Zapadenec1982/ModESP_Cloud.git $APP_DIR
 
 cd "$APP_DIR/backend"
-npm install --production
+npm ci --omit=dev
 
 # Create .env from template
 if [ ! -f .env ]; then
@@ -86,23 +86,61 @@ if [ ! -f .env ]; then
 fi
 
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+chmod 600 "$APP_DIR/backend/.env"
+
+# Migrations on top of schema.sql, recorded in schema_migrations. DDL must run
+# as the schema owner, so the runner connects as postgres over the socket
+# (peer auth); the explicit DB_* variables win over the ones in .env.
+echo "  → Apply migrations..."
+sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME="$DB_NAME" DB_USER=postgres DB_PASS= \
+  node "$APP_DIR/backend/src/scripts/migrate.js"
+
+# The schema is owned by postgres; the app role gets DML only (DDL stays with the
+# owner, which is what migrate.js above relies on). Default privileges cover
+# tables that future migrations create.
+echo "  → Grant application privileges..."
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" <<SQL
+GRANT USAGE ON SCHEMA public TO $DB_USER;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $DB_USER;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $DB_USER;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO $DB_USER;
+SQL
 
 # ── 7. Systemd ────────────────────────────────────────────
 echo "[7/8] Installing systemd units..."
-cp "$APP_DIR/infra/systemd/modesp-backend.service" /etc/systemd/system/
-cp "$APP_DIR/infra/systemd/modesp-telemetry-partition.service" /etc/systemd/system/
-cp "$APP_DIR/infra/systemd/modesp-telemetry-partition.timer" /etc/systemd/system/
+cp "$APP_DIR"/infra/systemd/modesp-*.service /etc/systemd/system/
+cp "$APP_DIR"/infra/systemd/modesp-*.timer   /etc/systemd/system/
+
+# Backup configuration (secrets: passphrase, off-site destination) + archive dir
+mkdir -p /var/backups/modesp
+chmod 750 /var/backups/modesp
+chgrp "$APP_USER" /var/backups/modesp
+if [ ! -f "$APP_DIR/infra/backup.env" ]; then
+  cp "$APP_DIR/infra/backup.env.example" "$APP_DIR/infra/backup.env"
+  chown root:root "$APP_DIR/infra/backup.env"
+  chmod 600 "$APP_DIR/infra/backup.env"
+  echo "  → Edit $APP_DIR/infra/backup.env (BACKUP_PASSPHRASE, BACKUP_REMOTE)"
+fi
 
 systemctl daemon-reload
 systemctl enable modesp-backend
-systemctl enable modesp-telemetry-partition.timer
-systemctl start modesp-telemetry-partition.timer
+for t in modesp-backup modesp-telemetry-partition modesp-telemetry-cleanup modesp-retention-cleanup; do
+  systemctl enable --now "$t.timer"
+done
+
+# Partitions for the next 6 months right away (the timer only fires on the 25th).
+# Needs the real DB_PASS in backend/.env; on a first run that is still empty.
+sudo -u "$APP_USER" node "$APP_DIR/backend/src/scripts/ensure-partitions.js" \
+  || echo "  → ensure-partitions failed — set DB_PASS in backend/.env, then: systemctl start modesp-telemetry-partition.service"
 
 echo "  → Start backend: systemctl start modesp-backend"
 
 # ── 8. Nginx + TLS ────────────────────────────────────────
 echo "[8/8] Setting up Nginx..."
 cp "$APP_DIR/infra/nginx/modesp.conf" /etc/nginx/sites-available/modesp
+# Defines the `zone=api` rate-limit zone referenced by modesp.conf
+cp "$APP_DIR/infra/nginx/ratelimit.conf" /etc/nginx/conf.d/modesp-ratelimit.conf
 ln -sf /etc/nginx/sites-available/modesp /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
@@ -126,4 +164,8 @@ echo "     ln -s /etc/letsencrypt/live/$DOMAIN/chain.pem /etc/mosquitto/certs/ca
 echo "  4. Update Mosquitto passwords: mosquitto_passwd -b /etc/mosquitto/passwd ..."
 echo "  5. Start: systemctl start modesp-backend"
 echo "  6. Verify: curl http://localhost:3000/api/health"
+echo "  7. Backups: edit $APP_DIR/infra/backup.env, run the first one by hand:"
+echo "     systemctl start modesp-backup.service && cat /var/backups/modesp/last-success"
+echo "  8. Timers: systemctl list-timers 'modesp-*'   (backup, partitions, 2 cleanups)"
+echo "     Restore procedure: $APP_DIR/docs/runbooks/restore.md"
 echo ""

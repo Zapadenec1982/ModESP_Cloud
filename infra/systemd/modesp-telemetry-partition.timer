@@ -1,5 +1,5 @@
 [Unit]
-Description=Monthly telemetry partition creation
+Description=Monthly telemetry partition creation (25th, 03:00)
 
 [Timer]
 OnCalendar=*-*-25 03:00:00

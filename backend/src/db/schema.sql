@@ -211,30 +211,85 @@ CREATE POLICY tenant_isolation_events ON events
   USING (tenant_id = current_setting('app.current_tenant', true)::UUID);
 
 -- ============================================================
--- Partition creation function (for cron automation)
+-- Partition lifecycle functions (used by the systemd timers)
 -- ============================================================
+-- Both are SECURITY DEFINER: the parent table is owned by the schema owner
+-- (postgres on production) while the backend and the maintenance scripts
+-- connect as the app role with DML grants only. Migration 023 carries the same
+-- definitions plus the REVOKE/GRANT lines that restrict EXECUTE to that role.
 CREATE OR REPLACE FUNCTION create_telemetry_partition(year INT, month INT)
-RETURNS VOID AS $$
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
 DECLARE
   partition_name TEXT;
   start_date DATE;
   end_date DATE;
 BEGIN
+  IF year IS NULL OR month IS NULL OR year < 2020 OR year > 2100 OR month < 1 OR month > 12 THEN
+    RAISE EXCEPTION 'create_telemetry_partition: invalid year/month %/%', year, month;
+  END IF;
+
   partition_name := format('telemetry_%s_%s', year, lpad(month::TEXT, 2, '0'));
   start_date := make_date(year, month, 1);
   end_date := start_date + INTERVAL '1 month';
 
   EXECUTE format(
-    'CREATE TABLE IF NOT EXISTS %I PARTITION OF telemetry
+    'CREATE TABLE IF NOT EXISTS public.%I PARTITION OF public.telemetry
      FOR VALUES FROM (%L) TO (%L)',
     partition_name, start_date, end_date
   );
 
   -- Unique index for ON CONFLICT DO NOTHING (backfill dedup)
   EXECUTE format(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_%I_unique
-     ON %I (tenant_id, device_id, channel, time)',
-    partition_name, partition_name
+    'CREATE UNIQUE INDEX IF NOT EXISTS %I ON public.%I (tenant_id, device_id, channel, time)',
+    'idx_' || partition_name || '_unique', partition_name
   );
 END;
-$$ LANGUAGE plpgsql;
+$$;
+
+-- Detaches and drops one monthly partition; TRUE when dropped, FALSE when
+-- nothing by that name is attached. Refuses non telemetry_YYYY_MM names and,
+-- whatever the configured retention, any partition that ended < 7 days ago.
+CREATE OR REPLACE FUNCTION drop_telemetry_partition(partition_name TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  y INT;
+  m INT;
+  range_end DATE;
+BEGIN
+  IF partition_name IS NULL OR partition_name !~ '^telemetry_[0-9]{4}_[0-9]{2}$' THEN
+    RAISE EXCEPTION 'drop_telemetry_partition: "%" is not a telemetry_YYYY_MM partition name', partition_name;
+  END IF;
+
+  y := substring(partition_name FROM 11 FOR 4)::INT;
+  m := substring(partition_name FROM 16 FOR 2)::INT;
+  IF m < 1 OR m > 12 THEN
+    RAISE EXCEPTION 'drop_telemetry_partition: "%" has an invalid month', partition_name;
+  END IF;
+  range_end := (make_date(y, m, 1) + INTERVAL '1 month')::DATE;
+
+  IF range_end > (now() - INTERVAL '7 days')::DATE THEN
+    RAISE EXCEPTION 'drop_telemetry_partition: % ends on %, refusing to drop a partition younger than 7 days',
+      partition_name, range_end;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_inherits
+     WHERE inhparent = 'public.telemetry'::regclass
+       AND inhrelid  = to_regclass('public.' || partition_name)
+  ) THEN
+    RETURN FALSE;
+  END IF;
+
+  EXECUTE format('ALTER TABLE public.telemetry DETACH PARTITION public.%I', partition_name);
+  EXECUTE format('DROP TABLE IF EXISTS public.%I', partition_name);
+  RETURN TRUE;
+END;
+$$;

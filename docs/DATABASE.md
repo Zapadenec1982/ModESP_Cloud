@@ -403,7 +403,7 @@ PK починається з `site_id`, тому sweep по терміну зб�
 власного індексу.
 
 **Зберігання, не партиціонування.** `WEATHER_RETENTION_DAYS=395` (порівняння рік-до-року ще працює),
-чистить `backend/scripts/cleanup-weather.js` за cron поряд із `cleanup-telemetry.js`. Обсяг малий:
+чистить `backend/scripts/cleanup-weather.js` щодня з таймера `modesp-retention-cleanup.timer`. Обсяг малий:
 одна точка × 24 години = 24 рядки/добу, тобто ~9 тис. рядків на точку на рік.
 
 Запис — `INSERT ... ON CONFLICT (site_id, observed_at) DO NOTHING`, тому перезапуск бекенду в межах
@@ -519,26 +519,42 @@ CREATE POLICY tenant_isolation ON devices
 
 ## Партиціонування телеметрії — автоматизація
 
-```sql
-CREATE OR REPLACE FUNCTION create_telemetry_partition(year INT, month INT)
-RETURNS VOID AS $$
-DECLARE
-  partition_name TEXT;
-  start_date DATE;
-  end_date DATE;
-BEGIN
-  partition_name := format('telemetry_%s_%s', year, lpad(month::TEXT, 2, '0'));
-  start_date := make_date(year, month, 1);
-  end_date := start_date + INTERVAL '1 month';
+Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
+міграція 023). Завдяки цьому таймери systemd працюють від застосункової ролі `modesp_cloud`,
+хоча батьківська таблиця і партиції належать `postgres`. `EXECUTE` відкликано в `PUBLIC` і
+надано лише `modesp_cloud`.
 
-  EXECUTE format(
-    'CREATE TABLE IF NOT EXISTS %I PARTITION OF telemetry
-     FOR VALUES FROM (%L) TO (%L)',
-    partition_name, start_date, end_date
-  );
-END;
-$$ LANGUAGE plpgsql;
+```sql
+-- створює public.telemetry_YYYY_MM + унікальний індекс для ON CONFLICT DO NOTHING; ідемпотентна
+SELECT create_telemetry_partition(2026, 10);
+
+-- від'єднує і видаляє партицію; TRUE — видалено, FALSE — такої партиції вже нема.
+-- Приймає лише імена telemetry_YYYY_MM і відмовляє, якщо діапазон закрився < 7 днів тому.
+SELECT drop_telemetry_partition('telemetry_2026_05');
 ```
+
+| Скрипт | Таймер | Що робить |
+|---|---|---|
+| `backend/src/scripts/ensure-partitions.js` | `modesp-telemetry-partition.timer`, 25-го | партиції на поточний місяць + `PARTITION_MONTHS_AHEAD` (6) уперед |
+| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-telemetry-cleanup.timer`, 1-го | видаляє партиції, чий кінець старший за `TELEMETRY_RETENTION_DAYS` (90) |
+
+---
+
+## Ретенція інших таблиць
+
+`backend/scripts/cleanup-aux.js --apply` (таймер `modesp-retention-cleanup.timer`, щодня 03:30,
+після `cleanup-weather.js`), пакетами по 10 000 рядків:
+
+| Таблиця | Колонка | Змінна | Дефолт |
+|---|---|---|---|
+| `events` | `time` | `EVENT_RETENTION_DAYS` | 365 |
+| `notification_log` | `created_at` | `NOTIFICATION_LOG_RETENTION_DAYS` | 90 |
+| `alarms` (лише `active = false`) | `cleared_at` | `ALARM_RETENTION_DAYS` | 365 |
+| `refresh_tokens` | `expires_at` | — | лише протерміновані |
+| `weather_observations` | `observed_at` | `WEATHER_RETENTION_DAYS` | 395 |
+
+`0` вимикає окремий sweep. `audit_log` не чиститься — тригер `trg_audit_log_immutable` забороняє
+`UPDATE`/`DELETE`.
 
 ---
 

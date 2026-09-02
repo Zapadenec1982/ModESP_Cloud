@@ -1,0 +1,22 @@
+[Unit]
+Description=Drop telemetry partitions past TELEMETRY_RETENTION_DAYS
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+# App user + DB_USER credentials; drop_telemetry_partition() (migration 023) is
+# SECURITY DEFINER and refuses to drop anything younger than 7 days.
+User=modesp
+Group=modesp
+WorkingDirectory=/opt/modesp-cloud/backend
+ExecStart=/usr/bin/node scripts/cleanup-telemetry.js --apply
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-telemetry-cleanup

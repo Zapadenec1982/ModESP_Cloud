@@ -54,3 +54,6 @@ backend/firmware/*
 # Covered by *.csv above; named explicitly so it survives any future narrowing
 # of that rule. Never commit these files, not even with `git add -f`.
 backend/src/scripts/demo-data/emulator-fleet*.csv
+
+# Backup configuration (secrets: passphrase, remote credentials)
+infra/backup.env

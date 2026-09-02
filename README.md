@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-579-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-592-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -141,7 +141,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 579 tests across 31 test files
+│   ├── test/                        # 592 tests across 32 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -149,7 +149,8 @@ ModESP_Cloud/
 │   │   └── ...                     # users, devices, tenants, alarms, fleet, OTA, audit...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js    # Backward-compat RBAC migration
-│   │   ├── cleanup-telemetry.js    # Retention: drop partitions >90 days
+│   │   ├── cleanup-telemetry.js    # Retention: drop partitions past TELEMETRY_RETENTION_DAYS
+│   │   ├── cleanup-aux.js          # Retention: events, notification log, alarms, tokens
 │   │   └── provision-mqtt-creds.js # Generate MQTT credentials for existing devices
 │   ├── package.json
 │   └── .env.example
@@ -164,7 +165,8 @@ ModESP_Cloud/
 │   └── package.json
 │
 ├── infra/
-│   ├── systemd/                    # modesp-backend.service, telemetry partition timer
+│   ├── systemd/                    # backend service + backup, partition and retention timers
+│   ├── scripts/                    # backup-postgres.sh (daily archive, off-site copy)
 │   ├── nginx/                      # HTTPS, reverse proxy, SPA fallback, rate limiting
 │   └── mosquitto/                  # go-auth config, TLS, ACL queries
 │
@@ -173,7 +175,8 @@ ModESP_Cloud/
 │   ├── MQTT_PROTOCOL.md            # v1 protocol, topics, message formats
 │   ├── DATABASE.md                 # Schema, partitioning, indexes
 │   ├── API_REFERENCE.md            # 60+ REST endpoints with examples
-│   ├── DEPLOYMENT.md               # VPS setup, migrations, cron jobs
+│   ├── DEPLOYMENT.md               # VPS setup, migrations, systemd timers, backups
+│   ├── runbooks/restore.md         # Disaster recovery, measured RTO/RPO
 │   └── ROADMAP.md                  # Development phases & progress
 │
 └── LICENSE                         # PolyForm Noncommercial License
@@ -243,7 +246,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**579 integration tests** across 31 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**592 integration tests** across 32 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -345,7 +348,7 @@ sudo systemctl restart modesp-backend
 | 8b | Multi-Tenant Users (M:N memberships, tenant picker/switcher) | ✅ Complete |
 | 8c | Telegram Bot Redesign (auth, RBAC, i18n, persistent keyboard) | ✅ Complete |
 | 9 | Audit Logging (immutable log, middleware, before/after changes) | ✅ Complete |
-| 10 | Test Infrastructure (Vitest, 579 tests, 31 test suites) | ✅ Complete |
+| 10 | Test Infrastructure (Vitest, 592 tests, 32 test suites) | ✅ Complete |
 | 11 | Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity) | ✅ Complete |
 | — | VPS Production Deployment | ✅ Production |
 
@@ -401,7 +404,7 @@ This project demonstrates production-grade skills across the full IoT stack:
 
 **DevOps & Testing:**
 - Production VPS deployment with systemd, Nginx (HTTPS/WSS), Let's Encrypt auto-renewal
-- 579 integration tests against real PostgreSQL (not mocks)
+- 592 integration tests against real PostgreSQL (not mocks)
 - Structured JSON logging (Pino), rate limiting, security headers (Helmet)
 
 ---
