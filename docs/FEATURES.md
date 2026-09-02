@@ -420,7 +420,11 @@ Production-ready deployment with TLS, backups, and monitoring.
 - 18+ tables with proper indexes, foreign keys, and constraints
 
 ### Monitoring
-- `GET /api/health` — database, MQTT, uptime status
+- `GET /api/health` — database, MQTT, uptime, plus categorical platform checks (`platform`, `checks.backup/partitions/disk`) sized for an external keyword probe (UptimeRobot / Better Stack)
+- `GET /api/health/details` (superadmin) — version, memory, broker client count (`$SYS`), backup age and size, partition headroom, free disk, per-channel delivery counters, Telegram bot health
+- `modesp-alert@.service` — every ModESP unit has `OnFailure=`; a failed backup, cleanup, partition run or a backend crash loop posts the unit name and its last journal lines to a Telegram group (`PLATFORM_ALERT_CHAT_ID`)
+- Restart safety: `shutdown()` flushes every dirty device state to the DB, and the next start re-arms the nuisance timers of door/pulldown alarms that were pending, so a door left open across a restart still alarms
+- journald capped at 500 MB / 30 days (`infra/journald/modesp.conf`); batch messages logged at `debug`
 - StateMap monitoring — device count, total keys, estimated memory usage (logged every 60s)
 - Pino structured logging (JSON in production)
 
@@ -430,7 +434,8 @@ Production-ready deployment with TLS, backups, and monitoring.
 - Monthly partition pre-creation (25th of each month)
 
 ### Deployment
-- systemd service with automatic restart
+- systemd service with automatic restart; `Wants=` (not `Requires=`) on PostgreSQL and Mosquitto so a broker or database restart never leaves the backend stopped
+- certbot deploy hook (`infra/scripts/tls-deploy-hook.sh`) installs renewed certificates for Mosquitto, reloads instead of restarting, and verifies the served certificate before falling back to a restart
 - Nginx reverse proxy with WebSocket upgrade support
 - Git-based deploy (`git pull` + `systemctl restart`)
 

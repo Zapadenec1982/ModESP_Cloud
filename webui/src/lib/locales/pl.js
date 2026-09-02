@@ -4,6 +4,7 @@
 export default {
   // ── Navigation ──
   nav: {
+    status_page: 'Status platformy',
     dashboard: 'Panel',
     map: 'Mapa',
     alarms: 'Alarmy',

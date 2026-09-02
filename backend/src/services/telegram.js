@@ -224,6 +224,18 @@ function matchButton(text) {
 
 // ── Init / Shutdown ───────────────────────────────────────
 
+const botHealth = {
+  configured: false,
+  bot_username: null,
+  get_me_ok_at: null,
+  get_me_error: null,
+  last_polling_error_at: null,
+  last_polling_error: null,
+};
+
+/** Bot health for /api/health/details. */
+function health() { return { ...botHealth }; }
+
 function init(log) {
   logger = log.child({ svc: 'telegram' });
 
@@ -234,8 +246,24 @@ function init(log) {
   }
 
   bot = new TelegramBot(token, { polling: true });
+  botHealth.configured = true;
+
+  // One getMe() at start proves the token: a revoked or mistyped token otherwise
+  // only shows up as an endless stream of polling errors.
+  bot.getMe()
+    .then((me) => {
+      botHealth.bot_username = me.username || null;
+      botHealth.get_me_ok_at = new Date().toISOString();
+      botHealth.get_me_error = null;
+    })
+    .catch((err) => {
+      botHealth.get_me_error = String(err && err.message || err).slice(0, 200);
+      logger.error({ err: err.message }, 'Telegram getMe failed — check TELEGRAM_BOT_TOKEN');
+    });
 
   bot.on('polling_error', (err) => {
+    botHealth.last_polling_error_at = new Date().toISOString();
+    botHealth.last_polling_error = String(err && err.message || err).slice(0, 200);
     logger.error({ err: err.message }, 'Telegram polling error');
   });
 
@@ -247,6 +275,7 @@ function init(log) {
 }
 
 function shutdown() {
+  botHealth.configured = false;
   if (bot) {
     bot.stopPolling();
     bot = null;
@@ -946,4 +975,4 @@ async function safeSend(chatId, text) {
   } catch (_) {}
 }
 
-module.exports = { init, shutdown };
+module.exports = { init, shutdown, health };

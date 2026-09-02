@@ -149,20 +149,8 @@ const externalLimiter = rateLimit({
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
-// ── Health check (no auth / no tenant) ────────────────────────
-app.get('/api/health', async (_req, res) => {
-  const dbOk   = await db.healthy();
-  const mqttOk = mqttSvc.isConnected();
-  const status  = dbOk && mqttOk ? 'ok' : 'degraded';
-  const code    = status === 'ok' ? 200 : 503;
-
-  res.status(code).json({
-    status,
-    db:     dbOk   ? 'ok' : 'error',
-    mqtt:   mqttOk ? 'ok' : 'error',
-    uptime: Math.floor(process.uptime()),
-  });
-});
+// ── Health check (no auth / no tenant; /details authenticates itself) ──
+app.use('/api/health', require('./routes/health'));
 
 // ── Parameter metadata (no auth — same for all devices) ──────────
 const stateMeta = require('./config/state_meta.json');

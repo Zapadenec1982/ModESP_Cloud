@@ -80,6 +80,10 @@ let connected = false;
 let startupTime = 0;
 const STARTUP_GRACE_MS = 120_000; // 2 min — ignore stuck detection while receiving retained messages
 
+// $SYS/broker/* figures published by the local listener (mosquitto sys_interval,
+// 10 s by default). Surfaced by GET /api/health/details.
+const brokerStats = { clients_connected: null, updated_at: null };
+
 // ── Public API ────────────────────────────────────────────
 
 /**
@@ -110,6 +114,7 @@ async function start(log) {
 
   await loadRegistries();
   await bootstrapStateMap();
+  await rearmPendingAlarms();
 
   const url  = process.env.MQTT_URL  || 'mqtt://localhost:1883';
   const user = process.env.MQTT_USER || '';
@@ -151,7 +156,12 @@ async function shutdown() {
   for (const t of timers) clearInterval(t);
   timers = [];
 
-  // Clear pending nuisance alarm timers
+  // Persist every dirty device state, debounce or not: the next start rehydrates
+  // stateMap from devices.last_state, and rearmPendingAlarms() needs it to carry
+  // the alarm keys exactly as they were when this process stopped.
+  await stateWriter(true).catch(err => logger.error({ err }, 'Failed to flush device state on shutdown'));
+
+  // Clear pending nuisance alarm timers — rearmPendingAlarms() restarts them on boot
   for (const timer of pendingAlarms.values()) clearTimeout(timer);
   pendingAlarms.clear();
 
@@ -187,12 +197,16 @@ function onConnect() {
   client.subscribe('modesp/+/state/+');
   client.subscribe('modesp/+/status');
 
+  // Broker self-reporting (localhost listener, no ACL) — for /api/health/details
+  client.subscribe('$SYS/broker/clients/connected');
+
   logger.info('Subscribed to MQTT topics');
 }
 
 function onMessage(topic, payload, packet) {
   try {
     const msg = payload.toString().trim();
+    if (topic.startsWith('$SYS/')) { handleSysMessage(topic, msg); return; }
     const parsed = parseTopic(topic);
     if (!parsed) return;
 
@@ -222,6 +236,19 @@ function onMessage(topic, payload, packet) {
     logger.error({ err, topic: topic.toString() }, 'Failed to process MQTT message');
   }
 }
+
+function handleSysMessage(topic, msg) {
+  if (topic === '$SYS/broker/clients/connected') {
+    const n = parseInt(msg, 10);
+    if (Number.isFinite(n)) {
+      brokerStats.clients_connected = n;
+      brokerStats.updated_at = new Date().toISOString();
+    }
+  }
+}
+
+/** Last $SYS figures seen from the broker (nulls until the first publish). */
+function getBrokerStats() { return { ...brokerStats }; }
 
 // ── Topic parsing ─────────────────────────────────────────
 
@@ -555,7 +582,7 @@ function handleBackfill(tenantSlug, deviceId, rawPayload) {
     values
   ).catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
 
-  logger.info({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
+  logger.debug({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
 }
 
 const BACKFILL_EVENT_NAMES = {
@@ -647,6 +674,48 @@ const NUISANCE_DELAY = {
   door_alarm:     parseInt(process.env.DOOR_ALARM_DELAY_MS, 10)     || 600000,  // 10 min
   pulldown_alarm: parseInt(process.env.PULLDOWN_ALARM_DELAY_MS, 10) || 300000,  // 5 min
 };
+
+/**
+ * After a restart, re-arm the nuisance timers for alarm keys that were already
+ * TRUE when the previous process stopped and still have no active alarm row.
+ *
+ * Without this a door left open across a restart never alarms: the rehydrated
+ * state already says door_alarm=true, so the device's next report of true is not
+ * a transition, detectAlarm() is never reached, and the alarm would only fire
+ * after the door closed and opened again. Keys without a nuisance delay are left
+ * alone — for those a true→true report carries nothing new (the raise happened
+ * before the restart, or the row was reconciled away on purpose).
+ *
+ * @returns {Promise<number>} timers armed
+ */
+async function rearmPendingAlarms() {
+  const codes = Object.keys(NUISANCE_DELAY);
+  let active;
+  try {
+    ({ rows: active } = await db.query(
+      `SELECT device_id, alarm_code FROM alarms
+        WHERE active = true AND alarm_code = ANY($1::text[])`,
+      [codes]
+    ));
+  } catch (err) {
+    logger.error({ err }, 'Failed to load active nuisance alarms — timers not re-armed');
+    return 0;
+  }
+  const activeSet = new Set(active.map(r => `${r.device_id}:${r.alarm_code}`));
+
+  let armed = 0;
+  for (const [deviceId, state] of stateMap) {
+    if (!state._tenantId || !state._tenantSlug || state._tenantSlug === 'pending') continue;
+    for (const code of codes) {
+      if (state[`protection.${code}`] !== true) continue;
+      if (activeSet.has(`${deviceId}:${code}`)) continue;
+      await detectAlarm(state._tenantSlug, deviceId, `protection.${code}`, true, state);
+      armed++;
+    }
+  }
+  if (armed) logger.info({ armed }, 'Re-armed nuisance alarm timers after restart');
+  return armed;
+}
 
 async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
@@ -1142,7 +1211,7 @@ async function telemetrySampler() {
        ON CONFLICT DO NOTHING`,
       values
     );
-    logger.info({ count: rows.length }, 'Telemetry sampled');
+    logger.debug({ count: rows.length }, 'Telemetry sampled');
   } catch (err) {
     logger.error({ err }, 'Failed to sample telemetry');
   }
@@ -1150,14 +1219,18 @@ async function telemetrySampler() {
 
 // ── Periodic: State writer (debounced, every 5s check) ────
 
-async function stateWriter() {
+/**
+ * @param {boolean} [force=false] write every dirty state now, ignoring the
+ *   debounce window (used by shutdown())
+ */
+async function stateWriter(force = false) {
   const now = Date.now();
 
   // Collect all dirty devices that passed debounce threshold
   const batch = [];
   for (const [deviceId, state] of stateMap) {
     if (!state._dirty) continue;
-    if (now - state._lastDbWrite < STATE_DEBOUNCE) continue;
+    if (!force && now - state._lastDbWrite < STATE_DEBOUNCE) continue;
 
     // Build last_state JSONB (only real state keys, no _ prefixed)
     const lastState = {};
@@ -1225,7 +1298,7 @@ async function stateWriter() {
       }
 
       if (chunk.length >= 10) {
-        logger.info({ count: chunk.length }, 'Batch state write');
+        logger.debug({ count: chunk.length }, 'Batch state write');
       }
     } catch (err) {
       // On failure, leave all dirty — retry on next cycle
@@ -1282,7 +1355,7 @@ function stateSweeper() {
   for (const [id, e]   of backfillCounters) if (e.reset && now > e.reset)    backfillCounters.delete(id);
   for (const [id, ts]  of deletedDevices)  if (now - ts > DELETED_BLOCK_MS)  deletedDevices.delete(id);
 
-  if (evicted) logger.info({ evicted, remaining: stateMap.size }, 'StateMap sweep');
+  if (evicted) logger.debug({ evicted, remaining: stateMap.size }, 'StateMap sweep');
 }
 
 // ── Periodic: Offline detector (every 30s) ────────────────
@@ -1787,11 +1860,23 @@ function clearRetainedForTenant(tenantSlug, deviceId) {
 function getBootstrapHash() { return BOOTSTRAP_HASH; }
 
 module.exports = {
-  start, shutdown, isConnected,
+  start, shutdown, isConnected, getBrokerStats,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
   getBootstrapHash, recordAssign, clearPendingRetained, setPendingTenantHint,
+  // Internals for test/alarm-restart.test.js — drive the message handlers and the
+  // restart path without a broker. Not part of the service API.
+  __test: {
+    setLogger(l) { logger = l; },
+    handleStateKey, bootstrapStateMap, rearmPendingAlarms, stateWriter,
+    stateMap, pendingAlarms, NUISANCE_DELAY,
+    reset() {
+      stateMap.clear();
+      for (const t of pendingAlarms.values()) clearTimeout(t);
+      pendingAlarms.clear();
+    },
+  },
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

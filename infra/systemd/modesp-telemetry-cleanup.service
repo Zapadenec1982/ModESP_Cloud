@@ -2,6 +2,7 @@
 Description=Drop telemetry partitions past TELEMETRY_RETENTION_DAYS
 After=postgresql.service
 Wants=postgresql.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=oneshot

@@ -87,6 +87,9 @@ function createTestApp() {
   // Auth routes (public)
   app.use('/api/auth', require('../../src/routes/auth'));
 
+  // Health: public summary + superadmin details, above the JWT gate as in index.js
+  app.use('/api/health', require('../../src/routes/health'));
+
   // Public site status page — UNAUTHENTICATED by design, and therefore mounted
   // in the same position it holds in src/index.js: above the JWT gate. Kept here
   // so any suite using this helper exercises the real order; public-site.test.js

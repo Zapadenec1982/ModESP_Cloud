@@ -2,6 +2,7 @@
 Description=Ensure telemetry partitions for the next 6 months
 After=postgresql.service
 Wants=postgresql.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=oneshot

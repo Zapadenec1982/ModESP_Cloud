@@ -23,8 +23,30 @@ const OFFLINE_NOTIFY_DELAY_MS = 120000; // 2 min delay before notifying offline
  * @param {string} name    e.g. 'telegram', 'fcm'
  * @param {{ send: (address: string, payload: object) => Promise<void> }} handler
  */
+/** name → { sent, failed, last_ok_at, last_error_at, last_error } for /api/health/details */
+const channelStats = new Map();
+
 function registerChannel(name, handler) {
-  channels.set(name, handler);
+  const stats = { sent: 0, failed: 0, last_ok_at: null, last_error_at: null, last_error: null };
+  channelStats.set(name, stats);
+  // Wrap send() so every delivery, whatever path dispatches it, feeds the health
+  // counters. The original handler keeps `this` — some channels are objects.
+  channels.set(name, {
+    ...handler,
+    async send(...args) {
+      try {
+        const r = await handler.send.apply(handler, args);
+        stats.sent++;
+        stats.last_ok_at = new Date().toISOString();
+        return r;
+      } catch (err) {
+        stats.failed++;
+        stats.last_error_at = new Date().toISOString();
+        stats.last_error = String(err && err.message || err).slice(0, 200);
+        throw err;
+      }
+    },
+  });
 }
 
 /**
@@ -413,4 +435,11 @@ async function testSend(tenantId, subscriberId) {
   }
 }
 
-module.exports = { registerChannel, start, shutdown, testSend };
+/** Delivery health per registered channel (empty when nothing is configured). */
+function channelHealth() {
+  const out = {};
+  for (const [name, stats] of channelStats) out[name] = { configured: true, ...stats };
+  return out;
+}
+
+module.exports = { registerChannel, start, shutdown, testSend, channelHealth };

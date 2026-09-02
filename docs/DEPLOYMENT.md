@@ -85,9 +85,13 @@ Ubuntu 24.04
     ├── setup.sh                     # первинне налаштування VPS
     ├── backup.env.example           # шаблон → infra/backup.env (не в git!)
     ├── scripts/
-    │   └── backup-postgres.sh       # щоденний архів: дамп БД + конфіги + прошивки
+    │   ├── backup-postgres.sh       # щоденний архів: дамп БД + конфіги + прошивки
+    │   ├── alert-telegram.sh        # алерт у Telegram про збій юніта (modesp-alert@)
+    │   └── tls-deploy-hook.sh       # certbot deploy hook: сертифікат → Mosquitto, reload
+    ├── journald/modesp.conf         # ліміти журналу (500 MB / 30 днів)
     ├── systemd/
     │   ├── modesp-backend.service
+    │   ├── modesp-alert@.service                        # OnFailure= кожного юніта нижче
     │   ├── modesp-backup.service / .timer               # 02:00 щодня
     │   ├── modesp-telemetry-partition.service / .timer  # 25-го, 03:00
     │   ├── modesp-telemetry-cleanup.service / .timer    # 1-го, 03:00
@@ -320,18 +324,18 @@ chmod 600 /etc/mosquitto/certs/server.key
 
 #### Auto-renewal hook
 
+Хук лежить у репозиторії — `infra/scripts/tls-deploy-hook.sh`. Він копіює сертифікат у
+`/etc/mosquitto/certs`, робить `systemctl reload mosquitto` (Mosquitto 2.x перечитує сертифікати за
+SIGHUP, сесії пристроїв не рвуться), **перевіряє через `openssl s_client`, що брокер справді віддає
+новий сертифікат**, і лише якщо ні — робить `restart`. Потім `reload nginx`.
+
 ```bash
-cat > /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh << 'EOF'
-#!/bin/bash
-# Mosquitto TLS certs
-cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
-cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
-chown mosquitto:mosquitto /etc/mosquitto/certs/*
-systemctl restart mosquitto
-# Nginx picks up new certs automatically, just reload
-systemctl reload nginx
-EOF
+cp /opt/modesp-cloud/infra/scripts/tls-deploy-hook.sh /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+
+# Перший запуск вручну (і перевірка після кожного оновлення хука)
+RENEWED_LINEAGE=/etc/letsencrypt/live/modesp.com.ua /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+certbot renew --dry-run
 ```
 
 ESP32 firmware автоматично включає TLS при порті 8883 (`esp_crt_bundle_attach` — вбудований CA bundle включає Let's Encrypt).
@@ -538,7 +542,12 @@ systemctl list-timers 'modesp-*'
 Description=ModESP Cloud Backend
 Documentation=https://github.com/Zapadenec1982/ModESP_Cloud
 After=network.target postgresql.service mosquitto.service
-Requires=postgresql.service mosquitto.service
+# Wants, not Requires: a broker or database restart (package upgrade, certbot
+# hook) must not stop the backend — its MQTT client and pg pool reconnect on
+# their own, and with Requires= systemd would stop the backend and never start
+# it again.
+Wants=postgresql.service mosquitto.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=simple
@@ -681,40 +690,93 @@ sudo -u modesp node /opt/modesp-cloud/backend/scripts/cleanup-aux.js
 
 ## Моніторинг
 
+Три шари: зовнішній проб (дізнатися про збій раніше за клієнта), алерти про збої юнітів у
+Telegram (від самого сервера) і розширений `/api/health` для діагностики.
+
+### 1. Зовнішній проб (UptimeRobot / Better Stack, безкоштовний рівень)
+
+| Монітор | Налаштування | Що ловить |
+|---|---|---|
+| HTTPS keyword | `https://modesp.com.ua/api/health`, інтервал 1 хв, alert якщо **немає** `"status":"ok"` | nginx, бекенд, БД, з'єднання бекенду з брокером (відповідь 503 при `degraded`) |
+| HTTPS keyword | той самий URL, alert якщо **немає** `"platform":"ok"` | бекап старший за 48 год, партиції телеметрії закінчуються, диск < 10 % |
+| Port | `modesp.com.ua:8883` TCP | брокер недоступний для контролерів |
+| SSL expiry | у налаштуваннях HTTPS-монітора, попередження за 14 днів | зламане автопродовження Let's Encrypt |
+
+Сповіщення пробу — в окремий Telegram-чат «platform-alerts» (інтеграція Telegram є в обох сервісах)
+і на email. Публічну статус-сторінку монітора можна показати в футері WebUI:
+`VITE_STATUS_PAGE_URL` у `webui/.env` (потрібен `npm run build`).
+
+### 2. Алерти про збої юнітів (`modesp-alert@.service`)
+
+Кожен юніт ModESP має `OnFailure=modesp-alert@%n.service`: бекенд (crash loop), бекап, партиції,
+обидва очищення. Юніт викликає `infra/scripts/alert-telegram.sh`, який надсилає назву юніта, хост і
+останні 15 рядків його журналу в Telegram-групу.
+
 ```bash
-# Перевірка статусу всіх сервісів
-systemctl status modesp-backend mosquitto nginx postgresql
+# backend/.env: бот той самий, що й для аварій; додайте його в групу platform-alerts
+PLATFORM_ALERT_CHAT_ID=-1001234567890
 
-# Логи бекенду (live)
-journalctl -u modesp-backend -f
+# Перевірка каналу (текст надсилається як є)
+systemctl start 'modesp-alert@smoke-test.service'
+journalctl -u 'modesp-alert@smoke-test' -n 5 --no-pager
 
-# Логи бекенду (останні 100 рядків)
-journalctl -u modesp-backend --no-pager -n 100
-
-# Логи Mosquitto
-tail -f /var/log/mosquitto/mosquitto.log
-
-# Кількість з'єднань PostgreSQL
-sudo -u postgres psql -d modesp_cloud \
-  -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
-
-# Статус таймерів
-systemctl list-timers modesp-*
+# Імітація збою: зупинити брокер → бекенд лишається працювати (Wants=), /api/health → 503 → проб
+systemctl stop mosquitto && sleep 90 && curl -s localhost:3000/api/health; systemctl start mosquitto
 ```
 
-### Healthcheck endpoint
+Без `PLATFORM_ALERT_CHAT_ID` скрипт пише попередження в журнал і виходить з кодом 0 — збій
+основного юніта не маскується.
+
+### 3. Healthcheck
 
 ```
-GET /api/health
+GET /api/health            # публічний, для пробу
+GET /api/health/details    # лише superadmin (JWT), цифри
 ```
+
 ```json
 {
-  "status": "ok",
-  "db": "ok",
-  "mqtt": "ok",
-  "uptime": 86400
+  "status": "ok",            "db": "ok",  "mqtt": "ok",  "uptime": 86400,
+  "platform": "ok",
+  "checks": { "backup": "ok", "partitions": "ok", "disk": "ok" }
 }
 ```
+
+| Поле | `ok` | інакше |
+|---|---|---|
+| `status` | БД відповідає і бекенд під'єднаний до брокера | `degraded`, HTTP 503 |
+| `checks.backup` | маркер `/var/backups/modesp/last-success` молодший за `BACKUP_MAX_AGE_HOURS` (48) | `stale`; `unknown` — маркера ще нема |
+| `checks.partitions` | є партиція телеметрії щонайменше на наступний місяць | `low` |
+| `checks.disk` | на файловій системі сховища прошивок вільно ≥ `DISK_MIN_FREE_PCT` (10 %) | `low` |
+| `platform` | жодна перевірка не `stale`/`low` | `attention` (HTTP лишається 200) |
+
+`/api/health/details` додає версію, пам'ять, `mqtt.broker.clients_connected`
+(`$SYS/broker/clients/connected`), вік і розмір останнього архіву, кількість партицій і місяців
+запасу, вільне місце, статистику доставки по каналах (`sent`/`failed`/`last_error`) і стан
+Telegram-бота (`getMe`, останній polling error).
+
+```bash
+TOKEN=$(curl -s -X POST localhost:3000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.com","password":"..."}' | jq -r .data.accessToken)
+curl -s localhost:3000/api/health/details -H "Authorization: Bearer $TOKEN" | jq .data
+```
+
+### 4. Журнали і сервіси
+
+```bash
+systemctl status modesp-backend mosquitto nginx postgresql
+journalctl -u modesp-backend -f                 # live
+journalctl -u modesp-backend --no-pager -n 100
+journalctl -u modesp-backup -u modesp-telemetry-cleanup -u modesp-retention-cleanup --since -7d
+tail -f /var/log/mosquitto/mosquitto.log
+sudo -u postgres psql -d modesp_cloud -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
+systemctl list-timers 'modesp-*'
+```
+
+Журнал обмежений drop-in-ом `infra/journald/modesp.conf` (`SystemMaxUse=500M`,
+`MaxRetentionSec=30day`; ставить `setup.sh`). Пакетні повідомлення бекенду («Telemetry sampled»,
+«Batch state write», «StateMap sweep», «Backfill ingested») пишуться на рівні `debug`, тож у
+продакшні (`info`) журнал містить лише події і помилки.
 
 ---
 
@@ -766,5 +828,6 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
 - 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; чотири таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-telemetry-cleanup`, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

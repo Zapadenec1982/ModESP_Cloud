@@ -123,6 +123,11 @@ if [ ! -f "$APP_DIR/infra/backup.env" ]; then
   echo "  → Edit $APP_DIR/infra/backup.env (BACKUP_PASSPHRASE, BACKUP_REMOTE)"
 fi
 
+# journald cap (500 MB / 30 days) — every ModESP unit logs to the journal
+mkdir -p /etc/systemd/journald.conf.d
+cp "$APP_DIR/infra/journald/modesp.conf" /etc/systemd/journald.conf.d/modesp.conf
+systemctl restart systemd-journald
+
 systemctl daemon-reload
 systemctl enable modesp-backend
 for t in modesp-backup modesp-telemetry-partition modesp-telemetry-cleanup modesp-retention-cleanup; do
@@ -144,9 +149,13 @@ cp "$APP_DIR/infra/nginx/ratelimit.conf" /etc/nginx/conf.d/modesp-ratelimit.conf
 ln -sf /etc/nginx/sites-available/modesp /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
+# certbot deploy hook: copies renewed certs to Mosquitto and reloads both services
+mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+cp "$APP_DIR/infra/scripts/tls-deploy-hook.sh" /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+
 # Get TLS cert (requires DNS to be configured)
-echo "  → Run: certbot --nginx -d $DOMAIN"
-echo "  → Then symlink certs for Mosquitto TLS"
+echo "  → Run: certbot --nginx -d $DOMAIN  (the deploy hook then installs the cert for Mosquitto)"
 
 nginx -t && systemctl reload nginx
 
@@ -157,15 +166,15 @@ echo ""
 echo "TODO:"
 echo "  1. Edit $APP_DIR/backend/.env (DB password, MQTT password, JWT secret)"
 echo "  2. Run: certbot --nginx -d $DOMAIN"
-echo "  3. Symlink TLS certs for Mosquitto:"
-echo "     ln -s /etc/letsencrypt/live/$DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt"
-echo "     ln -s /etc/letsencrypt/live/$DOMAIN/privkey.pem /etc/mosquitto/certs/server.key"
-echo "     ln -s /etc/letsencrypt/live/$DOMAIN/chain.pem /etc/mosquitto/certs/ca.crt"
+echo "  3. Install the cert for Mosquitto (also runs automatically on every renewal):"
+echo "     RENEWED_LINEAGE=/etc/letsencrypt/live/$DOMAIN /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh"
 echo "  4. Update Mosquitto passwords: mosquitto_passwd -b /etc/mosquitto/passwd ..."
 echo "  5. Start: systemctl start modesp-backend"
 echo "  6. Verify: curl http://localhost:3000/api/health"
 echo "  7. Backups: edit $APP_DIR/infra/backup.env, run the first one by hand:"
 echo "     systemctl start modesp-backup.service && cat /var/backups/modesp/last-success"
 echo "  8. Timers: systemctl list-timers 'modesp-*'   (backup, partitions, 2 cleanups)"
+echo "  9. Alerts: set PLATFORM_ALERT_CHAT_ID in backend/.env, then test:"
+echo "     systemctl start 'modesp-alert@smoke-test.service'"
 echo "     Restore procedure: $APP_DIR/docs/runbooks/restore.md"
 echo ""

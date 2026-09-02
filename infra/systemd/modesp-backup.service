@@ -3,6 +3,7 @@ Description=ModESP Cloud backup (PostgreSQL dump + config/firmware archive)
 Documentation=file:/opt/modesp-cloud/docs/runbooks/restore.md
 After=postgresql.service
 Wants=postgresql.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=oneshot
