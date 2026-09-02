@@ -239,6 +239,8 @@ describe('Devices ↔ sites', () => {
   describe('GET /api/devices/pending', () => {
     it('carries the site keys (always null — pending lives in the system tenant)', async () => {
       const pending = await createPendingDevice(nextMqttId());
+      // Plan epic 1.7: an organisation lists only the pending devices it has claimed
+      await db.query('UPDATE devices SET claimed_by_tenant_id = $1 WHERE id = $2', [tenantA.id, pending.id]);
 
       const res = await request(app)
         .get('/api/devices/pending')

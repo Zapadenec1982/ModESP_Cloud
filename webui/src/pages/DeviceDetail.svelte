@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
+  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, recoverDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
@@ -582,6 +582,23 @@
     }
   }
 
+  // ── Recover (stuck credentials / factory reset) ──
+  let recovering = false
+
+  async function handleRecover() {
+    if (!confirm($t('device.recover_confirm').replace('{0}', device.mqtt_device_id))) return
+    recovering = true
+    try {
+      await recoverDevice(device.mqtt_device_id)
+      toast.success($t('device.recover_done').replace('{0}', device.mqtt_device_id))
+      navigate('/pending')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      recovering = false
+    }
+  }
+
   // ── Data loading ──
   async function loadDevice() {
     try {
@@ -697,6 +714,13 @@
                   <Icon name="rotate-ccw" size={14} />
                   {$t('device.reset_pending')}
                 </button>
+                {#if $isAdmin}
+                  <button class="more-menu-item" on:click={() => { showMoreMenu = false; handleRecover(); }}
+                    disabled={recovering} title={$t('device.recover_hint')}>
+                    <Icon name="refresh" size={14} />
+                    {$t('device.recover')}
+                  </button>
+                {/if}
                 <div class="more-menu-divider"></div>
                 <button class="more-menu-item more-menu-danger" on:click={() => { showMoreMenu = false; openDeleteConfirm(); }}>
                   <Icon name="trash-2" size={14} />

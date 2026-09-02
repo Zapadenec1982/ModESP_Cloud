@@ -349,43 +349,28 @@ refresh-токени користувача.
 ---
 
 ### `POST /devices/:id/command`
-Відправити команду на пристрій.
+Надіслати команду контролеру. Ролі: **admin, technician** (viewer отримує 403 ще до перевірки доступу до
+пристрою). Значення перевіряється за `state_meta.json`: тип (`bool`/`int`/`float`), `min`/`max`, крок
+`step`; булеві приймають `true/false/1/0`. Ключі, що змінюють роботу обладнання (`thermostat.setpoint`,
+`thermostat.differential`, `protection.high_limit`, `protection.low_limit`, `protection.manual_reset`,
+`protection.reset_alarms`, `defrost.manual_start`, `defrost.manual_stop`; позначені `dangerous: true` у
+`GET /api/meta`), приймаються лише з `confirm: true` — інакше `400 confirmation_required`.
 
-**Ролі:** admin, technician
-
-**Body:**
 ```json
-{
-  "cmd": "set_setpoint",
-  "value": 3.5
-}
+{ "key": "thermostat.setpoint", "value": -18, "confirm": true }
 ```
 
-**Command translation (REST → MQTT):**
-API команда транслюється в individual MQTT key зі скалярним значенням.
+**Response 200:** `{ "data": { "device_id": "A4CF12", "key": "thermostat.setpoint", "value": -18, "sent": true } }`
 
-| API cmd | MQTT topic key | Тип значення |
-|---------|----------------|-------------|
-| `set_setpoint` | `thermostat.setpoint` | float |
-| `reset_alarms` | `protection.reset_alarms` | bool (true) |
-| `start_defrost` | `defrost.manual_start` | bool (true) |
-| `set_parameter` | `{key}` (будь-який writable key) | typed |
+Кожна команда записується в журнал дій як `device.command` (`changes: { key, value, confirmed, dangerous }`).
 
-Для `set_parameter` передавати key напряму:
+### `GET /devices/:id/commands?limit=50`
+Історія команд пристрою з журналу дій (admin; superadmin — будь-який пристрій).
+
 ```json
-{ "cmd": "set_parameter", "key": "thermostat.differential", "value": 2.5 }
+{ "data": [ { "id": 1, "created_at": "…", "user_email": "tech@example.com", "user_role": "technician",
+              "key": "thermostat.setpoint", "value": "-18", "confirmed": true, "dangerous": true, "status_code": 200 } ] }
 ```
-
-Валідація через state_meta: тип, min/max, writable flag.
-
-**Response 200:**
-```json
-{ "status": "sent", "mqtt_topic": "thermostat.setpoint", "value": "3.5" }
-```
-
----
-
-## Телеметрія
 
 ### `GET /devices/:id/telemetry`
 Часові ряди температур (raw data).
@@ -1967,23 +1952,20 @@ bootstrap credentials, щоб пристрій зміг підключитися
 ## Auto-discovery (Pending Devices)
 
 ### `GET /devices/pending`
-Список пристроїв, що очікують призначення tenant.
+Черга очікування. Адміністратор організації бачить **лише пристрої, які його організація додала за
+кодом** (`POST /devices/claim`); superadmin бачить усю чергу разом із `claim_code` і
+`claimed_by_tenant_id`.
 
-**Ролі:** admin
+### `POST /devices/claim`
+Додати pending-контролер до своєї організації за кодом, надрукованим на ньому (6–12 символів; пробіли,
+дефіси й регістр ігноруються). `404` — коду нема серед pending; `409` — пристрій уже додала інша
+організація. Далі його можна призначити через `POST /devices/pending/:mqttId/assign`.
 
-**Response 200:**
 ```json
-{
-  "devices": [
-    {
-      "mqtt_device_id": "A4CF12",
-      "first_seen": "2026-03-07T10:30:00Z",
-      "last_seen": "2026-03-07T10:35:00Z",
-      "firmware_version": "1.2.3"
-    }
-  ]
-}
+{ "claim_code": "ABCD-2345" }
 ```
+
+**Response 200:** `{ "data": { "id": "uuid", "mqtt_device_id": "A4CF12", "online": true, "claimed": true } }`
 
 ### `POST /devices/pending/:mqtt_device_id/assign`
 Призначити pending пристрій тенанту.

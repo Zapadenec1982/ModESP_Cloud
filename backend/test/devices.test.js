@@ -113,6 +113,10 @@ describe('Devices CRUD', () => {
       [db.SYSTEM_TENANT_ID, mqttId, `device_${mqttId}`]
     );
 
+    // Since plan epic 1.7 an organisation assigns only what it has claimed with
+    // the controller's code (pending-claim.test.js covers the claim itself).
+    await db.query('UPDATE devices SET claimed_by_tenant_id = $1 WHERE mqtt_device_id = $2', [tenant.id, mqttId]);
+
     const res = await request(app)
       .post(`/api/devices/pending/${mqttId}/assign`)
       .set(authHeader(admin, tenant.id))

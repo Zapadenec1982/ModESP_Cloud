@@ -26,6 +26,8 @@ const { authenticate, authorize, requireSuperadmin } = require('./middleware/aut
 const createAuditMiddleware = require('./middleware/audit');
 
 const { timingSafeEqual } = require('crypto');
+const { generateClaimCode, normalizeClaimCode } = require('./lib/claim-code');
+const { DANGEROUS_KEYS } = require('./config/command-policy');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -170,8 +172,14 @@ app.use('/api/health', require('./routes/health'));
 
 // ── Parameter metadata (no auth — same for all devices) ──────────
 const stateMeta = require('./config/state_meta.json');
+// `dangerous` marks the keys POST /devices/:id/command accepts only with
+// confirm: true (config/command-policy.js) — the WebUI asks before sending them.
+const stateMetaResponse = {
+  ...stateMeta,
+  meta: stateMeta.meta.map(m => ({ ...m, dangerous: DANGEROUS_KEYS.has(m.key) })),
+};
 app.get('/api/meta', (_req, res) => {
-  res.json(stateMeta);
+  res.json(stateMetaResponse);
 });
 
 // ── VAPID public key for Web Push (no auth — needed before subscription) ──
@@ -234,6 +242,10 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
 
   const mqttDeviceId = device_id.toUpperCase();
   const username = `device_${mqttDeviceId}`;
+  // Claim code printed on the controller (plan epic 1.7). Reported by the
+  // firmware when it was flashed at production; generated otherwise so the
+  // superadmin can hand it to the organisation.
+  const claimCode = normalizeClaimCode(req.body?.claim_code) || generateClaimCode();
 
   try {
     // Lazy-compute bootstrap hash (once, cached for process lifetime)
@@ -303,9 +315,10 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
           `UPDATE devices
               SET tenant_id = $1, status = 'pending',
                   mqtt_username = $2, mqtt_password_hash = $3,
-                  assigned_at = NULL
+                  assigned_at = NULL,
+                  claim_code = COALESCE(claim_code, $5)
             WHERE mqtt_device_id = $4`,
-          [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId]
+          [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId, claimCode]
         );
         // Clean up RBAC assignments (device will be re-assigned by admin)
         await db.query(
@@ -336,9 +349,9 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
     } else {
       // Create new pending device in SYSTEM tenant
       await db.query(
-        `INSERT INTO devices (tenant_id, mqtt_device_id, status, online)
-         VALUES ($1, $2, 'pending', false)`,
-        [db.SYSTEM_TENANT_ID, mqttDeviceId]
+        `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, claim_code)
+         VALUES ($1, $2, 'pending', false, $3)`,
+        [db.SYSTEM_TENANT_ID, mqttDeviceId, claimCode]
       );
     }
 

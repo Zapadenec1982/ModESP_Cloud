@@ -277,7 +277,7 @@ function onStateDelta({ deviceId, changes }) {
   });
 }
 
-function onAlarm({ tenantSlug, deviceId, alarmCode, active, severity }) {
+function onAlarm({ tenantSlug, tenantId, deviceId, alarmCode, active, severity }) {
   const payload = {
     type: 'alarm',
     device_id: deviceId,
@@ -289,7 +289,7 @@ function onAlarm({ tenantSlug, deviceId, alarmCode, active, severity }) {
   // Send to device-specific subscribers
   broadcast(deviceId, payload);
   // Send to global listeners (Alarms page) with tenant context for filtering
-  broadcastGlobal({ ...payload, tenant_slug: tenantSlug });
+  broadcastGlobal({ ...payload, tenant_slug: tenantSlug, tenant_id: tenantId || null });
 }
 
 function onDeviceStatus({ deviceId, online, lastSeen }) {
@@ -348,10 +348,11 @@ function broadcastGlobal(payload) {
   for (const ws of globalListeners) {
     if (ws.readyState !== 1 || ws.bufferedAmount >= WS_BACKPRESSURE_BYTES) continue;
 
-    // Tenant isolation: superadmin sees all, others only their tenant
+    // Tenant isolation: superadmin sees all; everyone else only events that
+    // carry their own tenant_id. Default deny — an event type without tenant
+    // context (pending_device, anything new) never leaves the platform scope.
     if (AUTH_ENABLED && ws._user && ws._user.role !== 'superadmin') {
-      // Pending devices are only for superadmins
-      if (payload.type === 'pending_device') continue;
+      if (!payload.tenant_id || payload.tenant_id !== ws._user.tenantId) continue;
     }
 
     ws.send(data);
@@ -380,4 +381,8 @@ function shutdown() {
   }
 }
 
-module.exports = { attach, shutdown, issueWsTicket };
+module.exports = {
+  attach, shutdown, issueWsTicket,
+  // test/ws-isolation.test.js drives broadcastGlobal with fake sockets
+  __test: { broadcastGlobal, globalListeners, setLogger(l) { logger = l; } },
+};

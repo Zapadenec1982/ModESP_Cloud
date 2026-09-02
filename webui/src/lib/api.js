@@ -500,10 +500,35 @@ export function updateDevice(id, data) {
   });
 }
 
-export function sendCommand(deviceId, key, value) {
+/**
+ * POST /devices/:id/command. Keys flagged `dangerous` in /api/meta are accepted
+ * by the backend only with `confirm: true` — the caller shows a dialog first.
+ */
+export function sendCommand(deviceId, key, value, { confirm = false } = {}) {
   return request(`/devices/${deviceId}/command`, {
     method: 'POST',
-    body: JSON.stringify({ key, value }),
+    body: JSON.stringify(confirm ? { key, value, confirm: true } : { key, value }),
+  });
+}
+
+/** GET /devices/:id/commands (admin) — audit rows of commands sent to the device. */
+export function getDeviceCommands(deviceId, limit = 50) {
+  return request(`/devices/${deviceId}/commands?limit=${limit}`);
+}
+
+/** POST /devices/claim (admin) — add a pending controller to this organisation by its printed code. */
+export function claimDevice(claimCode) {
+  return request('/devices/claim', {
+    method: 'POST',
+    body: JSON.stringify({ claim_code: claimCode }),
+  });
+}
+
+/** POST /devices/recover (admin) — reset a stuck controller to pending with bootstrap credentials. */
+export function recoverDevice(mqttDeviceId) {
+  return request('/devices/recover', {
+    method: 'POST',
+    body: JSON.stringify({ mqtt_device_id: mqttDeviceId }),
   });
 }
 

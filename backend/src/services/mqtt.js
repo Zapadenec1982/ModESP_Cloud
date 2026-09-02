@@ -4,6 +4,7 @@ const mqtt = require('mqtt');
 const { EventEmitter } = require('events');
 const db       = require('./db');
 const mqttAuth = require('./mqtt-auth');
+const { generateClaimCode } = require('../lib/claim-code');
 
 const emitter = new EventEmitter();
 
@@ -351,7 +352,7 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
       ).catch(err => { logger.error({ err, deviceId, alarmCode }, 'Failed to reconcile alarm'); return { rowCount: 0 }; });
       if (rowCount > 0) {
         logger.info({ deviceId, alarmCode }, 'Reconciled stale alarm after restart');
-        emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
+        emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
       }
     }
   }
@@ -765,7 +766,7 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
     // (429) and drowned out the clears that carried real information.
     if (cleared === 0) return;
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
-    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
+    emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: false, severity });
   }
 }
 
@@ -780,7 +781,7 @@ async function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity)
   } catch (err) {
     logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm');
   }
-  emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+  emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: true, severity });
 }
 
 function alarmSeverity(code) {
@@ -918,13 +919,14 @@ function ensureDevice(tenantSlug, deviceId) {
     // assigned_at = NULL keeps the column's invariant ("NULL while pending or deleted",
     // migration 022) locally true here rather than relying on the delete handlers having
     // nulled it on the way in.
-    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
-     VALUES ($1, $2, 'pending', true, NOW())
+    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen, claim_code)
+     VALUES ($1, $2, 'pending', true, NOW(), $3)
      ON CONFLICT (mqtt_device_id) DO UPDATE
        SET status = 'pending', deleted_at = NULL, tenant_id = EXCLUDED.tenant_id,
-           online = true, last_seen = NOW(), assigned_at = NULL
+           online = true, last_seen = NOW(), assigned_at = NULL,
+           claim_code = COALESCE(devices.claim_code, EXCLUDED.claim_code)
        WHERE devices.status = 'deleted'`,
-    [tenantInfo.id, deviceId]
+    [tenantInfo.id, deviceId, generateClaimCode()]
   ).then((res) => {
     if (res.rowCount > 0) {
       // New device: set bootstrap credentials (setBootstrapCredentials is a no-op if hash exists)

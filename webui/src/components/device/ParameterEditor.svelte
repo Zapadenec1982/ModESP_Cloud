@@ -1,9 +1,10 @@
 <script>
   import { onMount } from 'svelte'
-  import { sendCommand, requestDeviceState } from '../../lib/api.js'
+  import { sendCommand, requestDeviceState, getDeviceCommands } from '../../lib/api.js'
   import { loadMeta, groupByCategory } from '../../lib/meta.js'
   import { toast } from '../../lib/toast.js'
   import { t } from '../../lib/i18n.js'
+  import { isAdmin } from '../../lib/stores.js'
   import Icon from '../ui/Icon.svelte'
   import ParameterGroup from './ParameterGroup.svelte'
   import Skeleton from '../ui/Skeleton.svelte'
@@ -17,6 +18,13 @@
   let loading = true
   let sendingKey = null
   let requesting = false
+
+  // Command history (admin) — the audit rows behind GET /devices/:id/commands
+  let showHistory = false
+  let history = []
+  let historyLoading = false
+
+  $: dangerousKeys = new Set(groups.flatMap(g => g.params.filter(p => p.dangerous).map(p => p.key)))
 
   // Count how many parameters have a live value
   $: paramKeys = groups.flatMap(g => g.params.map(p => p.key))
@@ -34,15 +42,36 @@
 
   async function handleSend(e) {
     const { key, value } = e.detail
+    const dangerous = dangerousKeys.has(key)
+    // Setpoint, protection limits, manual defrost, alarm reset: the backend
+    // refuses these without confirm, and a click is not a decision.
+    if (dangerous && !confirm($t('device.command_confirm', key, value))) return
     sendingKey = key
     try {
-      await sendCommand(deviceId, key, value)
+      await sendCommand(deviceId, key, value, { confirm: dangerous })
       toast.success(`Sent ${key} = ${value}`)
+      if (showHistory) loadHistory()
     } catch (err) {
       toast.error(`Failed: ${err.message}`)
     } finally {
       sendingKey = null
     }
+  }
+
+  async function loadHistory() {
+    historyLoading = true
+    try {
+      history = await getDeviceCommands(deviceId)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      historyLoading = false
+    }
+  }
+
+  function toggleHistory() {
+    showHistory = !showHistory
+    if (showHistory) loadHistory()
   }
 
   async function handleRequestState() {
@@ -86,7 +115,32 @@
         {/if}
         <span>{$t('device.read_device')}</span>
       </button>
+      {#if $isAdmin}
+        <button class="request-btn" on:click={toggleHistory} title={$t('device.command_history')}>
+          <Icon name="clock" size={14} />
+          <span>{$t('device.command_history')}</span>
+        </button>
+      {/if}
     </div>
+
+    {#if showHistory}
+      <div class="history">
+        {#if historyLoading}
+          <Skeleton height="60px" />
+        {:else if history.length === 0}
+          <p class="history-empty">{$t('device.command_history_empty')}</p>
+        {:else}
+          {#each history as c (c.id)}
+            <div class="history-row" class:dangerous={c.dangerous}>
+              <span class="history-time">{new Date(c.created_at).toLocaleString()}</span>
+              <span class="history-key">{c.key} = {c.value}</span>
+              <span class="history-user">{c.user_email}</span>
+              {#if c.status_code >= 400}<span class="history-status">HTTP {c.status_code}</span>{/if}
+            </div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
     <div class="groups">
       {#each groups as { cat, params }}
@@ -188,4 +242,29 @@
       gap: var(--space-2);
     }
   }
+  .history {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-3);
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .history-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto auto;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-xs);
+    border-bottom: 1px solid var(--border-muted);
+    align-items: center;
+  }
+  .history-row:last-child { border-bottom: none; }
+  .history-row.dangerous .history-key { color: var(--accent-orange, #f59e0b); }
+  .history-time { color: var(--text-muted); white-space: nowrap; }
+  .history-key { font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; }
+  .history-user { color: var(--text-muted); }
+  .history-status { color: var(--accent-red); }
+  .history-empty { padding: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); margin: 0; }
 </style>

@@ -319,6 +319,12 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 | **Technician** | Assigned devices | View, send commands, deploy firmware, manage service records |
 | **Viewer** | Assigned devices | Read-only access (no commands, no editing) |
 
+### Command safety and tenant isolation
+- `POST /devices/:id/command` is admin/technician only (viewers are read-only even with device access); values are validated against `state_meta.json` (type, min/max, step); setpoint, protection limits, manual defrost and alarm reset require `confirm: true`, and the WebUI asks first
+- Every command is audited as `device.command`; admins see the history per device (`GET /devices/:id/commands`, "Command history" in the parameter editor)
+- WebSocket global events (alarms) are delivered only to sockets of the alarm's tenant; the superadmin sees all
+- Pending controllers are claimed with the code printed on the controller (`POST /devices/claim`): an organisation sees, assigns and recovers only what it has claimed; the superadmin sees the whole queue with codes
+
 ### Per-Device Assignment
 - Admin assigns specific devices to technician/viewer users
 - Enforced at API level — unauthorized device access returns 403
