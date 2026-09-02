@@ -133,11 +133,22 @@ async function request(path, options = {}) {
     const err = new Error(body.message || `HTTP ${res.status}`);
     err.status = res.status;
     err.body = body;
+    if (res.status === 402) notifyPlanLimit(body);
     throw err;
   }
 
   const json = await res.json();
   return json.data;
+}
+
+/**
+ * 402 plan_limit / plan_feature: one warning toast with the upgrade contact so
+ * every page gets the same message without handling it itself.
+ */
+function notifyPlanLimit(body) {
+  const contact = import.meta.env.VITE_SALES_EMAIL || 'sales@modesp.com.ua';
+  const what = body.resource ? `${body.resource} ${body.current}/${body.limit}` : (body.feature || '');
+  toast.warning(`${body.message || 'Plan limit reached'} (${what}) → ${contact}`, 8000);
 }
 
 /**
@@ -830,6 +841,24 @@ export function updateTenant(id, data) {
 
 export function deleteTenant(id) {
   return request(`/tenants/${id}`, { method: 'DELETE' });
+}
+
+/** GET /tenants/plans — the plan catalogue with limits. */
+export function getPlans() {
+  return request('/tenants/plans');
+}
+
+/** GET /tenants/:id/settings — organisation settings (admin of the organisation). */
+export function getTenantSettings(id) {
+  return request(`/tenants/${id}/settings`);
+}
+
+/** PATCH /tenants/:id/settings — partial update; null clears an override. */
+export function updateTenantSettings(id, data) {
+  return request(`/tenants/${id}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }
 
 export function deleteTenantsBulk(ids) {

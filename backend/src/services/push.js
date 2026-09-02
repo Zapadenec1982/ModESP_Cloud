@@ -191,11 +191,13 @@ let escalationTimer = null;
 
 async function runEscalations(now = new Date()) {
   const { rows } = await db.query(
-    `SELECT a.id, a.tenant_id, a.device_id, a.alarm_code, a.severity, a.triggered_at
+    `SELECT a.id, a.tenant_id, a.device_id, a.alarm_code, a.severity, a.triggered_at,
+            COALESCE(s.ack_escalation_min, $2::int) AS escalation_min
        FROM alarms a
+       LEFT JOIN tenant_settings s ON s.tenant_id = a.tenant_id
       WHERE a.active = true AND a.severity = 'critical'
         AND a.acknowledged_at IS NULL AND a.escalated_at IS NULL
-        AND a.triggered_at <= $1::timestamptz - make_interval(mins => $2::int)`,
+        AND a.triggered_at <= $1::timestamptz - make_interval(mins => COALESCE(s.ack_escalation_min, $2::int))`,
     [now, ESCALATION_MIN]
   );
 
@@ -213,7 +215,7 @@ async function runEscalations(now = new Date()) {
     const payload = buildPayload({ deviceId: a.device_id, alarmCode: a.alarm_code, severity: a.severity, active: true });
     payload.alarmId    = a.id;
     payload.type       = 'alarm_escalation';
-    payload.escalation = { minutes: ESCALATION_MIN, triggeredAt: a.triggered_at };
+    payload.escalation = { minutes: a.escalation_min, triggeredAt: a.triggered_at };
     payload.deviceName = devRows.length ? devRows[0].name : null;
     payload.location   = devRows.length ? devRows[0].location : null;
 

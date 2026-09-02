@@ -5,6 +5,7 @@ const { stringify } = require('csv-stringify');
 const pdfmake       = require('pdfmake/build/pdfmake');
 const vfs_fonts     = require('pdfmake/build/vfs_fonts');
 const db            = require('../services/db');
+const { requireFeature } = require('../middleware/plan');
 const { checkDeviceAccess, filterDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
 
@@ -268,7 +269,7 @@ alarmRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => {
 });
 
 // ── GET /api/devices/:id/telemetry/export.pdf (HACCP) ────
-deviceRouter.get('/:id/telemetry/export.pdf', checkDeviceAccess(), async (req, res, next) => {
+deviceRouter.get('/:id/telemetry/export.pdf', requireFeature('reports'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);

@@ -55,8 +55,16 @@ const EVENT_KEYS = {
 };
 
 // ── In-memory registries ──────────────────────────────────
-/** @type {Map<string, {id: string, active: boolean}>}  slug → tenant */
+/** @type {Map<string, {id: string, active: boolean, status: string}>}  slug → tenant */
 const tenantRegistry = new Map();
+/** Sessions/traffic are served for these organisation statuses (plan epic 1.8) */
+const OPEN_TENANT_STATUSES = new Set(['trial', 'active', 'past_due']);
+/** @type {Map<string, object>}  tenantId → tenant_settings row (per-organisation delays) */
+const tenantSettings = new Map();
+const settingFor = (tenantId, key) => {
+  const v = tenantSettings.get(tenantId)?.[key];
+  return v === null || v === undefined ? undefined : v;
+};
 /** @type {Map<string, {id: string, tenantId: string, status: string}>}  mqttDeviceId → device */
 const deviceRegistry = new Map();
 /**
@@ -726,7 +734,11 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const alarmCode  = key.replace('protection.', '');
   const severity   = alarmSeverity(alarmCode);
   const pendingKey = `${deviceId}:${alarmCode}`;
-  const delay      = NUISANCE_DELAY[alarmCode];
+  // Organisation override (tenant_settings) wins over the platform default
+  const override   = alarmCode === 'door_alarm'     ? settingFor(tenantInfo.id, 'door_alarm_delay_ms')
+                   : alarmCode === 'pulldown_alarm' ? settingFor(tenantInfo.id, 'pulldown_alarm_delay_ms')
+                   : undefined;
+  const delay      = override !== undefined ? override : NUISANCE_DELAY[alarmCode];
 
   if (value === true) {
     if (delay) {
@@ -1132,6 +1144,12 @@ function isTopicTenantAuthorized(deviceId, tenantSlug) {
     logger.warn({ deviceId, tenantSlug }, 'Unknown tenant slug on topic — dropping message');
     return false;
   }
+  // Suspended / closed organisation: the broker ACL already denies its devices;
+  // anything that still arrives (cached ACL, direct localhost publish) is dropped.
+  if (!OPEN_TENANT_STATUSES.has(expected.status || 'active')) {
+    logger.debug({ deviceId, tenantSlug, status: expected.status }, 'Tenant not open — dropping message');
+    return false;
+  }
 
   const reg = deviceRegistry.get(deviceId);
   // Unknown device under a real tenant — don't attribute; ensureDevice resets it to pending
@@ -1431,7 +1449,7 @@ async function offlineDetector() {
 
   for (const [deviceId, state] of stateMap) {
     if (!state._online) continue;
-    if (now - state._lastSeen < OFFLINE_THRESHOLD) continue;
+    if (now - state._lastSeen < (settingFor(state._tenantId, 'offline_threshold_ms') ?? OFFLINE_THRESHOLD)) continue;
 
     // Mark offline
     state._online = false;
@@ -1457,7 +1475,7 @@ async function offlineDetector() {
   // Second pass: devices offline for longer than OFFLINE_ALARM_DELAY get an alarm.
   for (const [deviceId, state] of stateMap) {
     if (state._online || !state._offlineSince || state._offlineAlarmed) continue;
-    if (now - state._offlineSince < OFFLINE_ALARM_DELAY) continue;
+    if (now - state._offlineSince < (settingFor(state._tenantId, 'offline_alarm_delay_ms') ?? OFFLINE_ALARM_DELAY)) continue;
     state._offlineAlarmed = true;
     await raiseOfflineAlarm(state, deviceId);
   }
@@ -1648,11 +1666,18 @@ async function bootstrapStateMap() {
 async function loadRegistries() {
   try {
     // Load tenants
-    const tenants = await db.query('SELECT id, slug, active FROM tenants');
+    const tenants = await db.query('SELECT id, slug, active, status FROM tenants');
     tenantRegistry.clear();
     for (const row of tenants.rows) {
-      tenantRegistry.set(row.slug, { id: row.id, active: row.active });
+      tenantRegistry.set(row.slug, { id: row.id, active: row.active, status: row.status || 'active' });
     }
+
+    // Per-organisation alarm delays / offline thresholds (tenant_settings)
+    const settings = await db.query(
+      `SELECT tenant_id, door_alarm_delay_ms, pulldown_alarm_delay_ms, offline_threshold_ms, offline_alarm_delay_ms
+         FROM tenant_settings`);
+    tenantSettings.clear();
+    for (const row of settings.rows) tenantSettings.set(row.tenant_id, row);
 
     // Load devices
     const devices = await db.query('SELECT id, tenant_id, mqtt_device_id, status FROM devices');
@@ -1947,7 +1972,7 @@ module.exports = {
     setLogger(l) { logger = l; },
     handleStateKey, handleStatus, bootstrapStateMap, rearmPendingAlarms, stateWriter,
     offlineDetector, OFFLINE_ALARM_DELAY,
-    stateMap, pendingAlarms, NUISANCE_DELAY,
+    stateMap, pendingAlarms, NUISANCE_DELAY, tenantRegistry, tenantSettings, loadRegistries,
     reset() {
       stateMap.clear();
       for (const t of pendingAlarms.values()) clearTimeout(t);

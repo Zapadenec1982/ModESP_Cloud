@@ -109,6 +109,13 @@
     editName = tenant.name
     editPlan = tenant.plan
     editActive = tenant.active
+    editStatus = tenant.status || (tenant.active ? 'active' : 'suspended')
+    editBilling = {
+      billing_email: tenant.billing_email || '',
+      legal_name: tenant.legal_name || '',
+      tax_id: tenant.tax_id || '',
+      contract_started_at: tenant.contract_started_at ? String(tenant.contract_started_at).slice(0, 10) : '',
+    }
     showEdit = true
   }
 
@@ -127,7 +134,11 @@
       const data = {}
       if (editName.trim() !== editTenant.name) data.name = editName.trim()
       if (editPlan !== editTenant.plan) data.plan = editPlan
-      if (editActive !== editTenant.active) data.active = editActive
+      if (editStatus !== (editTenant.status || (editTenant.active ? 'active' : 'suspended'))) data.status = editStatus
+      for (const k of ['billing_email', 'legal_name', 'tax_id', 'contract_started_at']) {
+        const before = editTenant[k] ? String(editTenant[k]).slice(0, k === 'contract_started_at' ? 10 : 256) : ''
+        if ((editBilling[k] || '') !== before) data[k] = editBilling[k] || null
+      }
 
       if (Object.keys(data).length === 0) {
         closeEdit()
@@ -186,13 +197,30 @@
     }
   }
 
+  let editStatus = 'active'
+  let editBilling = {}
+
   function planColor(plan) {
     switch (plan) {
+      case 'partner': return 'warning'
       case 'enterprise': return 'danger'
       case 'pro': return 'info'
       case 'basic': return 'success'
       default: return 'neutral'
     }
+  }
+
+  function statusColor(status) {
+    switch (status) {
+      case 'trial': return 'info'
+      case 'past_due': return 'warning'
+      case 'suspended': case 'closed': return 'danger'
+      default: return 'success'
+    }
+  }
+
+  function usage(count, max) {
+    return max === null || max === undefined ? String(count ?? 0) : `${count ?? 0} / ${max}`
   }
 
   function formatDate(d) {
@@ -264,14 +292,14 @@
             <span class="cell cell-plan">
               <Badge variant={planColor(tenant.plan)} size="sm">{$t('tenants.plan_' + tenant.plan)}</Badge>
             </span>
-            <span class="cell cell-devices">{tenant.device_count ?? 0}</span>
-            <span class="cell cell-users">{tenant.user_count ?? 0}</span>
+            <span class="cell cell-devices" class:over={tenant.max_devices && tenant.device_count >= tenant.max_devices} title={$t('tenants.usage_hint')}>
+              {usage(tenant.device_count, tenant.max_devices)}{#if tenant.pending_count} <small>+{tenant.pending_count}</small>{/if}
+            </span>
+            <span class="cell cell-users" class:over={tenant.max_users && tenant.user_count >= tenant.max_users}>{usage(tenant.user_count, tenant.max_users)}</span>
             <span class="cell cell-status">
-              {#if tenant.active}
-                <Badge variant="success" size="sm">{$t('common.active')}</Badge>
-              {:else}
-                <Badge variant="neutral" size="sm">{$t('common.inactive')}</Badge>
-              {/if}
+              <Badge variant={statusColor(tenant.status || (tenant.active ? 'active' : 'suspended'))} size="sm">
+                {$t('tenants.status_' + (tenant.status || (tenant.active ? 'active' : 'suspended')))}
+              </Badge>
             </span>
             <span class="cell cell-created">{formatDate(tenant.created_at)}</span>
             <span class="cell cell-actions">
@@ -324,6 +352,7 @@
             <option value="basic">{$t('tenants.plan_basic')}</option>
             <option value="pro">{$t('tenants.plan_pro')}</option>
             <option value="enterprise">{$t('tenants.plan_enterprise')}</option>
+            <option value="partner">{$t('tenants.plan_partner')}</option>
           </select>
         </label>
         <div class="modal-actions">
@@ -362,11 +391,35 @@
             <option value="basic">{$t('tenants.plan_basic')}</option>
             <option value="pro">{$t('tenants.plan_pro')}</option>
             <option value="enterprise">{$t('tenants.plan_enterprise')}</option>
+            <option value="partner">{$t('tenants.plan_partner')}</option>
           </select>
         </label>
-        <label class="field checkbox-field">
-          <input type="checkbox" bind:checked={editActive} />
-          <span>{$t('common.active')}</span>
+        <label class="field">
+          <span class="field-label">{$t('tenants.col_status')}</span>
+          <select bind:value={editStatus}>
+            <option value="trial">{$t('tenants.status_trial')}</option>
+            <option value="active">{$t('tenants.status_active')}</option>
+            <option value="past_due">{$t('tenants.status_past_due')}</option>
+            <option value="suspended">{$t('tenants.status_suspended')}</option>
+            <option value="closed">{$t('tenants.status_closed')}</option>
+          </select>
+          <span class="field-hint">{$t('tenants.status_hint')}</span>
+        </label>
+        <label class="field">
+          <span class="field-label">{$t('tenants.legal_name')}</span>
+          <input type="text" bind:value={editBilling.legal_name} />
+        </label>
+        <label class="field">
+          <span class="field-label">{$t('tenants.tax_id')}</span>
+          <input type="text" bind:value={editBilling.tax_id} />
+        </label>
+        <label class="field">
+          <span class="field-label">{$t('tenants.billing_email')}</span>
+          <input type="email" bind:value={editBilling.billing_email} />
+        </label>
+        <label class="field">
+          <span class="field-label">{$t('tenants.contract_started')}</span>
+          <input type="date" bind:value={editBilling.contract_started_at} />
         </label>
         <div class="modal-actions">
           <Button variant="secondary" on:click={closeEdit}>{$t('common.cancel')}</Button>
@@ -470,6 +523,8 @@
     font-family: var(--font-mono);
   }
   .cell-plan    { flex: 1; min-width: 80px; }
+  .cell.over    { color: var(--accent-orange, #f59e0b); font-weight: 600; }
+  .cell small   { color: var(--text-muted); font-weight: 400; }
   .cell-devices { flex: 0.7; min-width: 60px; text-align: center; }
   .cell-users   { flex: 0.7; min-width: 60px; text-align: center; }
   .cell-status  { flex: 0.8; min-width: 70px; }
@@ -587,17 +642,7 @@
     cursor: not-allowed;
   }
 
-  .checkbox-field {
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-2);
-  }
 
-  .checkbox-field input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent-blue);
-  }
 
   .modal-actions {
     display: flex;

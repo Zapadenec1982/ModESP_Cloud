@@ -57,6 +57,7 @@
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
+    '/settings':        wrap({ asyncComponent: () => import('./pages/TenantSettings.svelte'), conditions: [isAdminCheck] }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
   }
 
@@ -196,6 +197,7 @@
     '/firmware': 'pages.firmware',
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',
+    '/settings': 'pages.settings',
     '/audit-log': 'pages.audit_log',
   }
 

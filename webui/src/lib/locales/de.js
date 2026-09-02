@@ -4,6 +4,7 @@
 export default {
   // ── Navigation ──
   nav: {
+    settings: 'Einstellungen',
     status_page: 'Plattformstatus',
     dashboard: 'Übersicht',
     map: 'Karte',
@@ -25,6 +26,8 @@ export default {
 
   // ── Page titles & subtitles ──
   pages: {
+    settings: 'Organisationseinstellungen',
+    settings_sub: 'Zeitzone, Tarif, Alarmverzögerungen',
     dashboard: 'Übersicht',
     dashboard_sub: 'Flottenübersicht und Geräteüberwachung',
     alarms: 'Alarme',
@@ -447,6 +450,28 @@ export default {
     expired: 'Diese Einladung ist abgelaufen — bitten Sie Ihren Administrator um eine neue.',
     loading: 'Einladung wird geprüft...',
     go_login: 'Zur Anmeldung',
+  },
+
+  // ── Organisation settings ──
+  settings: {
+    plan_title: 'Plan und Nutzung',
+    plan_hint: 'Um Plan oder Limits zu ändern, wenden Sie sich an den Support.',
+    retention: 'Telemetrie-Aufbewahrung',
+    days: 'Tage',
+    general: 'Allgemein',
+    timezone: 'Zeitzone (IANA)',
+    locale: 'Sprache der Benachrichtigungen',
+    electricity_rate: 'Stromtarif pro kWh',
+    currency: 'Währung',
+    not_set: 'nicht gesetzt',
+    alarms: 'Alarme und Verbindung',
+    alarms_hint: 'Ein leeres Feld bedeutet den Plattformstandard (als Platzhalter angezeigt).',
+    door_delay: 'Türalarm-Verzögerung, min',
+    pulldown_delay: 'Abkühlalarm-Verzögerung, min',
+    offline_threshold: 'Offline-Schwelle, s',
+    offline_alarm_delay: 'Offline-Alarm nach, min',
+    ack_escalation: 'Eskalation unbestätigter kritischer Alarme nach, min',
+    saved: 'Einstellungen gespeichert',
   },
 
   auth: {
@@ -908,6 +933,19 @@ export default {
     plan_basic: 'Basic',
     plan_pro: 'Pro',
     plan_enterprise: 'Enterprise',
+    plan_partner: 'Partner',
+    status_trial: 'Testphase',
+    status_active: 'Aktiv',
+    status_past_due: 'Überfällig',
+    status_suspended: 'Gesperrt',
+    status_closed: 'Geschlossen',
+    status_hint: '„Gesperrt“ und „Geschlossen“ blockieren Anmeldung, Sitzungsverlängerung und Controller-Daten; die Gerätekonfiguration bleibt erhalten.',
+    legal_name: 'Rechtlicher Name',
+    tax_id: 'Steuernummer',
+    billing_email: 'Rechnungs-E-Mail',
+    contract_started: 'Vertragsbeginn',
+    col_sites: 'Standorte',
+    usage_hint: 'Aktive Controller / Planlimit (+ in Warteschlange)',
     name_required: 'Name ist erforderlich',
     slug_required: 'Slug ist erforderlich',
     tenant_created: 'Organisation erstellt',

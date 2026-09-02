@@ -2,6 +2,7 @@
 
 const { Router } = require('express');
 const db         = require('../services/db');
+const { requireFeature } = require('../middleware/plan');
 const { checkDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
 
@@ -230,7 +231,7 @@ router.get('/:id/telemetry/stats', checkDeviceAccess(), async (req, res, next) =
 // Energy consumption summary with breakdown by component.
 // Query params: from, to (or hours, default 24h)
 
-router.get('/:id/energy/summary', checkDeviceAccess(), async (req, res, next) => {
+router.get('/:id/energy/summary', requireFeature('energy'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);

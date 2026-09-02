@@ -17,7 +17,9 @@ function randomHex(len = 6) {
 async function createTenant(overrides = {}) {
   const slug = overrides.slug || `test-${randomHex(8)}`;
   const name = overrides.name || slug;
-  const plan = overrides.plan || 'free';
+  // 'pro' (500 devices / 100 sites / 100 users) so plan limits never bite an
+  // ordinary fixture; plan-limits.test.js asks for 'free' explicitly.
+  const plan = overrides.plan || 'pro';
 
   const { rows } = await db.query(
     `INSERT INTO tenants (name, slug, plan, active) VALUES ($1, $2, $3, true) RETURNING *`,

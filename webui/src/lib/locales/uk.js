@@ -4,6 +4,7 @@
 export default {
   // ── Navigation ──
   nav: {
+    settings: 'Налаштування',
     status_page: 'Статус платформи',
     dashboard: 'Панель',
     map: 'Карта',
@@ -25,6 +26,8 @@ export default {
 
   // ── Page titles & subtitles ──
   pages: {
+    settings: 'Налаштування організації',
+    settings_sub: 'Часовий пояс, тариф, затримки аварій',
     dashboard: 'Панель',
     dashboard_sub: 'Огляд парку та моніторинг пристроїв',
     alarms: 'Аварії',
@@ -447,6 +450,28 @@ export default {
     expired: 'Термін дії запрошення минув — попросіть адміністратора надіслати нове.',
     loading: 'Перевіряємо запрошення...',
     go_login: 'До сторінки входу',
+  },
+
+  // ── Organisation settings ──
+  settings: {
+    plan_title: 'План і використання',
+    plan_hint: 'Щоб змінити план або ліміти, зверніться до підтримки.',
+    retention: 'Зберігання телеметрії',
+    days: 'днів',
+    general: 'Загальні',
+    timezone: 'Часовий пояс (IANA)',
+    locale: 'Мова сповіщень',
+    electricity_rate: 'Тариф на електроенергію, за кВт·год',
+    currency: 'Валюта',
+    not_set: 'не задано',
+    alarms: 'Аварії та зв\'язок',
+    alarms_hint: 'Порожнє поле — значення платформи за замовчуванням (показане як підказка).',
+    door_delay: 'Затримка аварії дверей, хв',
+    pulldown_delay: 'Затримка аварії охолодження, хв',
+    offline_threshold: 'Поріг офлайну, с',
+    offline_alarm_delay: 'Аварія «офлайн» через, хв',
+    ack_escalation: 'Ескалація непідтвердженої критичної аварії, хв',
+    saved: 'Налаштування збережено',
   },
 
   auth: {
@@ -908,6 +933,19 @@ export default {
     plan_basic: 'Базовий',
     plan_pro: 'Професійний',
     plan_enterprise: 'Корпоративний',
+    plan_partner: 'Партнер',
+    status_trial: 'Пробний',
+    status_active: 'Активна',
+    status_past_due: 'Прострочено',
+    status_suspended: 'Призупинена',
+    status_closed: 'Закрита',
+    status_hint: '«Призупинена» і «Закрита» блокують вхід, оновлення сесій і дані з контролерів; налаштування пристроїв зберігаються.',
+    legal_name: 'Юридична назва',
+    tax_id: 'ЄДРПОУ / ІПН',
+    billing_email: 'Email для рахунків',
+    contract_started: 'Початок договору',
+    col_sites: 'Точки',
+    usage_hint: 'Активні контролери / ліміт плану (+ у черзі)',
     name_required: 'Назва обов\'язкова',
     slug_required: 'Slug обов\'язковий',
     tenant_created: 'Організацію створено',

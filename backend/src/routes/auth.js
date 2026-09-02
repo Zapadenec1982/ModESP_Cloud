@@ -52,15 +52,28 @@ async function issueTokens(user, tenantId) {
   return { accessToken, refreshToken };
 }
 
+// Organisations a session may run in: trial, active and past_due. A suspended
+// or closed organisation is invisible at login, refused on switch-tenant and
+// dropped at token refresh (plan epic 1.8).
+const OPEN_STATUSES = ['trial', 'active', 'past_due'];
+
 async function getUserTenants(userId) {
   const { rows } = await db.query(
-    `SELECT t.id, t.name, t.slug
+    `SELECT t.id, t.name, t.slug, t.status
        FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
-       WHERE ut.user_id = $1 AND t.active = true
+       WHERE ut.user_id = $1 AND t.status = ANY($2::text[])
        ORDER BY t.name`,
-    [userId]
+    [userId, OPEN_STATUSES]
   );
   return rows;
+}
+
+function tenantSuspended(res) {
+  return res.status(401).json({
+    error: 'tenant_suspended',
+    message: 'This organization is suspended. Contact your administrator or support.',
+    status: 401,
+  });
 }
 
 // ── POST /auth/login ────────────────────────────────────
@@ -116,15 +129,24 @@ router.post('/login', async (req, res) => {
     const tenants = await getUserTenants(user.id);
 
     // Fallback: if user_tenants is empty (legacy), use users.tenant_id
+    let suspendedOnly = false;
     if (tenants.length === 0 && user.tenant_id) {
       const { rows: tRows } = await db.query(
-        'SELECT id, name, slug FROM tenants WHERE id = $1',
+        'SELECT id, name, slug, status FROM tenants WHERE id = $1',
         [user.tenant_id]
       );
-      if (tRows.length > 0) tenants.push(tRows[0]);
+      if (tRows.length > 0) {
+        if (OPEN_STATUSES.includes(tRows[0].status)) tenants.push(tRows[0]);
+        else suspendedOnly = true;
+      }
+    } else if (tenants.length === 0) {
+      const { rows: any } = await db.query(
+        `SELECT 1 FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id WHERE ut.user_id = $1 LIMIT 1`, [user.id]);
+      suspendedOnly = any.length > 0;
     }
 
     if (tenants.length === 0) {
+      if (suspendedOnly) return tenantSuspended(res);
       return res.status(401).json({
         error: 'no_tenant',
         message: 'User is not assigned to any tenant',
@@ -273,9 +295,9 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
       }
     }
 
-    // Verify tenant exists and is active
+    // Verify tenant exists and is open for sessions
     const { rows: tRows } = await db.query(
-      'SELECT id, name, slug FROM tenants WHERE id = $1 AND active = true',
+      'SELECT id, name, slug, status FROM tenants WHERE id = $1',
       [tenant_id]
     );
     if (tRows.length === 0) {
@@ -283,6 +305,7 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
         error: 'not_found', message: 'Tenant not found', status: 404,
       });
     }
+    if (!OPEN_STATUSES.includes(tRows[0].status)) return tenantSuspended(res);
 
     // Issue new tokens with new tenant context
     const user = { id: userId, email: req.user.email, role: req.user.role };
@@ -324,9 +347,10 @@ router.post('/refresh', async (req, res) => {
     const { rows } = await db.query(
       `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
               COALESCE(rt.tenant_id, u.tenant_id) AS tenant_id,
-              u.email, u.role, u.active
+              u.email, u.role, u.active, t.status AS tenant_status
        FROM refresh_tokens rt
        JOIN users u ON u.id = rt.user_id
+       LEFT JOIN tenants t ON t.id = COALESCE(rt.tenant_id, u.tenant_id)
        WHERE rt.token_hash = $1`,
       [tokenHash]
     );
@@ -340,6 +364,10 @@ router.post('/refresh', async (req, res) => {
     }
 
     const row = rows[0];
+    // A suspended organisation ends the session at the next refresh (≤ 15 min).
+    if (row.role !== 'superadmin' && row.tenant_status && !OPEN_STATUSES.includes(row.tenant_status)) {
+      return tenantSuspended(res);
+    }
 
     if (row.revoked || new Date(row.expires_at) < new Date()) {
       return res.status(401).json({

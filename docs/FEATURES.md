@@ -332,6 +332,11 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 - WebSocket global events (alarms) are delivered only to sockets of the alarm's tenant; the superadmin sees all
 - Pending controllers are claimed with the code printed on the controller (`POST /devices/claim`): an organisation sees, assigns and recovers only what it has claimed; the superadmin sees the whole queue with codes
 
+### Plans, organisation status, settings (plan epic 1.8)
+- `plan_limits` catalogue (Старт / Об'єкт / Мережа / Enterprise / Партнер): device, site and user caps, retention, sampling, features; assignment, user creation/invitation and site creation answer `402 plan_limit` at the cap, HACCP PDF / energy / isochrones answer `402 plan_feature` outside the plan; the WebUI shows usage against the limit and an upgrade hint
+- `tenants.status` (trial, active, past_due, suspended, closed) with billing identity fields; a suspended organisation cannot sign in, refresh or switch, and its controllers get no broker topics while keeping their credentials, so reactivation is instant
+- Organisation settings page (admins): time zone, notification language, electricity tariff and currency, door/pulldown alarm delays, offline threshold and offline-alarm delay, acknowledgement escalation — read live by the MQTT and push services
+
 ### Per-Device Assignment
 - Admin assigns specific devices to technician/viewer users
 - Enforced at API level — unauthorized device access returns 403

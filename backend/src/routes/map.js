@@ -22,6 +22,7 @@
 const { Router } = require('express');
 const { z }      = require('zod');
 const db         = require('../services/db');
+const { requireFeature } = require('../middleware/plan');
 const mqttSvc    = require('../services/mqtt');
 const routingSvc = require('../services/routing');
 const { authorize } = require('../middleware/auth');
@@ -575,7 +576,7 @@ router.get('/alarm-heatmap', filterDeviceAccess(), async (req, res, next) => {
 // ── GET /api/map/isochrones ──────────────────────────────
 // Coverage polygons around a point. Without ORS_API_KEY these are straight-line
 // rings and every Feature carries approximate:true — the UI must label them.
-router.get('/isochrones', maybeAuthorize('admin', 'technician'), async (req, res, next) => {
+router.get('/isochrones', maybeAuthorize('admin', 'technician'), requireFeature('geo'), async (req, res, next) => {
   const lat = Number(String(req.query.lat ?? '').trim());
   const lon = Number(String(req.query.lon ?? '').trim());
   if (String(req.query.lat ?? '').trim() === '' || !Number.isFinite(lat) || lat < -90 || lat > 90) {

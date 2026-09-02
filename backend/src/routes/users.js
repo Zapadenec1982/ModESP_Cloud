@@ -8,6 +8,7 @@ const authSvc     = require('../services/auth');
 const emailSvc    = require('../services/email');
 const { isUuidFormat } = require('../lib/ids');
 const { passwordSchema } = require('../lib/password-policy');
+const planMw = require('../middleware/plan');
 
 const router = Router();
 
@@ -121,6 +122,9 @@ router.post('/', async (req, res) => {
   const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
 
   try {
+    const cap = await planMw.checkCapacity(targetTenantId, 'users');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
+
     const hash = await authSvc.hashPassword(password);
     const { rows } = await db.query(
       `INSERT INTO users (tenant_id, email, password_hash, role)
@@ -198,6 +202,10 @@ router.post('/invite', async (req, res) => {
       if (member.length) {
         return res.status(409).json({ error: 'conflict', message: 'User is already a member of this organization', status: 409 });
       }
+    } else {
+      // A new account will count against max_users of the organisation
+      const cap = await planMw.checkCapacity(targetTenantId, 'users');
+      if (!cap.ok) return planMw.planLimitResponse(res, cap);
     }
 
     // One open invitation per email and organisation: a re-invite supersedes the old link.

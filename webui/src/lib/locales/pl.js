@@ -4,6 +4,7 @@
 export default {
   // ── Navigation ──
   nav: {
+    settings: 'Ustawienia',
     status_page: 'Status platformy',
     dashboard: 'Panel',
     map: 'Mapa',
@@ -25,6 +26,8 @@ export default {
 
   // ── Page titles & subtitles ──
   pages: {
+    settings: 'Ustawienia organizacji',
+    settings_sub: 'Strefa czasowa, taryfa, opóźnienia alarmów',
     dashboard: 'Panel',
     dashboard_sub: 'Przegląd floty i monitoring urządzeń',
     alarms: 'Alarmy',
@@ -447,6 +450,28 @@ export default {
     expired: 'Zaproszenie wygasło — poproś administratora o nowe.',
     loading: 'Sprawdzamy zaproszenie...',
     go_login: 'Do logowania',
+  },
+
+  // ── Organisation settings ──
+  settings: {
+    plan_title: 'Plan i wykorzystanie',
+    plan_hint: 'Aby zmienić plan lub limity, skontaktuj się z pomocą.',
+    retention: 'Retencja telemetrii',
+    days: 'dni',
+    general: 'Ogólne',
+    timezone: 'Strefa czasowa (IANA)',
+    locale: 'Język powiadomień',
+    electricity_rate: 'Taryfa energii za kWh',
+    currency: 'Waluta',
+    not_set: 'nie ustawiono',
+    alarms: 'Alarmy i łączność',
+    alarms_hint: 'Puste pole oznacza wartość domyślną platformy (pokazaną jako podpowiedź).',
+    door_delay: 'Opóźnienie alarmu drzwi, min',
+    pulldown_delay: 'Opóźnienie alarmu schładzania, min',
+    offline_threshold: 'Próg offline, s',
+    offline_alarm_delay: 'Alarm offline po, min',
+    ack_escalation: 'Eskalacja niepotwierdzonego alarmu krytycznego po, min',
+    saved: 'Ustawienia zapisane',
   },
 
   auth: {
@@ -908,6 +933,19 @@ export default {
     plan_basic: 'Podstawowy',
     plan_pro: 'Pro',
     plan_enterprise: 'Enterprise',
+    plan_partner: 'Partner',
+    status_trial: 'Próbny',
+    status_active: 'Aktywna',
+    status_past_due: 'Zaległość',
+    status_suspended: 'Zawieszona',
+    status_closed: 'Zamknięta',
+    status_hint: '„Zawieszona” i „Zamknięta” blokują logowanie, odświeżanie sesji i dane ze sterowników; konfiguracja urządzeń pozostaje.',
+    legal_name: 'Nazwa prawna',
+    tax_id: 'NIP',
+    billing_email: 'Email do faktur',
+    contract_started: 'Początek umowy',
+    col_sites: 'Lokalizacje',
+    usage_hint: 'Aktywne sterowniki / limit planu (+ w kolejce)',
     name_required: 'Nazwa jest wymagana',
     slug_required: 'Slug jest wymagany',
     tenant_created: 'Organizacja utworzona',

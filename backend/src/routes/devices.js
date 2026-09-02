@@ -16,6 +16,7 @@ const { isUuidFormat } = require('../lib/ids');
 const stateMeta  = require('../config/state_meta.json');
 const { DANGEROUS_KEYS, validateCommandValue } = require('../config/command-policy');
 const { normalizeClaimCode } = require('../lib/claim-code');
+const planMw = require('../middleware/plan');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
@@ -684,6 +685,10 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     }
 
     // Look up tenant slug for MQTT command
+    // Plan capacity (plan epic 1.8): the organisation's active devices against max_devices
+    const cap = await planMw.checkCapacity(targetTenantId, 'devices');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
+
     const tenantRes = await db.query(
       `SELECT slug FROM tenants WHERE id = $1`,
       [targetTenantId]

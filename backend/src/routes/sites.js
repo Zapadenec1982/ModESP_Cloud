@@ -18,6 +18,7 @@ const { Router } = require('express');
 const crypto     = require('crypto');
 const { z }      = require('zod');
 const db         = require('../services/db');
+const planMw = require('../middleware/plan');
 const mqttSvc    = require('../services/mqtt');
 const geocodeSvc = require('../services/geocode');
 const weatherSvc = require('../services/weather');
@@ -646,6 +647,10 @@ router.post('/', maybeAuthorize('admin'), async (req, res, next) => {
 
     const isSuperadmin   = req.user && req.user.role === 'superadmin';
     const targetTenantId = (isSuperadmin && parsed.data.tenant_id) ? parsed.data.tenant_id : req.tenantId;
+
+    // Plan capacity (plan epic 1.8): sites against max_sites
+    const cap = await planMw.checkCapacity(targetTenantId, 'sites');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
 
     const site = {
       tenant_id:     targetTenantId,

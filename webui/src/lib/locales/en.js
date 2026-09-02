@@ -4,6 +4,7 @@
 export default {
   // ── Navigation ──
   nav: {
+    settings: 'Settings',
     status_page: 'Platform status',
     dashboard: 'Dashboard',
     map: 'Map',
@@ -25,6 +26,8 @@ export default {
 
   // ── Page titles & subtitles ──
   pages: {
+    settings: 'Organisation settings',
+    settings_sub: 'Time zone, tariff, alarm delays',
     dashboard: 'Dashboard',
     dashboard_sub: 'Fleet overview and device monitoring',
     alarms: 'Alarms',
@@ -447,6 +450,28 @@ export default {
     expired: 'This invitation has expired — ask your administrator for a new one.',
     loading: 'Checking the invitation...',
     go_login: 'Go to sign-in',
+  },
+
+  // ── Organisation settings ──
+  settings: {
+    plan_title: 'Plan and usage',
+    plan_hint: 'To change the plan or its limits, contact support.',
+    retention: 'Telemetry retention',
+    days: 'days',
+    general: 'General',
+    timezone: 'Time zone (IANA)',
+    locale: 'Notification language',
+    electricity_rate: 'Electricity tariff per kWh',
+    currency: 'Currency',
+    not_set: 'not set',
+    alarms: 'Alarms and connectivity',
+    alarms_hint: 'An empty field means the platform default (shown as the placeholder).',
+    door_delay: 'Door alarm delay, min',
+    pulldown_delay: 'Pulldown alarm delay, min',
+    offline_threshold: 'Offline threshold, s',
+    offline_alarm_delay: 'Offline alarm after, min',
+    ack_escalation: 'Escalate unacknowledged critical alarms after, min',
+    saved: 'Settings saved',
   },
 
   auth: {
@@ -908,6 +933,19 @@ export default {
     plan_basic: 'Basic',
     plan_pro: 'Pro',
     plan_enterprise: 'Enterprise',
+    plan_partner: 'Partner',
+    status_trial: 'Trial',
+    status_active: 'Active',
+    status_past_due: 'Past due',
+    status_suspended: 'Suspended',
+    status_closed: 'Closed',
+    status_hint: '“Suspended” and “Closed” block sign-in, session refresh and controller data; device configuration is kept.',
+    legal_name: 'Legal name',
+    tax_id: 'Tax ID',
+    billing_email: 'Billing email',
+    contract_started: 'Contract start',
+    col_sites: 'Sites',
+    usage_hint: 'Active controllers / plan limit (+ queued)',
     name_required: 'Name is required',
     slug_required: 'Slug is required',
     tenant_created: 'Organization created',

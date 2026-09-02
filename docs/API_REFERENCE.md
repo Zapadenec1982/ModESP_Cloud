@@ -1788,6 +1788,36 @@ Soft-delete тенант. Не можна видалити якщо є прис�
 }
 ```
 
+### `GET /tenants/plans`
+Каталог планів (`plan_limits`): `max_devices`, `max_sites`, `max_users` (`null` — без обмежень),
+`retention_days`, `sampling_sec`, `features`. Використання проти ліміту повертають `GET /tenants` і
+`GET /tenants/:id` (`device_count` — лише активні, `pending_count`, `site_count`, `user_count`, `max_*`).
+
+Перевищення ліміту при призначенні контролера, створенні/запрошенні користувача або створенні точки —
+`402 plan_limit` з `resource`, `limit`, `current`, `plan`. Функції плану (`reports` — PDF HACCP,
+`energy` — енергозвіт, `geo` — ізохрони) — `402 plan_feature`; superadmin проходить завжди.
+
+### Стан організації (`tenants.status`)
+`trial` | `active` | `past_due` | `suspended` | `closed`. Перші три — «відкриті»: вхід, оновлення сесії,
+перемикання організації і топіки брокера працюють. `suspended`/`closed`: `401 tenant_suspended` при вході
+та оновленні токена, пристрої організації не отримують жодного топіка (CONNECT проходить, облікові дані
+зберігаються — після реактивації зв'язок відновлюється сам). Поле `active` лишається дзеркалом статусу.
+`PATCH /tenants/:id` (superadmin) приймає `status`, `plan` (у т.ч. `partner`), `trial_expires_at`,
+`billing_email`, `legal_name`, `tax_id`, `billing_currency`, `contract_started_at`.
+
+### `GET /tenants/:id/settings` · `PATCH /tenants/:id/settings`
+Налаштування організації — адміністратор власної організації або superadmin. `null` скидає перевизначення
+до значення платформи (`defaults` у відповіді).
+
+```json
+{ "timezone": "Europe/Kyiv", "locale": "uk", "electricity_rate": 7.5, "electricity_currency": "UAH",
+  "door_alarm_delay_ms": 600000, "pulldown_alarm_delay_ms": 300000,
+  "offline_threshold_ms": 90000, "offline_alarm_delay_ms": 120000, "ack_escalation_min": 15 }
+```
+
+### `DELETE /tenants/bulk`
+`{ "ids": [...] }` — масове видалення (superadmin). Маршрут оголошено перед `DELETE /tenants/:id`.
+
 ---
 
 ## Firmware (OTA)
