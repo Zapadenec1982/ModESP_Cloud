@@ -99,13 +99,10 @@ sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME="$DB_NAME"
 # owner, which is what migrate.js above relies on). Default privileges cover
 # tables that future migrations create.
 echo "  → Grant application privileges..."
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" <<SQL
-GRANT USAGE ON SCHEMA public TO $DB_USER;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO $DB_USER;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO $DB_USER;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO $DB_USER;
-SQL
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user="$DB_USER" -v owner=postgres -d "$DB_NAME" \
+  -f "$APP_DIR/infra/sql/app-grants.sql"
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user="$DB_USER" -d "$DB_NAME" \
+  -f "$APP_DIR/infra/sql/check-grants.sql"
 
 # ── 7. Systemd ────────────────────────────────────────────
 echo "[7/8] Installing systemd units..."
@@ -178,3 +175,8 @@ echo "  9. Alerts: set PLATFORM_ALERT_CHAT_ID in backend/.env, then test:"
 echo "     systemctl start 'modesp-alert@smoke-test.service'"
 echo "     Restore procedure: $APP_DIR/docs/runbooks/restore.md"
 echo ""
+
+echo ""
+echo "  → Releases: this checkout is the bootstrap. Switch to tagged releases with"
+echo "     $APP_DIR/infra/deploy.sh init --yes   (once)"
+echo "     $APP_DIR/infra/deploy.sh release vX.Y.Z   (docs/DEPLOYMENT.md, «Оновлення»)"

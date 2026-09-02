@@ -96,7 +96,30 @@ Ubuntu 24.04
     │   ├── modesp-telemetry-partition.service / .timer  # 25-го, 03:00
     │   └── modesp-retention-cleanup.service / .timer    # 03:30 щодня
     ├── nginx/                       # modesp.conf + ratelimit.conf
+    ├── sql/                         # app-grants.sql, check-grants.sql (права ролі застосунку)
+    ├── deploy.sh                    # init / release / rollback / status
     └── mosquitto/
+```
+
+### Розкладка релізів
+
+Після `deploy.sh init --yes` шлях `/opt/modesp-cloud` стає символьним посиланням на поточний
+реліз, а секрети живуть окремо — жоден юніт, скрипт чи конфіг nginx не змінює шляхів:
+
+```
+/opt/modesp-releases/
+├── releases/
+│   ├── checkout-20260902120000/     # колишній git-checkout (перший «реліз»)
+│   └── v1.0.0/                      # розпакований modesp-cloud-v1.0.0.tar.gz + node_modules
+├── shared/
+│   ├── backend.env                  # → releases/*/backend/.env (символьні посилання)
+│   ├── firmware/                    # → releases/*/backend/firmware
+│   ├── backup.env                   # → releases/*/infra/backup.env
+│   └── webui.env                    # → releases/*/webui/.env (лише для локальної збірки)
+├── downloads/                       # завантажені архіви і .sha256
+└── .previous                        # шлях попереднього релізу для rollback
+/opt/modesp-cloud -> /opt/modesp-releases/releases/v1.0.0
+/var/www/modesp/webui -> /opt/modesp-cloud/webui/dist
 ```
 
 ---
@@ -618,41 +641,124 @@ nginx -t && systemctl reload nginx
 
 ## Оновлення (deploy update)
 
-Стандартна процедура після `git push` з локальної машини:
+Продакшен оновлюється **релізами**, не `git pull`: тег `vX.Y.Z` → GitHub Actions
+(`.github/workflows/release.yml`) проганяє CI і збирає `modesp-cloud-vX.Y.Z.tar.gz` з `.sha256`
+→ `infra/deploy.sh release vX.Y.Z` встановлює його на сервері.
+
+### Один раз: перехід із git-checkout на розкладку релізів
 
 ```bash
-cd /opt/modesp-cloud
-
-# 1. Підтягнути код
-git pull origin main
-
-# 2. Застосувати нові міграції (якщо є). Раннер веде таблицю schema_migrations
-#    і пропускає вже застосовані файли; DDL має виконувати власник схеми,
-#    тому підключаємось як postgres через сокет (явні DB_* мають пріоритет над .env).
-sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
-  node backend/src/scripts/migrate.js --dry-run     # що буде застосовано
-sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
-  node backend/src/scripts/migrate.js
-#    Перший запуск на БД, яку мігрували вручну: спочатку `--baseline`, щоб записати
-#    вже застосовані файли без виконання, і лише потім звичайний запуск.
-#    Якщо міграція створює нові таблиці — перевірити GRANT-и для modesp_cloud (як у 021).
-
-# 3. Оновити залежності бекенду (якщо змінився package.json)
-cd backend
-npm install --production
-
-# 4. Перезібрати WebUI (якщо змінився webui/)
-cd ../webui
-npm install
-npm run build
-
-# 5. Перезапустити бекенд
-sudo systemctl restart modesp-backend
-
-# 6. Перевірити
-sudo systemctl status modesp-backend
-curl -s http://localhost:3000/api/health | jq .
+sudo /opt/modesp-cloud/infra/deploy.sh init          # показує, що буде зроблено, нічого не змінює
+sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекенд, переносить, запускає, чекає /api/health
 ```
+
+`init` переносить checkout у `/opt/modesp-releases/releases/checkout-<час>`, виносить
+`backend/.env`, `backend/firmware`, `infra/backup.env`, `webui/.env` у `shared/`, ставить
+символьні посилання назад, робить `/opt/modesp-cloud` посиланням, перевстановлює юніти
+(`ReadWritePaths` тепер включає `shared/`) і посилання nginx. Якщо `FIRMWARE_STORAGE_PATH`
+у `.env` абсолютний — каталог прошивок не чіпається.
+
+### Реліз
+
+```bash
+sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0
+# без доступу сервера до GitHub — архів, скопійований через scp:
+sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0 --archive /tmp/modesp-cloud-v1.0.0.tar.gz
+```
+
+Що робить скрипт, по кроках:
+1. завантажує архів і `.sha256` з GitHub Releases (або бере `--archive`), перевіряє контрольну суму;
+2. розпаковує в `releases/<version>`, `npm ci --omit=dev` від `modesp`;
+3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`);
+4. `migrate.js --dry-run`, потім `migrate.js` як `postgres` через сокет, далі
+   `infra/sql/app-grants.sql` і `infra/sql/check-grants.sql` — роль застосунку гарантовано
+   бачить кожну нову таблицю (`--no-migrate` пропускає цей крок);
+5. записує попередній реліз у `.previous`, атомарно перемикає `/opt/modesp-cloud`,
+   перевстановлює юніти, `systemctl restart modesp-backend`;
+6. **health-гейт**: до 60 с чекає `"status":"ok"` від `/api/health`; якщо не дочекався —
+   сам повертає посилання на попередній реліз, рестартує і завершується з помилкою;
+7. `nginx -t && systemctl reload nginx`, залишає 5 останніх релізів.
+
+### Відкат
+
+```bash
+sudo /opt/modesp-cloud/infra/deploy.sh rollback     # перемикає на .previous, рестарт, health-гейт
+sudo /opt/modesp-cloud/infra/deploy.sh status       # поточний реліз, попередній, список, health
+```
+
+Міграції **не** відкочуються: кожна міграція в репозиторії сумісна з попередньою версією коду
+(додає таблиці й колонки, не видаляє), тому попередній реліз працює на новій схемі. Якщо
+міграція це порушує — вона має окремий runbook.
+
+### Ручний шлях (dev-сервер або до `init`)
+
+```bash
+cd /opt/modesp-cloud && git pull origin main
+sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
+  node backend/src/scripts/migrate.js --dry-run    # потім без --dry-run
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=postgres -d modesp_cloud -f infra/sql/app-grants.sql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -d modesp_cloud -f infra/sql/check-grants.sql
+(cd backend && npm ci --omit=dev) && (cd webui && npm ci && npm run build)
+sudo systemctl restart modesp-backend && curl -s http://localhost:3000/api/health | jq .
+```
+
+Перший запуск `migrate.js` на БД, яку мігрували вручну: спочатку `--baseline`, щоб записати вже
+застосовані файли без виконання, і лише потім звичайний запуск.
+
+---
+
+## Релізи, staging і демо
+
+### Реліз із тегу
+
+1. Підняти версію в `backend/package.json` і `webui/package.json` (разом із `package-lock.json`),
+   додати розділ `## [X.Y.Z] — дата` у `CHANGELOG.md` — workflow відмовляється публікувати,
+   якщо тег не збігається з версією або розділу немає.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. `Release` у GitHub Actions: CI (тести + міграції і GRANT-и на порожній БД, `ci.yml` як
+   `workflow_call`) → `infra/scripts/build-release.sh` → GitHub Release з архівом, `.sha256`
+   і текстом із CHANGELOG. Той самий скрипт працює локально:
+   `infra/scripts/build-release.sh v1.0.0 release/`.
+
+Архів містить лише runtime: `backend/{src,scripts,package*.json,.env.example}` (без тестів і
+`node_modules`), `webui/dist`, `infra/`, `docs/`, ліцензії, `VERSION`, `RELEASE.json`.
+
+### Staging (`demo.modesp.com.ua`)
+
+Другий VPS з тим самим `setup.sh` (`DOMAIN=demo.modesp.com.ua`), власною БД і брокером, потім
+`deploy.sh init --yes`. Кожен зелений CI на `main` встановлюється туди автоматично
+(`.github/workflows/deploy-staging.yml`, версія `main-<sha>`), коли в репозиторії задано:
+
+| Де | Ім'я | Значення |
+|---|---|---|
+| Settings → Variables | `STAGING_HOST` | адреса сервера (порожньо = деплой вимкнено) |
+| Settings → Variables | `STAGING_USER` | користувач SSH, типово `deploy` |
+| Settings → Variables | `STAGING_KNOWN_HOSTS` | рядок `ssh-keyscan` сервера (інакше — довіра при першому з'єднанні) |
+| Settings → Secrets | `STAGING_SSH_KEY` | приватний ключ користувача `deploy` |
+
+На сервері: `useradd -m deploy`, публічний ключ у `~deploy/.ssh/authorized_keys` і рядок sudoers
+`deploy ALL=(root) NOPASSWD: /opt/modesp-cloud/infra/deploy.sh`.
+
+Self-hosted OSRM/Nominatim з епіка 1.2 живуть на цьому ж сервері.
+
+### Демо-дані: лише на staging
+
+- На staging: `seed-demo.js` (точки, техніки, а також viewer `demo@modesp.com.ua` з доступом
+  до всіх точок і showcase-посилання на статус першої точки — `site_public_links.rate_limit_exempt`,
+  без ліміту переглядів, токен друкується один раз), `provision-demo-fleet.js`,
+  `link-devices-to-sites.js`. Обидва скрипти провізії відмовляються писати з
+  `NODE_ENV=production` без `--allow-production`.
+- На продакшені після переносу:
+  ```bash
+  cd /opt/modesp-cloud/backend
+  sudo -u modesp node src/scripts/purge-demo.js                 # dry run: кого і що видалить
+  sudo -u modesp node src/scripts/purge-demo.js --keep showcase --apply
+  sudo systemctl restart modesp-backend                         # реєстри MQTT забувають пристрої
+  ```
+  Демо-організація — та, що має пристрої з прошивкою `*-emu` або з `demo-data/emulator-fleet*.csv`;
+  `--tenant <slug>` задає список явно, `--keep <slug>` лишає showcase-організацію. Пристрої
+  видаляються разом із телеметрією та архівом (не переносяться в `__system__`).
+- Критерій: `SELECT count(*) FROM devices WHERE firmware_version LIKE '%-emu%'` на проді = 0.
 
 ---
 
@@ -831,6 +937,7 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — Релізи (епік 1.10): `infra/deploy.sh` (init / release / rollback / status з health-гейтом і автоматичним відкатом), розкладка `/opt/modesp-releases` із символьним посиланням `/opt/modesp-cloud`, `infra/scripts/build-release.sh`, workflow `release.yml` (тег → GitHub Release) і `deploy-staging.yml` (main → staging), CI-джоб міграцій і GRANT-ів на порожній БД, `infra/sql/app-grants.sql` + `check-grants.sql` (використовує і `setup.sh`), розділ «Релізи, staging і демо», `purge-demo.js`, `CHANGELOG.md`, версія 1.0.0.
 - 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.

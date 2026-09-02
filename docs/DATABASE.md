@@ -563,6 +563,12 @@ CREATE TABLE report_exports (
 організаціям, що існували на момент застосування і чий план дає менше; змінює лише superadmin
 (`PATCH /tenants/:id/settings`), явна зміна плану скидає в `NULL`.
 
+### `site_public_links.rate_limit_exempt` (migration 029)
+`BOOLEAN NOT NULL DEFAULT false`. Showcase-посилання на демо-точку з лендінгу: його токен
+пропускає лімітер `/api/public` (30 переглядів / 5 хв на IP), кеш хешів у `routes/public.js`
+оновлюється щохвилини. Виставляє `seed-demo.js` або superadmin у SQL; невідомий, відкликаний
+чи протермінований токен лімітується як і раніше.
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -631,3 +637,4 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
   Свідомі рішення на запис: немає композитного FK `devices → sites`, немає RLS на нових таблицях,
   немає тригера `updated_at`, `geocode_cache` без `tenant_id`.
 - 2026-09-02 — Міграція 028: `telemetry_hourly` (погодинний архів на 3 роки) і `report_exports` (реєстр звітів HACCP з кодом перевірки та SHA-256); `cleanup-telemetry.js` перенесено в щоденний `modesp-retention-cleanup`, ретенція сирої телеметрії — за `plan_limits.retention_days`.
+- 2026-09-02 — Міграція 029: `site_public_links.rate_limit_exempt` (showcase-посилання без ліміту переглядів). Права ролі застосунку — `infra/sql/app-grants.sql`, перевірка — `infra/sql/check-grants.sql` (CI, `setup.sh`, `deploy.sh`).

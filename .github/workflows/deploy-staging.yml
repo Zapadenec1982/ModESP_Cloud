@@ -1,0 +1,61 @@
+name: Deploy staging
+
+# Every green CI run on main is installed on the staging/demo server through
+# the same infra/deploy.sh that production uses. Nothing happens until the
+# repository has the variable STAGING_HOST (Settings → Variables) plus the
+# secret STAGING_SSH_KEY; STAGING_USER (default: deploy) and STAGING_KNOWN_HOSTS
+# (the server's host key line — recommended, otherwise trust on first use)
+# are optional. The deploy user needs:
+#   deploy ALL=(root) NOPASSWD: /opt/modesp-cloud/infra/deploy.sh   (sudoers)
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Install the main snapshot on staging
+    if: github.event.workflow_run.conclusion == 'success' && vars.STAGING_HOST != ''
+    runs-on: ubuntu-latest
+    environment: staging
+    concurrency: staging-deploy
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Build the WebUI
+        run: npm ci && npm run build
+        working-directory: webui
+
+      - name: Build the snapshot archive
+        id: build
+        run: |
+          version="main-$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-7)"
+          infra/scripts/build-release.sh "$version" release
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload and deploy
+        env:
+          HOST: ${{ vars.STAGING_HOST }}
+          USER: ${{ vars.STAGING_USER || 'deploy' }}
+          KNOWN_HOSTS: ${{ vars.STAGING_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/staging && chmod 600 ~/.ssh/staging
+          if [ -n "$KNOWN_HOSTS" ]; then printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          else ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts; fi
+          scp -i ~/.ssh/staging release/modesp-cloud-"$VERSION".tar.gz release/modesp-cloud-"$VERSION".tar.gz.sha256 \
+            "$USER@$HOST:/tmp/"
+          ssh -i ~/.ssh/staging "$USER@$HOST" \
+            "sudo /opt/modesp-cloud/infra/deploy.sh release '$VERSION' --archive /tmp/modesp-cloud-$VERSION.tar.gz && sudo /opt/modesp-cloud/infra/deploy.sh status"

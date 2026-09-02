@@ -1469,7 +1469,10 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 `https://modesp.com.ua/#/public/site/<token>` — фрагмент URL браузер на сервер не надсилає, тож токен
 не потрапляє ні в серверні логи, ні в `Referer`.
 
-**Rate limit:** 30 запитів / 5 хв на IP (власний лімітер, не спільний з `/api`).
+**Rate limit:** 30 запитів / 5 хв на IP (власний лімітер, не спільний з `/api`). Посилання з
+`site_public_links.rate_limit_exempt = true` (showcase демо-точки з лендінгу, ставить
+`seed-demo.js`) лімітер пропускають; відкликання чи закінчення терміну повертає ліміт протягом
+хвилини.
 
 **Response 200:**
 ```json
@@ -2263,3 +2266,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-03-31 — Device map: devices отримали latitude/longitude (migration 018); GET /devices, GET /devices/:id повертають координати; PATCH /devices/:id приймає latitude/longitude (null = прибрати з карти).
 - 2026-08-23 — Phase 14 (Sites & Geo): Sites CRUD (`/sites`) з геокодуванням, погодою, найближчими техніками та публічними посиланнями; геокодер-проксі (`/geo/search`, `/geo/reverse`); карта (`/map/devices`, `/map/filters`, `/map/alarm-heatmap`, `/map/isochrones`, `POST /map/route`); гео-статистика (`/stats/geo` + `export.csv`); профіль з домашньою базою (`/profile`); гранти на точки (`/users/:id/sites`); неавтентифікована публічна сторінка статусу (`/api/public/site` + заголовок `X-Site-Token`); `site_id` у PATCH /devices/:id і `site_*` поля у видачі пристроїв; нові колонки CSV-імпорту; окремий rate limiter 30/хв на користувача для ендпоінтів із зовнішніми сервісами.
 - 2026-09-02 — HACCP (епік 1.9): `GET /devices/:id/telemetry/export.pdf` перероблено (локалізація uk/en/pl/de, реквізити організації і точки, місцевий час, підпис, код перевірки й SHA-256, погодинний архів для старих періодів), новий `GET /sites/:id/export.pdf`, публічна перевірка `GET /api/public/report/:code`, інвентаризація переїхала на `GET /devices/export/inventory.csv`; усі експорти пишуться в `audit_log`.
+- 2026-09-02 — Епік 1.10: showcase-посилання без ліміту переглядів (`rate_limit_exempt`); `DELETE /tenants/:id` виконує спільну з `purge-demo.js` процедуру (`services/tenant-delete.js`).

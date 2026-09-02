@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Reused by release.yml (tags) and deploy-staging.yml
+  workflow_call:
 
 jobs:
   test:
@@ -48,6 +50,13 @@ jobs:
         run: npm run build
         working-directory: webui
 
+      - name: Keep the built WebUI as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: webui/dist
+          retention-days: 14
+
       - name: Run backend tests
         run: npm test
         working-directory: backend
@@ -60,3 +69,74 @@ jobs:
           JWT_SECRET: ci-test-secret-must-be-at-least-32-characters-long
           AUTH_ENABLED: true
           NODE_ENV: test
+
+  # The production path, end to end: schema.sql + migrate.js as the schema owner
+  # on an EMPTY database, then the application role gets its grants from the
+  # same file setup.sh and deploy.sh use, and check-grants.sql proves it can
+  # reach every table. The test job cannot catch a missing GRANT — it runs as
+  # the owner — so this job exists for exactly that class of production outage.
+  migrations:
+    name: Schema, migrations and grants on an empty database
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: modesp_cloud
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      PGURL: postgresql://postgres:ci@localhost:5434/modesp_cloud
+      DB_HOST: localhost
+      DB_PORT: 5434
+      DB_NAME: modesp_cloud
+      DB_USER: postgres
+      DB_PASS: ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Create the application role (the GRANT lines in migrations name it)
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -c "CREATE ROLE modesp_cloud LOGIN PASSWORD 'app';"
+
+      - name: Apply schema.sql as the owner
+        run: psql "$PGURL" -q -v ON_ERROR_STOP=1 -f backend/src/db/schema.sql
+
+      - name: Apply migrations, then the runner must report up to date
+        run: |
+          node backend/src/scripts/migrate.js --dry-run
+          node backend/src/scripts/migrate.js
+          node backend/src/scripts/migrate.js --dry-run | tee /tmp/second-run.txt
+          grep -q "Up to date" /tmp/second-run.txt
+
+      - name: Grant the application role (infra/sql/app-grants.sql)
+        run: psql "$PGURL" -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=postgres -f infra/sql/app-grants.sql
+
+      - name: Verify the application role reaches every table (infra/sql/check-grants.sql)
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -f infra/sql/check-grants.sql
+
+      - name: Partition helpers work for the application role
+        run: |
+          psql postgresql://modesp_cloud:app@localhost:5434/modesp_cloud -v ON_ERROR_STOP=1 \
+            -c "SELECT create_telemetry_partition(2030, 1);" \
+            -c "SELECT count(*) FROM plan_limits;" \
+            -c "SELECT count(*) FROM tenant_settings;"

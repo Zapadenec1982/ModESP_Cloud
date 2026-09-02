@@ -1,6 +1,6 @@
 {
   "name": "modesp-cloud-backend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "ModESP Cloud backend — MQTT ingestion and state aggregation",
   "main": "src/index.js",
   "scripts": {

@@ -5,6 +5,7 @@ const { z }      = require('zod');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const planMw     = require('../middleware/plan');
+const { deleteTenant } = require('../services/tenant-delete');
 const { requireSuperadmin } = require('../middleware/auth');
 
 const router = Router();
@@ -450,54 +451,8 @@ router.delete('/:id', requireSuperadmin, async (req, res, next) => {
       });
     }
 
-    const result = await db.transaction(async (client) => {
-      // Verify tenant exists
-      const { rows } = await client.query(
-        `SELECT id, name, slug FROM tenants WHERE id = $1`,
-        [id]
-      );
-      if (rows.length === 0) return null;
-      const tenant = rows[0];
-
-      // Move devices to __system__ tenant
-      const moved = await client.query(
-        `UPDATE devices SET tenant_id = $1 WHERE tenant_id = $2 RETURNING mqtt_device_id`,
-        [db.SYSTEM_TENANT_ID, id]
-      );
-
-      // Delete tenant-scoped data (order matters: children before parents)
-      await client.query(`DELETE FROM notification_log WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM notification_subscribers WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM alarms WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM events WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM ota_jobs WHERE rollout_id IN (SELECT id FROM ota_rollouts WHERE tenant_id = $1)`, [id]);
-      await client.query(`DELETE FROM ota_rollouts WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM firmwares WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM service_records WHERE tenant_id = $1`, [id]);
-      // Nullify audit_log references before deleting users/tenant
-      // (immutable trigger blocks cascaded updates, so do it explicitly)
-      await client.query(`ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable`);
-      await client.query(`UPDATE audit_log SET user_id = NULL WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
-      await client.query(`UPDATE audit_log SET tenant_id = NULL WHERE tenant_id = $1`, [id]);
-      await client.query(`ALTER TABLE audit_log ENABLE TRIGGER trg_audit_log_immutable`);
-
-      // Delete user-related data
-      await client.query(
-        `DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
-        [id]
-      );
-      await client.query(
-        `DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`,
-        [id]
-      );
-      await client.query(`DELETE FROM user_tenants WHERE tenant_id = $1`, [id]);
-      await client.query(`DELETE FROM users WHERE tenant_id = $1`, [id]);
-
-      // Delete the tenant itself
-      await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
-
-      return { ...tenant, movedDevices: moved.rowCount };
-    });
+    // The procedure is shared with src/scripts/purge-demo.js (services/tenant-delete.js)
+    const result = await db.transaction((client) => deleteTenant(client, id));
 
     if (!result) {
       return res.status(404).json({

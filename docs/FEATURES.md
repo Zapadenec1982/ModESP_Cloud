@@ -453,6 +453,12 @@ Production-ready deployment with TLS, backups, and monitoring.
 - StateMap monitoring — device count, total keys, estimated memory usage (logged every 60s)
 - Pino structured logging (JSON in production)
 
+### Releases and environments
+- Tag `vX.Y.Z` → GitHub Release with `modesp-cloud-vX.Y.Z.tar.gz` (+ SHA-256), built only after CI and the empty-database migration check pass (`.github/workflows/release.yml`)
+- `infra/deploy.sh init | release | rollback | status`: releases under `/opt/modesp-releases`, secrets in `shared/`, atomic symlink switch, health gate on `/api/health` with automatic rollback; `CHANGELOG.md` is the release text
+- Every green `main` is installed on the staging/demo server automatically once `STAGING_HOST` and the SSH key are configured
+- Production carries no synthetic data: `purge-demo.js` removes demo organisations, the provisioning scripts refuse `NODE_ENV=production` without `--allow-production`, and a showcase status link (`rate_limit_exempt`) serves the landing page
+
 ### Backups & Maintenance
 - Daily archive at 02:00 via `modesp-backup.timer` (`infra/scripts/backup-postgres.sh`): `pg_dump` custom format + roles + `.env`/firmware/TLS/broker config in one tarball with a sha256 manifest; 14-day local retention, optional GPG encryption, off-site rsync with 30-day remote pruning, `last-success` marker; restore runbook in `docs/runbooks/restore.md`
 - Row retention by `modesp-retention-cleanup.timer` (`cleanup-weather.js`, `cleanup-aux.js`): weather observations, events, notification log, cleared alarms, expired refresh tokens; every script is a dry-run without `--apply`

@@ -49,12 +49,47 @@ const MAX_PUBLIC_DEVICES = 200;
 // (a supertest run comes from a single IP and would otherwise trip the limit
 // while asserting the 404 paths).
 const limiterStore = new rateLimit.MemoryStore();
+
+// ── Showcase links skip the limiter (plan epic 1.10) ──────
+// site_public_links.rate_limit_exempt marks the demo site linked from the
+// landing page. Its token hashes are cached here and refreshed every minute,
+// so the check per request is one sha256 and a Set lookup — no query, and an
+// unknown token is still limited exactly as before (the 404 path never skips).
+const EXEMPT_REFRESH_MS = 60 * 1000;
+let exemptHashes = new Set();
+let exemptTimer = null;
+
+async function refreshExempt() {
+  try {
+    const { rows } = await db.query(
+      `SELECT token_hash FROM site_public_links
+        WHERE rate_limit_exempt = true AND revoked_at IS NULL AND expires_at > NOW()`);
+    exemptHashes = new Set(rows.map(r => r.token_hash));
+  } catch (err) {
+    // keep the previous set; a database hiccup must not open or close the gate
+  }
+  return exemptHashes.size;
+}
+
+function isExempt(req) {
+  if (!exemptTimer) {
+    exemptTimer = setInterval(refreshExempt, EXEMPT_REFRESH_MS);
+    if (typeof exemptTimer.unref === 'function') exemptTimer.unref();
+    refreshExempt();
+  }
+  if (exemptHashes.size === 0) return false;
+  const token = readToken(req);
+  if (!token) return false;
+  return exemptHashes.has(crypto.createHash('sha256').update(token).digest('hex'));
+}
+
 const publicLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 30,                    // 30 views per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
   store: limiterStore,
+  skip: isExempt,
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
@@ -254,3 +289,5 @@ module.exports = router;
 // exercise both the limiter and the 404 paths without one starving the other.
 // Not referenced by any production code path.
 module.exports.resetRateLimit = () => limiterStore.resetAll();
+module.exports.refreshExempt = refreshExempt;
+module.exports.isExempt = isExempt;

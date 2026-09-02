@@ -30,7 +30,10 @@ MemoryMax=512M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/modesp-cloud/backend
+# The release layout (infra/deploy.sh) keeps .env and firmware/ under
+# /opt/modesp-releases/shared and symlinks them into the release; the second
+# path (ignored while absent) keeps OTA uploads writable there.
+ReadWritePaths=/opt/modesp-cloud/backend -/opt/modesp-releases/shared
 PrivateTmp=true
 
 # Logging (journald)

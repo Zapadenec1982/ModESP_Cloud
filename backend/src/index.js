@@ -147,12 +147,15 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
 });
-// Public site status page — unauthenticated, so the only key available is the IP
+// Public site status page — unauthenticated, so the only key available is the IP.
+// Showcase links (site_public_links.rate_limit_exempt) skip it, see routes/public.js.
+const publicRoutes = require('./routes/public');
 const publicLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 30,                    // 30 views per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => publicRoutes.isExempt(req),
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 // Routes that reach a third party (Nominatim / Open-Meteo / OSRM / OpenRouteService).
@@ -413,7 +416,7 @@ app.use('/api', createAuditMiddleware(logger));
 // second case reads THIS file and asserts the mount below still precedes the JWT
 // gate — so a future reorder fails a test instead of 401ing every status page.
 // The raw token travels in the X-Site-Token header, never in the path (access.log).
-app.use('/api/public', publicLimiter, require('./routes/public'));
+app.use('/api/public', publicLimiter, publicRoutes);
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
