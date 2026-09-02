@@ -115,8 +115,11 @@ jobs:
         run: npm ci
         working-directory: backend
 
-      - name: Create the application role (the GRANT lines in migrations name it)
-        run: psql "$PGURL" -v ON_ERROR_STOP=1 -c "CREATE ROLE modesp_cloud LOGIN PASSWORD 'app';"
+      - name: Create the roles the migrations grant to (application + broker read-only)
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE modesp_cloud LOGIN PASSWORD 'app';" \
+            -c "CREATE ROLE modesp_mqtt_ro LOGIN PASSWORD 'ro';"
 
       - name: Apply schema.sql as the owner
         run: psql "$PGURL" -q -v ON_ERROR_STOP=1 -f backend/src/db/schema.sql
@@ -133,6 +136,11 @@ jobs:
 
       - name: Verify the application role reaches every table (infra/sql/check-grants.sql)
         run: psql "$PGURL" -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -f infra/sql/check-grants.sql
+
+      - name: The broker role keeps read access to what mosquitto-go-auth queries
+        run: |
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA public TO modesp_mqtt_ro; GRANT SELECT ON devices, tenants TO modesp_mqtt_ro;"
+          psql "$PGURL" -v ON_ERROR_STOP=1 -tA -c "SELECT bool_and(has_table_privilege('modesp_mqtt_ro', t, 'SELECT')) FROM unnest(ARRAY['devices','tenants','mqtt_bootstrap']) AS t" | grep -qx t
 
       - name: Partition helpers work for the application role
         run: |

@@ -50,6 +50,17 @@ sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev
 sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
 sudo -u postgres psql -d "$DB_NAME" -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
 
+# mosquitto-go-auth's read-only role must exist BEFORE the migrations run:
+# migration 011 grants it SELECT on mqtt_bootstrap. deploy-mqtt-auth.sh later
+# sets the password the broker actually uses (MQTT_RO_DB_PASS pre-seeds it).
+MQTT_RO_DB_PASS="${MQTT_RO_DB_PASS:-$(openssl rand -hex 16)}"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'modesp_mqtt_ro') THEN
+    CREATE USER modesp_mqtt_ro WITH PASSWORD '$MQTT_RO_DB_PASS';
+  END IF;
+END \$\$;"
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE $DB_NAME TO modesp_mqtt_ro;"
+
 echo "  → Apply schema..."
 sudo -u postgres psql -d "$DB_NAME" -f "$APP_DIR/backend/src/db/schema.sql"
 
@@ -101,6 +112,8 @@ sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME="$DB_NAME"
 echo "  → Grant application privileges..."
 sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user="$DB_USER" -v owner=postgres -d "$DB_NAME" \
   -f "$APP_DIR/infra/sql/app-grants.sql"
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d "$DB_NAME" \
+  -c "GRANT USAGE ON SCHEMA public TO modesp_mqtt_ro; GRANT SELECT ON devices, tenants TO modesp_mqtt_ro;"
 sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user="$DB_USER" -d "$DB_NAME" \
   -f "$APP_DIR/infra/sql/check-grants.sql"
 
