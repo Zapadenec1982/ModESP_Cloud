@@ -53,7 +53,13 @@ pg_as_admin() {
     PGPASSWORD="$BACKUP_DB_PASSWORD" "$@" \
       -h "${BACKUP_DB_HOST:-localhost}" -p "${BACKUP_DB_PORT:-5432}" -U "${BACKUP_DB_USER:-postgres}"
   else
-    runuser -u "$PG_OS_USER" -- "$@"
+    # env -u: EnvironmentFile=-infra/backup.env is read by systemd into this
+    # unit's environment, and a libpq variable left there by an older, TCP-based
+    # backup script (PGHOST=localhost) makes psql open a TCP connection instead
+    # of the socket — peer auth never applies and the dump dies on
+    # "password authentication failed for user postgres". Scrub the connection
+    # variables so this branch always means "postgres over the local socket".
+    runuser -u "$PG_OS_USER" -- env -u PGHOST -u PGPORT -u PGUSER -u PGPASSWORD "$@"
   fi
 }
 
