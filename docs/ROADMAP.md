@@ -264,22 +264,22 @@ Trade points as first-class objects — and everything a service organisation ac
 
 ## Competitive Position
 
-### Unique Advantages
+### Positioning (shipped features only)
 
-| Advantage | Details | Closest Competitor |
-|-----------|---------|-------------------|
-| Deep edge integration | 48 state + 60 command keys, direct control | Axiom (read-only) |
-| Fleet OTA with rollback | Board-type validation, batch rollout, auto-pause | Monnit (basic OTA) |
-| Zero-touch auto-discovery | Pending → assign → auto-reconnect | None |
-| Per-device **and** per-site RBAC | user_devices M:N plus per-site grants, access is the union of both | Competitors offer per-site only |
-| M:N multi-tenant users | Technician serves multiple customers | None |
-| Self-hosted | Full data control, ~$20/mo on VPS | Monnit Enterprise (expensive) |
-| HACCP Export | CSV + PDF with Cyrillic, regulatory-ready | SmartSense, Monnit |
-| Energy Monitoring | Estimated kWh from power profiles, CT clamp ready | Axiom, KLATU, SmartSense |
-| Geo analytics drill-down | Country → region → city → site with alarms, uptime, kWh and service visits | Axiom (site list only) |
-| Outdoor weather overlay | Outdoor temperature as a second series on the telemetry chart, per site | None |
-| Public customer status link | Read-only per-site page, hashed token, mandatory expiry, revocable | SmartSense (account required) |
-| Service round planner | TSP-optimised visiting order + phone hand-off, degrades without a routing server | None |
+Compared against the two families a refrigeration service contractor actually evaluates: the controller vendor's own cloud (CAREL boss/tERA, Danfoss Alsense, Copeland/Dixell XWEB, Eliwell TelevisGo) and sensor-overlay SaaS (SmartSense, Efento, GlacierGrid, local integrators).
+
+| Capability | OEM controller clouds | Sensor overlays | ModESP Cloud today |
+|---|---|---|---|
+| Data source | Controller data via a per-site supervisor box (USD 600–3,900) | Air temperature from add-on sensors | 49 controller state keys + 61 command keys, no supervisor box |
+| Pricing | Quote-only, via distributors | Published per-sensor/site prices | Published UAH/EUR price list (see docs/BUSINESS_ANALYSIS_SAAS_UA.md §5) |
+| Service-company model | Per-customer accounts | Per-customer accounts | One technician login across many customer tenants (M:N), per-device **and** per-site grants |
+| Fleet OTA | Vendor-managed | n/a | Batch rollouts with board-type validation and auto-pause; image rollback happens on the device, cloud-side "deploy previous version" is planned (plan epic 2.8) |
+| Device onboarding | Installer-configured | App pairing | Auto-discovery: pending → assign → auto-reconnect; claim codes planned (epic 1.7) |
+| HACCP records | Included | Included, long retention | Per-device CSV/PDF for up to 31 days; inspection-grade localised report and 13+ month retention planned (epic 1.9) |
+| Energy | Metered on some models | Rarely | Estimated kWh from power profiles, CT-clamp key reserved |
+| Geo / field service | Site list | Site list | Sites, clustered map, alarm heatmap, geo drill-down, nearest technicians, service-round planner, outdoor weather overlay |
+| Customer-facing status | Account required | Account required | Read-only per-site public link (hashed token, mandatory expiry, revocable) |
+| Self-hosting | No | No | Possible under a separate commercial licence only (see COMMERCIAL-LICENSE.md); the public repository is PolyForm Noncommercial |
 
 ### Feature Gaps (upcoming)
 

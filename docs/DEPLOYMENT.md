@@ -71,8 +71,9 @@ Ubuntu 24.04
 │   │   └── ...
 │   ├── scripts/
 │   │   ├── grant-all-devices.js     # backward compat RBAC migration
-│   │   ├── cleanup-telemetry.js     # retention: видаляє партиції >90 днів
-│   │   ├── cleanup-weather.js       # retention: weather_observations >395 днів
+│   │   ├── cleanup-telemetry.js     # retention: видаляє партиції >TELEMETRY_RETENTION_DAYS
+│   │   ├── cleanup-weather.js       # retention: weather_observations >WEATHER_RETENTION_DAYS
+│   │   ├── cleanup-aux.js           # retention: events, notification_log, alarms, refresh_tokens
 │   │   └── provision-mqtt-creds.js  # генерує MQTT credentials для існуючих пристроїв
 │   ├── .env                         # конфігурація (не в git!)
 │   └── package.json
@@ -81,15 +82,77 @@ Ubuntu 24.04
 │   ├── .env                         # VITE_MAP_TILE_URL / VITE_MAP_ATTRIBUTION (не в git!)
 │   └── package.json
 └── infra/
+    ├── setup.sh                     # первинне налаштування VPS
+    ├── backup.env.example           # шаблон → infra/backup.env (не в git!)
+    ├── scripts/
+    │   ├── backup-postgres.sh       # щоденний архів: дамп БД + конфіги + прошивки
+    │   ├── alert-telegram.sh        # алерт у Telegram про збій юніта (modesp-alert@)
+    │   └── tls-deploy-hook.sh       # certbot deploy hook: сертифікат → Mosquitto, reload
+    ├── journald/modesp.conf         # ліміти журналу (500 MB / 30 днів)
     ├── systemd/
     │   ├── modesp-backend.service
-    │   ├── modesp-telemetry-partition.service
-    │   └── modesp-telemetry-partition.timer
-    ├── nginx/
+    │   ├── modesp-alert@.service                        # OnFailure= кожного юніта нижче
+    │   ├── modesp-backup.service / .timer               # 02:00 щодня
+    │   ├── modesp-telemetry-partition.service / .timer  # 25-го, 03:00
+    │   └── modesp-retention-cleanup.service / .timer    # 03:30 щодня
+    ├── nginx/                       # modesp.conf + ratelimit.conf
+    ├── sql/                         # app-grants.sql, check-grants.sql (права ролі застосунку)
+    ├── deploy.sh                    # init / release / rollback / status
     └── mosquitto/
 ```
 
+### Розкладка релізів
+
+Після `deploy.sh init --yes` шлях `/opt/modesp-cloud` стає символьним посиланням на поточний
+реліз, а секрети живуть окремо — жоден юніт, скрипт чи конфіг nginx не змінює шляхів:
+
+```
+/opt/modesp-releases/
+├── releases/
+│   ├── checkout-20260902120000/     # колишній git-checkout (перший «реліз»)
+│   └── v1.0.0/                      # розпакований modesp-cloud-v1.0.0.tar.gz + node_modules
+├── shared/
+│   ├── backend.env                  # → releases/*/backend/.env (символьні посилання)
+│   ├── firmware/                    # → releases/*/backend/firmware
+│   ├── backup.env                   # → releases/*/infra/backup.env
+│   └── webui.env                    # → releases/*/webui/.env (лише для локальної збірки)
+├── downloads/                       # завантажені архіви і .sha256
+└── .previous                        # шлях попереднього релізу для rollback
+/opt/modesp-cloud -> /opt/modesp-releases/releases/v1.0.0
+/var/www/modesp/webui -> /opt/modesp-cloud/webui/dist
+```
+
 ---
+
+## Адреси на домені
+
+| Шлях | Що | Звідки |
+|---|---|---|
+| `/` | Лендінг: продукт, сегменти, ціни з `plan_limits`, калькулятор, форма пілота | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
+| `/partners.html` | Партнерська програма | `landing/` |
+| `/legal/offer`, `/legal/privacy`, `/legal/service`, `/legal/dpa`, `/legal/partner` | Юридичні документи | `landing/legal/*.html`, генерує `infra/scripts/build-legal.js` з `docs/legal/*.md` |
+| `/cloud/` | WebUI (Svelte SPA, hash-маршрути `#/…`) | `webui/dist` → `/var/www/modesp/webui`; `vite.config.js` `base: '/cloud/'` |
+| `/app/` | Мобільний PWA (окремий проєкт ModESP_PWA) | `/var/www/modesp/pwa` |
+| `/api/`, `/ws` | Бекенд | proxy на `127.0.0.1:3000` |
+
+Старі посилання на застосунок (`https://modesp.com.ua/#/…`) далі працюють: `landing/app.js`
+бачить hash-маршрут і перенаправляє на `/cloud/#/…`. У `backend/.env` `EMAIL_APP_URL` має
+вказувати на застосунок (`https://modesp.com.ua/cloud`), а `PUBLIC_BASE_URL` — на корінь
+(`https://modesp.com.ua`; використовується в URL перевірки звіту HACCP). `landing/config.js`
+задає адреси демо-точки, демо-кабінету, статус-сторінки і контактну пошту; форма пілота
+пише в `pilot_requests` і надсилає лист на `PILOT_REQUEST_EMAIL`.
+
+---
+
+## Гео-сервіси в продакшені
+
+З `NODE_ENV=production` бекенд не стартує, поки в `.env` лишаються публічний Nominatim, демо
+OSRM, Open-Meteo без ключа або тайли OSM у `MAP_TILE_HOSTS` (`src/lib/licensing-check.js`);
+`ALLOW_NONCOMMERCIAL_GEO=true` — свідомий обхід для демо-сервера. Self-hosted OSRM і
+Nominatim на витягу України — `infra/geo/` (Docker, README там же); погода — платний ключ
+`WEATHER_API_KEY`; тайли — платний провайдер у `webui/.env`, `MAP_TILE_HOSTS` і обох CSP
+`modesp.conf`. Погода і планувальник об'їзду — функції планів `pro`/`enterprise`/`partner`
+(міграція 031), інші плани отримують `402 plan_feature`.
 
 ## Ліцензування третіх сторін — прочитати ДО продакшну
 
@@ -313,18 +376,18 @@ chmod 600 /etc/mosquitto/certs/server.key
 
 #### Auto-renewal hook
 
+Хук лежить у репозиторії — `infra/scripts/tls-deploy-hook.sh`. Він копіює сертифікат у
+`/etc/mosquitto/certs`, робить `systemctl reload mosquitto` (Mosquitto 2.x перечитує сертифікати за
+SIGHUP, сесії пристроїв не рвуться), **перевіряє через `openssl s_client`, що брокер справді віддає
+новий сертифікат**, і лише якщо ні — робить `restart`. Потім `reload nginx`.
+
 ```bash
-cat > /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh << 'EOF'
-#!/bin/bash
-# Mosquitto TLS certs
-cp /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem /etc/mosquitto/certs/server.crt
-cp /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem /etc/mosquitto/certs/server.key
-chown mosquitto:mosquitto /etc/mosquitto/certs/*
-systemctl restart mosquitto
-# Nginx picks up new certs automatically, just reload
-systemctl reload nginx
-EOF
+cp /opt/modesp-cloud/infra/scripts/tls-deploy-hook.sh /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+
+# Перший запуск вручну (і перевірка після кожного оновлення хука)
+RENEWED_LINEAGE=/etc/letsencrypt/live/modesp.com.ua /etc/letsencrypt/renewal-hooks/deploy/modesp-tls.sh
+certbot renew --dry-run
 ```
 
 ESP32 firmware автоматично включає TLS при порті 8883 (`esp_crt_bundle_attach` — вбудований CA bundle включає Let's Encrypt).
@@ -410,9 +473,8 @@ DB_NAME=modesp_cloud
 DB_USER=modesp_cloud
 DB_PASS=STRONG_PASSWORD_HERE
 
-# MQTT
-MQTT_HOST=localhost
-MQTT_PORT=1883
+# MQTT (бекенд читає лише MQTT_URL; MQTT_HOST/MQTT_PORT не використовуються)
+MQTT_URL=mqtt://localhost:1883
 MQTT_USER=modesp_backend
 MQTT_PASS=MQTT_BACKEND_PASSWORD
 
@@ -428,8 +490,8 @@ AUTH_ENABLED=true
 MQTT_BOOTSTRAP_PASSWORD=shared_bootstrap_password_here
 MQTT_PUBLIC_HOST=modesp.com.ua
 
-# Firebase FCM (опціонально)
-FCM_SERVER_KEY=your_fcm_server_key
+# Firebase FCM (опціонально) — шлях до JSON сервісного акаунта, не server key
+FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-cloud/backend/fcm-service-account.json
 
 # Telegram (опціонально)
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -477,7 +539,7 @@ ORS_TIMEOUT_MS=10000
 | `GEOCODER_RATE_LIMIT_MS` | не опускати нижче 1100 для публічного Nominatim — це його ліміт 1 запит/с |
 | `GEOCODER_BULK_ENABLED` | вмикати **тільки** для self-hosted Nominatim: політика OSM забороняє систематичні масові запити незалежно від темпу |
 | `WEATHER_PROVIDER=` | погода вимкнена: віджети погоди і накладення зовнішньої температури ховаються, таймзони точок задаються вручну |
-| `WEATHER_RETENTION_DAYS` | глибина `weather_observations`; чистить cron-задача `cleanup-weather.js` (нижче) |
+| `WEATHER_RETENTION_DAYS` | глибина `weather_observations`; чистить таймер `modesp-retention-cleanup.timer` (розділ «Таймери systemd») |
 | `OSRM_URL=` | планувальник обʼїзду лишається робочим: порядок рахується по прямій, deep-link Google Maps працює завжди |
 | `ORS_API_KEY=` | ізохрони стають наближеними кільцями і **видимо позначаються** такими в UI. Гейт стоїть саме на ключі, не на `ORS_URL` |
 
@@ -485,16 +547,20 @@ ORS_TIMEOUT_MS=10000
 
 ```bash
 cd /opt/modesp-cloud/backend
-node src/db/seed-admin.js
+node src/db/seed-admin.js --email admin@example.com --password '<мінімум 15 символів>' --role superadmin
 ```
 
 ### 5. systemd юніт для Node.js
 
 ```bash
-# Скопіювати юніт файли з репо
-cp infra/systemd/modesp-backend.service /etc/systemd/system/
-cp infra/systemd/modesp-telemetry-partition.service /etc/systemd/system/
-cp infra/systemd/modesp-telemetry-partition.timer /etc/systemd/system/
+# Скопіювати всі юніти з репо (бекенд + 4 таймери з їхніми сервісами)
+cp infra/systemd/modesp-*.service /etc/systemd/system/
+cp infra/systemd/modesp-*.timer   /etc/systemd/system/
+
+# Директорія архівів і конфіг бекапу (секрети — лише root)
+mkdir -p /var/backups/modesp && chmod 750 /var/backups/modesp && chgrp modesp /var/backups/modesp
+cp infra/backup.env.example infra/backup.env && chmod 600 infra/backup.env
+#   → відредагувати infra/backup.env: BACKUP_PASSPHRASE, BACKUP_REMOTE
 
 systemctl daemon-reload
 
@@ -502,10 +568,24 @@ systemctl daemon-reload
 systemctl enable modesp-backend
 systemctl start modesp-backend
 
-# Таймер партицій телеметрії — створює партицію на 2 місяці вперед, 25-го числа
-systemctl enable modesp-telemetry-partition.timer
-systemctl start modesp-telemetry-partition.timer
+# Таймери: бекап, партиції (+6 місяців), ретенція (погодинний архів, партиції, рядки)
+for t in modesp-backup modesp-telemetry-partition modesp-retention-cleanup; do
+  systemctl enable --now "$t.timer"
+done
+
+# Партиції на пів року вперед одразу (таймер спрацює лише 25-го)
+sudo -u modesp node /opt/modesp-cloud/backend/src/scripts/ensure-partitions.js
+
+# Перший бекап вручну і перевірка маркера
+systemctl start modesp-backup.service && cat /var/backups/modesp/last-success
+systemctl list-timers 'modesp-*'
 ```
+
+Усі таймери, крім бекапу, працюють від користувача `modesp` з обліковими даними `DB_USER` із
+`backend/.env`: функції `create_telemetry_partition()` і `drop_telemetry_partition()` з міграції 023
+виконуються з правами власника схеми (`SECURITY DEFINER`), тому доступ `postgres` їм не потрібен.
+Бекап працює від root (читає `/etc/letsencrypt`, `/etc/mosquitto`, `backend/.env`), а `pg_dump`
+запускає від ОС-користувача `postgres` через `runuser` — пароль БД ніде не зберігається.
 
 Зміст `/etc/systemd/system/modesp-backend.service`:
 
@@ -514,7 +594,12 @@ systemctl start modesp-telemetry-partition.timer
 Description=ModESP Cloud Backend
 Documentation=https://github.com/Zapadenec1982/ModESP_Cloud
 After=network.target postgresql.service mosquitto.service
-Requires=postgresql.service mosquitto.service
+# Wants, not Requires: a broker or database restart (package upgrade, certbot
+# hook) must not stop the backend — its MQTT client and pg pool reconnect on
+# their own, and with Requires= systemd would stop the backend and never start
+# it again.
+Wants=postgresql.service mosquitto.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=simple
@@ -586,113 +671,292 @@ nginx -t && systemctl reload nginx
 
 ## Оновлення (deploy update)
 
-Стандартна процедура після `git push` з локальної машини:
+Продакшен оновлюється **релізами**, не `git pull`: тег `vX.Y.Z` → GitHub Actions
+(`.github/workflows/release.yml`) проганяє CI і збирає `modesp-cloud-vX.Y.Z.tar.gz` з `.sha256`
+→ `infra/deploy.sh release vX.Y.Z` встановлює його на сервері.
+
+### Один раз: перехід із git-checkout на розкладку релізів
 
 ```bash
-cd /opt/modesp-cloud
-
-# 1. Підтягнути код
-git pull origin main
-
-# 2. Застосувати нові міграції (якщо є)
-#    Перевірити які міграції вже застосовані і запустити нові
-sudo -u postgres psql -d modesp_cloud \
-  -f backend/src/db/migrations/NNN_new_migration.sql
-
-# 3. Оновити залежності бекенду (якщо змінився package.json)
-cd backend
-npm install --production
-
-# 4. Перезібрати WebUI (якщо змінився webui/)
-cd ../webui
-npm install
-npm run build
-
-# 5. Перезапустити бекенд
-sudo systemctl restart modesp-backend
-
-# 6. Перевірити
-sudo systemctl status modesp-backend
-curl -s http://localhost:3000/api/health | jq .
+sudo /opt/modesp-cloud/infra/deploy.sh init          # показує, що буде зроблено, нічого не змінює
+sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекенд, переносить, запускає, чекає /api/health
 ```
+
+`init` переносить checkout у `/opt/modesp-releases/releases/checkout-<час>`, виносить
+`backend/.env`, `backend/firmware`, `infra/backup.env`, `webui/.env` у `shared/`, ставить
+символьні посилання назад, робить `/opt/modesp-cloud` посиланням, перевстановлює юніти
+(`ReadWritePaths` тепер включає `shared/`) і посилання nginx. Якщо `FIRMWARE_STORAGE_PATH`
+у `.env` абсолютний — каталог прошивок не чіпається.
+
+### Реліз
+
+```bash
+sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0
+# без доступу сервера до GitHub — архів, скопійований через scp:
+sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0 --archive /tmp/modesp-cloud-v1.0.0.tar.gz
+```
+
+Що робить скрипт, по кроках:
+1. завантажує архів і `.sha256` з GitHub Releases (або бере `--archive`), перевіряє контрольну суму;
+2. розпаковує в `releases/<version>`, `npm ci --omit=dev` від `modesp`;
+3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`);
+4. `migrate.js --dry-run`, потім `migrate.js` як `postgres` через сокет, далі
+   `infra/sql/app-grants.sql` і `infra/sql/check-grants.sql` — роль застосунку гарантовано
+   бачить кожну нову таблицю (`--no-migrate` пропускає цей крок);
+5. записує попередній реліз у `.previous`, атомарно перемикає `/opt/modesp-cloud`,
+   перевстановлює юніти, `systemctl restart modesp-backend`;
+6. **health-гейт**: до 60 с чекає `"status":"ok"` від `/api/health`; якщо не дочекався —
+   сам повертає посилання на попередній реліз, рестартує і завершується з помилкою;
+7. `nginx -t && systemctl reload nginx`, залишає 5 останніх релізів.
+
+### Відкат
+
+```bash
+sudo /opt/modesp-cloud/infra/deploy.sh rollback     # перемикає на .previous, рестарт, health-гейт
+sudo /opt/modesp-cloud/infra/deploy.sh status       # поточний реліз, попередній, список, health
+```
+
+Міграції **не** відкочуються: кожна міграція в репозиторії сумісна з попередньою версією коду
+(додає таблиці й колонки, не видаляє), тому попередній реліз працює на новій схемі. Якщо
+міграція це порушує — вона має окремий runbook.
+
+### Ручний шлях (dev-сервер або до `init`)
+
+```bash
+cd /opt/modesp-cloud && git pull origin main
+sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
+  node backend/src/scripts/migrate.js --dry-run    # потім без --dry-run
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=postgres -d modesp_cloud -f infra/sql/app-grants.sql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -d modesp_cloud -f infra/sql/check-grants.sql
+(cd backend && npm ci --omit=dev) && (cd webui && npm ci && npm run build)
+sudo systemctl restart modesp-backend && curl -s http://localhost:3000/api/health | jq .
+```
+
+Перший запуск `migrate.js` на БД, яку мігрували вручну: спочатку `--baseline`, щоб записати вже
+застосовані файли без виконання, і лише потім звичайний запуск.
 
 ---
 
-## Cron задачі
+## Релізи, staging і демо
+
+### Реліз із тегу
+
+1. Підняти версію в `backend/package.json` і `webui/package.json` (разом із `package-lock.json`),
+   додати розділ `## [X.Y.Z] — дата` у `CHANGELOG.md` — workflow відмовляється публікувати,
+   якщо тег не збігається з версією або розділу немає.
+2. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. `Release` у GitHub Actions: CI (тести + міграції і GRANT-и на порожній БД, `ci.yml` як
+   `workflow_call`) → `infra/scripts/build-release.sh` → GitHub Release з архівом, `.sha256`
+   і текстом із CHANGELOG. Той самий скрипт працює локально:
+   `infra/scripts/build-release.sh v1.0.0 release/`.
+
+Архів містить лише runtime: `backend/{src,scripts,package*.json,.env.example}` (без тестів і
+`node_modules`), `webui/dist`, `infra/`, `docs/`, ліцензії, `VERSION`, `RELEASE.json`.
+
+### Staging (`demo.modesp.com.ua`)
+
+Другий VPS з тим самим `setup.sh` (`DOMAIN=demo.modesp.com.ua`), власною БД і брокером, потім
+`deploy.sh init --yes`. Кожен зелений CI на `main` встановлюється туди автоматично
+(`.github/workflows/deploy-staging.yml`, версія `main-<sha>`), коли в репозиторії задано:
+
+| Де | Ім'я | Значення |
+|---|---|---|
+| Settings → Variables | `STAGING_HOST` | адреса сервера (порожньо = деплой вимкнено) |
+| Settings → Variables | `STAGING_USER` | користувач SSH, типово `deploy` |
+| Settings → Variables | `STAGING_KNOWN_HOSTS` | рядок `ssh-keyscan` сервера (інакше — довіра при першому з'єднанні) |
+| Settings → Secrets | `STAGING_SSH_KEY` | приватний ключ користувача `deploy` |
+
+На сервері: `useradd -m deploy`, публічний ключ у `~deploy/.ssh/authorized_keys` і рядок sudoers
+`deploy ALL=(root) NOPASSWD: /opt/modesp-cloud/infra/deploy.sh`.
+
+Self-hosted OSRM/Nominatim з епіка 1.2 живуть на цьому ж сервері.
+
+### Демо-дані: лише на staging
+
+- На staging: `seed-demo.js` (точки, техніки, а також viewer `demo@modesp.com.ua` з доступом
+  до всіх точок і showcase-посилання на статус першої точки — `site_public_links.rate_limit_exempt`,
+  без ліміту переглядів, токен друкується один раз), `provision-demo-fleet.js`,
+  `link-devices-to-sites.js`. Обидва скрипти провізії відмовляються писати з
+  `NODE_ENV=production` без `--allow-production`.
+- На продакшені після переносу:
+  ```bash
+  cd /opt/modesp-cloud/backend
+  sudo -u modesp node src/scripts/purge-demo.js                 # dry run: кого і що видалить
+  sudo -u modesp node src/scripts/purge-demo.js --keep showcase --apply
+  sudo systemctl restart modesp-backend                         # реєстри MQTT забувають пристрої
+  ```
+  Демо-організація — та, що має пристрої з прошивкою `*-emu` або з `demo-data/emulator-fleet*.csv`;
+  `--tenant <slug>` задає список явно, `--keep <slug>` лишає showcase-організацію. Пристрої
+  видаляються разом із телеметрією та архівом (не переносяться в `__system__`).
+- Критерій: `SELECT count(*) FROM devices WHERE firmware_version LIKE '%-emu%'` на проді = 0.
+
+---
+
+## Таймери systemd
+
+Cron не використовується. Усі періодичні задачі — таймери systemd з `Persistent=true`
+(пропущений запуск виконується після рестарту сервера), логи в journald.
+
+| Таймер | Розклад | Сервіс виконує | Від кого |
+|---|---|---|---|
+| `modesp-backup.timer` | щодня 02:00 | `infra/scripts/backup-postgres.sh` — архів `modesp_backup_<UTC>.tar[.gpg]` у `/var/backups/modesp`, off-site копія, маркер `last-success` | root (`pg_dump` через `runuser -u postgres`) |
+| `modesp-telemetry-partition.timer` | 25-го, 03:00 | `src/scripts/ensure-partitions.js` — партиції телеметрії на `PARTITION_MONTHS_AHEAD` (6) місяців уперед | modesp |
+| `modesp-retention-cleanup.timer` | щодня 03:30 | `scripts/cleanup-telemetry.js --apply` (згортає сирі вимірювання за останні `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`, видаляє сирі рядки старші за `plan_limits.retention_days` організації, скидає партиції старші за найдовшу ретенцію планів, чистить архів старший за `HOURLY_RETENTION_DAYS` (1095)), потім `cleanup-weather.js --apply` і `cleanup-aux.js --apply` — `weather_observations`, `events`, `notification_log`, неактивні `alarms`, протерміновані `refresh_tokens` | modesp |
+
+Ретенція сирої телеметрії береться з плану організації (`plan_limits.retention_days`);
+`TELEMETRY_RETENTION_DAYS` — лише запасне значення для організацій без плану. Інші значення
+задаються в `backend/.env` (блок «Data retention» у `.env.example`); `0` вимикає окремий sweep.
+`audit_log` і `report_exports` незмінні й не чистяться. `drop_telemetry_partition()` відмовляється
+видаляти партицію, що закрилася менш ніж 7 днів тому, незалежно від налаштувань.
+
+Після першого розгортання епіка 1.9 архів треба наповнити історією один раз:
+`sudo -u modesp node backend/scripts/cleanup-telemetry.js --apply --backfill-days 400`.
 
 ```bash
-# Редагувати crontab для користувача modesp
-sudo crontab -u modesp -e
+# Стан і наступні запуски
+systemctl list-timers 'modesp-*'
+
+# Запустити задачу зараз і подивитися лог
+systemctl start modesp-retention-cleanup.service
+journalctl -u modesp-retention-cleanup -n 50 --no-pager
+
+# Dry-run будь-якого скрипта (без --apply нічого не видаляє)
+sudo -u modesp node /opt/modesp-cloud/backend/scripts/cleanup-telemetry.js
+sudo -u modesp node /opt/modesp-cloud/backend/scripts/cleanup-aux.js
 ```
-
-```cron
-# Очистка старих партицій телеметрії (>90 днів), щодня о 3:00
-0 3 * * * cd /opt/modesp-cloud/backend && /usr/bin/node scripts/cleanup-telemetry.js >> /var/log/modesp-cleanup.log 2>&1
-
-# Очистка старих спостережень погоди (>WEATHER_RETENTION_DAYS, дефолт 395), щодня о 3:20
-20 3 * * * cd /opt/modesp-cloud/backend && /usr/bin/node scripts/cleanup-weather.js >> /var/log/modesp-cleanup.log 2>&1
-```
-
-**Примітка:** партиції на наступні місяці створюються автоматично через systemd timer `modesp-telemetry-partition.timer` (25-го числа кожного місяця о 3:00).
 
 ---
 
 ## Моніторинг
 
+Три шари: зовнішній проб (дізнатися про збій раніше за клієнта), алерти про збої юнітів у
+Telegram (від самого сервера) і розширений `/api/health` для діагностики.
+
+### 1. Зовнішній проб (UptimeRobot / Better Stack, безкоштовний рівень)
+
+| Монітор | Налаштування | Що ловить |
+|---|---|---|
+| HTTPS keyword | `https://modesp.com.ua/api/health`, інтервал 1 хв, alert якщо **немає** `"status":"ok"` | nginx, бекенд, БД, з'єднання бекенду з брокером (відповідь 503 при `degraded`) |
+| HTTPS keyword | той самий URL, alert якщо **немає** `"platform":"ok"` | бекап старший за 48 год, партиції телеметрії закінчуються, диск < 10 % |
+| Port | `modesp.com.ua:8883` TCP | брокер недоступний для контролерів |
+| SSL expiry | у налаштуваннях HTTPS-монітора, попередження за 14 днів | зламане автопродовження Let's Encrypt |
+
+Сповіщення пробу — в окремий Telegram-чат «platform-alerts» (інтеграція Telegram є в обох сервісах)
+і на email. Публічну статус-сторінку монітора можна показати в футері WebUI:
+`VITE_STATUS_PAGE_URL` у `webui/.env` (потрібен `npm run build`).
+
+### 2. Алерти про збої юнітів (`modesp-alert@.service`)
+
+Кожен юніт ModESP має `OnFailure=modesp-alert@%n.service`: бекенд (crash loop), бекап, партиції,
+обидва очищення. Юніт викликає `infra/scripts/alert-telegram.sh`, який надсилає назву юніта, хост і
+останні 15 рядків його журналу в Telegram-групу.
+
 ```bash
-# Перевірка статусу всіх сервісів
-systemctl status modesp-backend mosquitto nginx postgresql
+# backend/.env: бот той самий, що й для аварій; додайте його в групу platform-alerts
+PLATFORM_ALERT_CHAT_ID=-1001234567890
 
-# Логи бекенду (live)
-journalctl -u modesp-backend -f
+# Перевірка каналу (текст надсилається як є)
+systemctl start 'modesp-alert@smoke-test.service'
+journalctl -u 'modesp-alert@smoke-test' -n 5 --no-pager
 
-# Логи бекенду (останні 100 рядків)
-journalctl -u modesp-backend --no-pager -n 100
-
-# Логи Mosquitto
-tail -f /var/log/mosquitto/mosquitto.log
-
-# Кількість з'єднань PostgreSQL
-sudo -u postgres psql -d modesp_cloud \
-  -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
-
-# Статус таймерів
-systemctl list-timers modesp-*
+# Імітація збою: зупинити брокер → бекенд лишається працювати (Wants=), /api/health → 503 → проб
+systemctl stop mosquitto && sleep 90 && curl -s localhost:3000/api/health; systemctl start mosquitto
 ```
 
-### Healthcheck endpoint
+Без `PLATFORM_ALERT_CHAT_ID` скрипт пише попередження в журнал і виходить з кодом 0 — збій
+основного юніта не маскується.
+
+### 3. Healthcheck
 
 ```
-GET /api/health
+GET /api/health            # публічний, для пробу
+GET /api/health/details    # лише superadmin (JWT), цифри
 ```
+
 ```json
 {
-  "status": "ok",
-  "db": "ok",
-  "mqtt": "ok",
-  "uptime": 86400
+  "status": "ok",            "db": "ok",  "mqtt": "ok",  "uptime": 86400,
+  "platform": "ok",
+  "checks": { "backup": "ok", "partitions": "ok", "disk": "ok" }
 }
 ```
+
+| Поле | `ok` | інакше |
+|---|---|---|
+| `status` | БД відповідає і бекенд під'єднаний до брокера | `degraded`, HTTP 503 |
+| `checks.backup` | маркер `/var/backups/modesp/last-success` молодший за `BACKUP_MAX_AGE_HOURS` (48) | `stale`; `unknown` — маркера ще нема |
+| `checks.partitions` | є партиція телеметрії щонайменше на наступний місяць | `low` |
+| `checks.disk` | на файловій системі сховища прошивок вільно ≥ `DISK_MIN_FREE_PCT` (10 %) | `low` |
+| `platform` | жодна перевірка не `stale`/`low` | `attention` (HTTP лишається 200) |
+
+`/api/health/details` додає версію, пам'ять, `mqtt.broker.clients_connected`
+(`$SYS/broker/clients/connected`), вік і розмір останнього архіву, кількість партицій і місяців
+запасу, вільне місце, статистику доставки по каналах (`sent`/`failed`/`last_error`) і стан
+Telegram-бота (`getMe`, останній polling error).
+
+```bash
+TOKEN=$(curl -s -X POST localhost:3000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.com","password":"..."}' | jq -r .data.accessToken)
+curl -s localhost:3000/api/health/details -H "Authorization: Bearer $TOKEN" | jq .data
+```
+
+### 4. Журнали і сервіси
+
+```bash
+systemctl status modesp-backend mosquitto nginx postgresql
+journalctl -u modesp-backend -f                 # live
+journalctl -u modesp-backend --no-pager -n 100
+journalctl -u modesp-backup -u modesp-telemetry-partition -u modesp-retention-cleanup --since -7d
+tail -f /var/log/mosquitto/mosquitto.log
+sudo -u postgres psql -d modesp_cloud -c "SELECT count(*) FROM pg_stat_activity WHERE datname = 'modesp_cloud';"
+systemctl list-timers 'modesp-*'
+```
+
+Журнал обмежений drop-in-ом `infra/journald/modesp.conf` (`SystemMaxUse=500M`,
+`MaxRetentionSec=30day`; ставить `setup.sh`). Пакетні повідомлення бекенду («Telemetry sampled»,
+«Batch state write», «StateMap sweep», «Backfill ingested») пишуться на рівні `debug`, тож у
+продакшні (`info`) журнал містить лише події і помилки.
 
 ---
 
 ## Backup
 
+Щоденний архів робить `modesp-backup.timer` (02:00) скриптом `infra/scripts/backup-postgres.sh`.
+Один файл `modesp_backup_<UTC-мітка>.tar` (або `.tar.gpg`) містить:
+
+| Член архіву | Вміст |
+|---|---|
+| `manifest.txt` | хост, коміт, розмір БД, версія `pg_dump`, перелік файлів, sha256 кожного члена |
+| `globals.sql` | `pg_dumpall --globals-only`: ролі `modesp_cloud`, `modesp_mqtt_ro` з паролями |
+| `db.dump` | `pg_dump --format=custom --no-owner` бази `modesp_cloud` (стиснений, для `pg_restore`) |
+| `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto`, `/etc/letsencrypt`, конфіг nginx, юніти systemd, `infra/backup.env` |
+
+Налаштування — `infra/backup.env` (шаблон `infra/backup.env.example`, лише root, `chmod 600`):
+
+| Змінна | Призначення | Дефолт |
+|---|---|---|
+| `BACKUP_PASSPHRASE` | симетричне шифрування архіву GPG AES-256; **зберігати поза сервером** | вимкнено |
+| `BACKUP_REMOTE` | rsync-over-ssh призначення off-site копії (наприклад, Hetzner Storage Box) | вимкнено |
+| `BACKUP_SSH_OPTS` | `-o` опції ssh/sftp: порт, ключ | — |
+| `BACKUP_RETENTION_DAYS` / `BACKUP_REMOTE_RETENTION_DAYS` | скільки днів зберігати локально / off-site | 14 / 30 |
+| `BACKUP_DB_HOST/USER/PASSWORD` | лише для БД на іншому хості; за замовчуванням `runuser -u postgres` через сокет | — |
+
 ```bash
-# Щоденний backup PostgreSQL (cron для root)
-sudo crontab -e
+# Перший запуск і перевірка
+systemctl start modesp-backup.service
+journalctl -u modesp-backup -n 20 --no-pager
+cat /var/backups/modesp/last-success        # timestamp, archive, archive_bytes, db_size_bytes, offsite
+
+# Переконатися, що архів читається (без відновлення)
+tar -xOf /var/backups/modesp/modesp_backup_*.tar manifest.txt | head
+tar -xOf /var/backups/modesp/modesp_backup_*.tar db.dump | pg_restore --list | head
+
+# Off-site: перед першим запуском прийняти host key від root
+rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-storagebox.de:modesp/
 ```
 
-```cron
-# Backup БД щодня о 2:00, зберігати 30 днів
-0 2 * * * pg_dump -U postgres modesp_cloud | gzip > /backup/modesp_$(date +\%Y\%m\%d).sql.gz
-30 2 * * * find /backup -name "modesp_*.sql.gz" -mtime +30 -delete
-```
-
-```bash
-# Створити директорію для бекапів
-mkdir -p /backup
-```
+Відновлення на чистому сервері, разом із заміряними RTO/RPO і датою останньої репетиції —
+`docs/runbooks/restore.md`. Ціль: RPO ≤ 24 год (добовий архів), RTO ≤ 4 год.
 
 ---
 
@@ -703,4 +967,12 @@ mkdir -p /backup
 - 2026-03-09 — Phase 4 (MQTT Auth): mosquitto-go-auth setup (build, PG read-only user, config), міграція 008, provision-mqtt-creds.js script, MQTT_BOOTSTRAP_PASSWORD/MQTT_PUBLIC_HOST env vars.
 - 2026-03-09 — TLS: Let's Encrypt cert setup, auto-renewal hook, cert path fixes (fullchain.pem, no cafile), superquery/aclquery SQL fixes from production deploy.
 - 2026-03-09 — HTTPS: Nginx section rewritten with real production setup (symlink, rate limit zone, WebUI dist symlink), renewal hook includes nginx reload.
+- 2026-09-02 — `setup.sh` створює роль `modesp_mqtt_ro` ще до `migrate.js` (міграція 011 видає їй GRANT; раніше чиста інсталяція падала на цьому кроці), `MQTT_RO_DB_PASS` — необов'язковий пароль наперед; CI-джоб міграцій створює обидві ролі.
+- 2026-09-02 — Гео-ліцензування (епік 1.2): `licensing-check.js` (відмова старту в продакшені з некомерційними хостами, `ALLOW_NONCOMMERCIAL_GEO`), `infra/geo/` (OSRM + Nominatim у Docker, `prepare-osrm.sh`), `WEATHER_API_KEY` (customer host Open-Meteo), `MAP_TILE_HOSTS` для CSP helmet, міграція 031 (функції `weather`, `routing`), розділ «Гео-сервіси в продакшені».
+- 2026-09-02 — Лендінг (епік 1.11): `landing/` на `/`, WebUI переїхав на `/cloud/` (`vite.config.js` `base`, редирект старих hash-посилань), `/legal/*` з `docs/legal` через `build-legal.js`, окрема CSP для лендінгу в `modesp.conf`; міграція 030 (ціни в `plan_limits`, `pilot_requests`); `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `EMAIL_APP_URL` → `…/cloud`, нові `PUBLIC_BASE_URL`, `PILOT_REQUEST_EMAIL`; `setup.sh`/`deploy.sh` ставлять посилання `/var/www/modesp/landing`.
+- 2026-09-02 — Релізи (епік 1.10): `infra/deploy.sh` (init / release / rollback / status з health-гейтом і автоматичним відкатом), розкладка `/opt/modesp-releases` із символьним посиланням `/opt/modesp-cloud`, `infra/scripts/build-release.sh`, workflow `release.yml` (тег → GitHub Release) і `deploy-staging.yml` (main → staging), CI-джоб міграцій і GRANT-ів на порожній БД, `infra/sql/app-grants.sql` + `check-grants.sql` (використовує і `setup.sh`), розділ «Релізи, staging і демо», `purge-demo.js`, `CHANGELOG.md`, версія 1.0.0.
+- 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.
+- 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
+- 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
+- 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

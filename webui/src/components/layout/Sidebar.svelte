@@ -20,6 +20,9 @@
   export let alarmCount = 0
   export let pendingCount = 0
 
+  // Public status page of the external uptime monitor (build-time, see webui/.env.example)
+  const STATUS_PAGE_URL = import.meta.env.VITE_STATUS_PAGE_URL || ''
+
   $: navItems = [
     { section: $t('nav.sections.monitoring') },
     { path: '/',              icon: 'grid',     label: $t('nav.dashboard') },
@@ -27,6 +30,7 @@
     // Any authenticated role: GET /api/stats/geo narrows by RBAC rather than by role.
     { path: '/geo-stats',     icon: 'globe',    label: $t('nav.geo_stats') },
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
+    { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
     { section: $t('nav.sections.management') },
     // Any authenticated role: GET /api/sites narrows by RBAC rather than by role,
     // and the page hides its own write controls from a non-admin.
@@ -36,6 +40,7 @@
     { section: $t('nav.sections.admin'), admin: true },
     { path: '/tenants',       icon: 'building', label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
+    { path: '/settings',      icon: 'settings', label: $t('nav.settings'), admin: true },
     { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), superadmin: true },
   ]
 
@@ -144,6 +149,13 @@
   <!-- Footer -->
   <div class="sidebar-footer">
     <ConnectionStatus compact={$sidebarCollapsed} />
+    {#if STATUS_PAGE_URL}
+      <a class="status-link" class:compact={$sidebarCollapsed} href={STATUS_PAGE_URL}
+         target="_blank" rel="noopener" title={$t('nav.status_page')}>
+        <Icon name="activity" size={14} />
+        {#if !$sidebarCollapsed}<span class="truncate">{$t('nav.status_page')}</span>{/if}
+      </a>
+    {/if}
     <SettingsMenu compact={$sidebarCollapsed} />
 
     {#if $currentTenant}
@@ -354,6 +366,20 @@
     min-width: 18px;
     text-align: center;
   }
+
+  .status-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+  .status-link:hover { color: var(--text-primary); background: var(--bg-hover); }
+  .status-link.compact { justify-content: center; padding: var(--space-1); }
 
   .sidebar-footer {
     border-top: 1px solid var(--border-muted);

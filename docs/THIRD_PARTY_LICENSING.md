@@ -1,11 +1,13 @@
 # Third-Party Geo Services — Licensing Checklist
 
-> **Status: DEMO.** ModESP Cloud currently uses the services below under their **free / non-commercial**
-> terms, because the platform is a demo / pre-production system.
->
-> **ModESP Cloud is a commercial product.** Every service marked ⚠️ below must move to a paid plan or a
-> self-hosted instance **before the platform serves paying customers.** This is a production blocker, not a
-> nice-to-have.
+> **Status: enforced.** ModESP Cloud is a commercial product. Since plan epic 1.2 the backend
+> **refuses to start with `NODE_ENV=production`** while any of the free / non-commercial endpoints
+> below is configured (`backend/src/lib/licensing-check.js`), unless the operator sets
+> `ALLOW_NONCOMMERCIAL_GEO=true` knowingly (a demo server). The self-hosted stack lives in
+> `infra/geo/` (OSRM + Nominatim on the Ukraine extract, Docker); weather needs a paid Open-Meteo
+> key (`WEATHER_API_KEY`), tiles a paid provider (`VITE_MAP_TILE_URL`, `MAP_TILE_HOSTS`, nginx CSP).
+> Weather and the service-round planner are plan features (`weather`, `routing`: network and
+> partner plans only, migration 031), so their cost is carried by the plans that pay for it.
 
 ## Services in use
 
@@ -39,14 +41,18 @@ feature.
 
 ## Definition of done for production
 
-- [ ] Nominatim: self-hosted, or replaced with a paid geocoder
-- [ ] Open-Meteo: paid plan purchased, or self-hosted
-- [ ] OSRM: self-hosted (the demo server is removed from `.env`)
-- [ ] OpenRouteService: paid plan + key, or self-hosted, or the isochrone feature is switched off
-- [ ] Map tiles: paid provider or self-hosted; `VITE_MAP_TILE_URL` and attribution updated
-- [ ] `© OpenStreetMap contributors` attribution verified on every map surface
-- [ ] Rate limits and timeouts re-checked against the new providers' quotas
-- [ ] This checklist reviewed and the demo banner removed from `backend/.env.example`
+- [x] Nominatim: self-hosted (`infra/geo/docker-compose.yml`, `GEOCODER_URL` → own instance, `GEOCODER_BULK_ENABLED=true` only there); the public endpoint is blocked in production
+- [ ] Open-Meteo: plan purchased, `WEATHER_API_KEY` set (customer host is used automatically) — or `WEATHER_PROVIDER=none`; the keyless public host is blocked in production
+- [x] OSRM: self-hosted (`infra/geo/prepare-osrm.sh` + compose, `OSRM_URL` → own instance); the demo server is blocked in production
+- [x] OpenRouteService: stays disabled; isochrones fall back to visibly approximate rings
+- [ ] Map tiles: paid provider — `VITE_MAP_TILE_URL` + `VITE_MAP_ATTRIBUTION` (webui/.env), `MAP_TILE_HOSTS` (backend/.env, helmet CSP) and `img-src` in both CSP headers of `infra/nginx/modesp.conf`; OSM tile hosts in `MAP_TILE_HOSTS` are blocked in production
+- [x] `© OpenStreetMap contributors` attribution kept on every map surface (`VITE_MAP_ATTRIBUTION` default)
+- [x] Rate limits: `GEOCODER_RATE_LIMIT_MS=0` and `ORS_MIN_INTERVAL_MS=0` are correct only for own instances (documented in `infra/geo/README.md`)
+- [x] Gating: `weather` and `routing` plan features (network / enterprise / partner)
+- [x] Startup check + unit test (`backend/test/licensing-check.test.js`); `.env.example` banner replaced by the guard's description
+- [ ] After the switch: `journalctl -u modesp-backend --since -1d | grep -c -E 'nominatim.openstreetmap.org|router.project-osrm.org'` = 0
+
+Items left unchecked need money or an account (Open-Meteo, tiles) or the production switch itself.
 
 ## Related
 

@@ -1,0 +1,67 @@
+name: Release
+
+# A tag `vX.Y.Z` = a release. CI (tests + the empty-database migration check)
+# must pass first; then the archive that infra/deploy.sh installs is built,
+# checksummed and attached to a GitHub release together with the CHANGELOG
+# section of that version.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    name: Build and publish the release archive
+    needs: ci
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: The tag must match backend/package.json
+        run: |
+          pkg="$(node -p "require('./backend/package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "backend/package.json says $pkg but the tag is $GITHUB_REF_NAME — bump the version (and CHANGELOG.md) first"
+            exit 1
+          fi
+
+      - name: Build the WebUI
+        run: npm ci && npm run build
+        working-directory: webui
+
+      - name: Build the archive
+        run: infra/scripts/build-release.sh "$GITHUB_REF_NAME" release
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '
+            /^## \[/ { inside = index($0, "[" v "]") > 0; next }
+            inside { print }
+          ' CHANGELOG.md > release/NOTES.md
+          if [ ! -s release/NOTES.md ]; then
+            echo "No CHANGELOG.md section for $v — add one." ; exit 1
+          fi
+          cat release/NOTES.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/modesp-cloud-*.tar.gz release/modesp-cloud-*.tar.gz.sha256 \
+            --title "ModESP Cloud $GITHUB_REF_NAME" \
+            --notes-file release/NOTES.md

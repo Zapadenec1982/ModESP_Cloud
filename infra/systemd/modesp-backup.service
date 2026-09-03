@@ -1,15 +1,29 @@
 [Unit]
-Description=ModESP Cloud PostgreSQL backup
+Description=ModESP Cloud backup (PostgreSQL dump + config/firmware archive)
+Documentation=file:/opt/modesp-cloud/docs/runbooks/restore.md
 After=postgresql.service
+Wants=postgresql.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=oneshot
-User=modesp
-Group=modesp
-# Hardening — the script runs pg_dump/gpg/rsync/find with secrets in env.
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=read-only
-PrivateTmp=true
-ExecStart=/opt/modesp-cloud/infra/scripts/backup-postgres.sh
+# Runs as root on purpose: pg_dump/pg_dumpall are executed as the postgres OS
+# user through runuser (peer auth over the socket, no password stored), and the
+# file archive needs /etc/letsencrypt, /etc/mosquitto and backend/.env, which
+# no unprivileged user may read.
 EnvironmentFile=-/opt/modesp-cloud/infra/backup.env
+ExecStart=/opt/modesp-cloud/infra/scripts/backup-postgres.sh
+
+# Hardening — the script reads secrets; it may write only the archive directory
+# (and /root/.ssh, for known_hosts of the off-site host).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/modesp /root/.ssh
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-backup

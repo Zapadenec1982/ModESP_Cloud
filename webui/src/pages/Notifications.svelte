@@ -6,7 +6,10 @@
     deleteSubscriber,
     testNotification,
     getNotificationLog,
+    getMyNotificationPrefs,
+    updateMyNotificationPrefs,
   } from '../lib/api.js'
+  import { isAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -31,14 +34,42 @@
   // Test status per subscriber
   let testingIds = new Set()
 
+  // ── My notifications (every role) ──
+  let prefs = null
+  let savingPrefs = false
+
+  async function savePrefs() {
+    savingPrefs = true
+    try {
+      prefs = await updateMyNotificationPrefs({
+        enabled: prefs.enabled,
+        min_severity: prefs.min_severity,
+        telegram: prefs.telegram,
+        webpush: prefs.webpush,
+        email: prefs.email,
+        quiet_from: prefs.quiet_from || null,
+        quiet_to: prefs.quiet_to || null,
+        quiet_tz: prefs.quiet_tz || 'Europe/Kyiv',
+      })
+      toast.success($t('notifications.saved'))
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      savingPrefs = false
+    }
+  }
+
   async function load() {
     try {
-      const [subs, entries] = await Promise.all([
-        getSubscribers(),
-        getNotificationLog({ limit: 50 }),
-      ])
-      subscribers = subs
-      log = entries
+      prefs = await getMyNotificationPrefs()
+      if ($isAdmin) {
+        const [subs, entries] = await Promise.all([
+          getSubscribers(),
+          getNotificationLog({ limit: 50 }),
+        ])
+        subscribers = subs
+        log = entries
+      }
       error = null
     } catch (e) {
       error = e.message
@@ -119,6 +150,56 @@
   {:else if error}
     <EmptyState icon="x-circle" title="Failed to load" message={error} />
   {:else}
+    <!-- My notifications (plan epic 1.6) -->
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="user" size={16} />
+        <span>{$t('notifications.my_title')}</span>
+      </div>
+      <form class="prefs-form" on:submit|preventDefault={savePrefs}>
+        <p class="field-hint">{$t('notifications.my_hint')}</p>
+        <label class="prefs-toggle">
+          <input type="checkbox" bind:checked={prefs.enabled} />
+          <span>{$t('notifications.enabled')}</span>
+        </label>
+        <div class="prefs-grid">
+          <div class="form-field">
+            <label class="field-label" for="pref-sev">{$t('notifications.min_severity')}</label>
+            <select id="pref-sev" class="input" bind:value={prefs.min_severity}>
+              <option value="info">{$t('alarm.info')}</option>
+              <option value="warning">{$t('alarm.warning')}</option>
+              <option value="critical">{$t('alarm.critical')}</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <span class="field-label">{$t('notifications.channels')}</span>
+            <div class="prefs-channels">
+              <label><input type="checkbox" bind:checked={prefs.telegram} /> Telegram</label>
+              <label><input type="checkbox" bind:checked={prefs.webpush} /> Web Push</label>
+              <label><input type="checkbox" bind:checked={prefs.email} /> Email</label>
+            </div>
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="pref-qf">{$t('notifications.quiet_from')}</label>
+            <input id="pref-qf" type="time" class="input" bind:value={prefs.quiet_from} />
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="pref-qt">{$t('notifications.quiet_to')}</label>
+            <input id="pref-qt" type="time" class="input" bind:value={prefs.quiet_to} />
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="pref-tz">{$t('notifications.quiet_tz')}</label>
+            <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz} placeholder="Europe/Kyiv" />
+          </div>
+        </div>
+        <p class="field-hint">{$t('notifications.quiet_hint')}</p>
+        <div class="prefs-actions">
+          <Button variant="primary" type="submit" loading={savingPrefs} icon="check">{$t('notifications.save')}</Button>
+        </div>
+      </form>
+    </section>
+
+    {#if $isAdmin}
     <!-- Add Subscriber -->
     <section class="section-card">
       <div class="section-header">
@@ -242,10 +323,18 @@
         </div>
       {/if}
     </section>
+    {/if}
   {/if}
 </div>
 
 <style>
+  .prefs-form { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+  .prefs-toggle { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; }
+  .prefs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); }
+  .prefs-channels { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-sm); }
+  .prefs-channels label { display: flex; align-items: center; gap: var(--space-1); }
+  .prefs-actions { display: flex; justify-content: flex-end; }
+
   .notif-page {
     display: flex;
     flex-direction: column;

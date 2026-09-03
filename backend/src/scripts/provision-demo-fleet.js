@@ -225,9 +225,11 @@ function parseArgs(argv) {
   let dryRun = false;
   let keepPasswords = false;
   let help = false;
+  let allowProduction = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--dry-run') dryRun = true;
     else if (argv[i] === '--keep-passwords') keepPasswords = true;
+    else if (argv[i] === '--allow-production') allowProduction = true;
     else if (argv[i] === '--help' || argv[i] === '-h') help = true;
     else if (argv[i] === '--tenant') {
       // A flag-shaped value means the operator forgot the slug: consuming it would
@@ -254,7 +256,7 @@ function parseArgs(argv) {
       i++;
     } else throw new Error(`unknown argument: ${argv[i]}`);
   }
-  return { tenants, reclaim, dryRun, keepPasswords, help };
+  return { tenants, reclaim, dryRun, keepPasswords, help, allowProduction };
 }
 
 const USAGE = `
@@ -264,6 +266,9 @@ Provision the 120 demo emulator devices directly in the database.
                       writes and no CSV (it would hold live credentials)
   --tenant <slug>     pin a chain to a tenant slug (must be given exactly twice,
                       one distinct slug per chain; the SYSTEM tenant is rejected)
+  --allow-production  required with NODE_ENV=production (demo data belongs on the
+                      demo server; see docs/DEPLOYMENT.md)
+
   --keep-passwords    leave devices that already have a mqtt_password_hash on
                       their current password; provision only the missing ones.
                       Their plaintext is carried forward from the previous CSV,
@@ -724,7 +729,18 @@ async function main() {
     console.log(USAGE);
     return;
   }
-  const { tenants: requested, reclaim, dryRun, keepPasswords } = args;
+  const { tenants: requested, reclaim, dryRun, keepPasswords, allowProduction } = args;
+
+  // Production carries real customers: 120 synthetic controllers next to them
+  // is exactly what plan epic 1.10 removes. Refuse unless the operator says so;
+  // a --dry-run writes nothing and is always allowed.
+  if (process.env.NODE_ENV === 'production' && !dryRun && !allowProduction) {
+    console.error('Refusing to provision the demo fleet with NODE_ENV=production.');
+    console.error('Demo data belongs on the demo server (docs/DEPLOYMENT.md, "Staging і демо").');
+    console.error('If this is genuinely what you want, re-run with --allow-production.');
+    process.exitCode = 1;
+    return;
+  }
   const reclaimSet = new Set(reclaim);
 
   let pool = null;

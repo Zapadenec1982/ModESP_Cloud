@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getUsers, createUser, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink, generatePasswordReset, getSites, getUserSites, grantUserSite, revokeUserSite } from '../lib/api.js'
+  import { getUsers, inviteUser, getInvitations, revokeInvitation, updateUser, deleteUser, getDevices, getUserDevices, setUserDevices, getTenants, addUserTenant, removeUserTenant, generateTelegramLink, generatePasswordReset, getSites, getUserSites, grantUserSite, revokeUserSite } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -11,18 +11,21 @@
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
   import { toast } from '../lib/toast.js'
-  import { t } from '../lib/i18n.js'
+  import { t, locale } from '../lib/i18n.js'
 
   let users = []
   let loading = true
   let error = null
 
-  // Create modal
+  // Invite modal (plan epic 1.5: invitations replace admin-set initial passwords)
   let showCreate = false
   let newEmail = ''
-  let newPassword = ''
   let newRole = 'viewer'
   let creating = false
+  let invitations = []
+  let showInviteResult = false
+  let inviteResult = null
+  let copied = false
 
   // Edit state
   let editId = null
@@ -61,27 +64,58 @@
     }
   }
 
-  async function handleCreate() {
-    if (!newEmail.trim() || !newPassword) {
-      toast.warning($t('users.email_password_required'))
-      return
+  async function loadInvitations() {
+    try {
+      invitations = await getInvitations()
+    } catch {
+      invitations = []
     }
+  }
+
+  async function handleInvite() {
+    if (!newEmail.trim()) return
     creating = true
     try {
-      const payload = { email: newEmail.trim(), password: newPassword, role: newRole }
+      const payload = { email: newEmail.trim(), role: newRole, lang: $locale }
       if ($isSuperAdmin && newTenantId) payload.tenant_id = newTenantId
-      await createUser(payload)
-      toast.success($t('users.user_created'))
+      inviteResult = await inviteUser(payload)
+      toast.success($t('users.invite_created'))
       showCreate = false
+      showInviteResult = true
+      copied = false
       newEmail = ''
-      newPassword = ''
       newRole = 'viewer'
       newTenantId = ''
-      await loadUsers()
+      await loadInvitations()
     } catch (e) {
       toast.error(e.message)
     } finally {
       creating = false
+    }
+  }
+
+  async function copyInviteLink() {
+    try {
+      await navigator.clipboard.writeText(inviteResult.invite_url)
+      copied = true
+      toast.success($t('users.invite_copied'))
+    } catch {
+      toast.warning(inviteResult.invite_url)
+    }
+  }
+
+  function closeInviteResult() {
+    showInviteResult = false
+    inviteResult = null
+  }
+
+  async function revokeInvite(inv) {
+    try {
+      await revokeInvitation(inv.id)
+      toast.success($t('users.invite_revoked'))
+      await loadInvitations()
+    } catch (e) {
+      toast.error(e.message)
     }
   }
 
@@ -142,7 +176,6 @@
   function closeModal() {
     showCreate = false
     newEmail = ''
-    newPassword = ''
     newRole = 'viewer'
     newTenantId = ''
   }
@@ -533,13 +566,13 @@
     }
   }
 
-  onMount(loadUsers)
+  onMount(() => { loadUsers(); loadInvitations() })
 </script>
 
 <div class="users-page">
   <PageHeader title={$t('pages.users')} subtitle={$t('pages.users_sub')}>
     <Button variant="secondary" icon="refresh" on:click={loadUsers}>{$t('common.refresh')}</Button>
-    <Button variant="primary" icon="plus" on:click={() => showCreate = true}>{$t('users.new_user')}</Button>
+    <Button variant="primary" icon="send" on:click={() => showCreate = true}>{$t('users.invite_user')}</Button>
   </PageHeader>
 
   {#if loading}
@@ -706,7 +739,68 @@
       </div>
     </section>
   {/if}
+
+  {#if invitations.length > 0}
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="send" size={16} />
+        <span>{$t('users.invitations_pending')}</span>
+        <Badge variant="neutral" size="sm">{invitations.length}</Badge>
+      </div>
+      <div class="invite-list">
+        {#each invitations as inv (inv.id)}
+          <div class="invite-row">
+            <div class="invite-main">
+              <span class="invite-email">{inv.email}</span>
+              <span class="invite-meta">
+                <Badge variant={roleVariant(inv.role)} size="sm">{$t('users.role_' + inv.role)}</Badge>
+                {#if $isSuperAdmin && inv.tenant_name}<span>· {inv.tenant_name}</span>{/if}
+                {#if inv.invited_by_email}<span>· {$t('users.invited_by', inv.invited_by_email)}</span>{/if}
+                <span>· {$t('users.invite_expires', new Date(inv.expires_at).toLocaleString())}</span>
+              </span>
+            </div>
+            <Button variant="secondary" size="sm" icon="x" on:click={() => revokeInvite(inv)}>{$t('users.invite_revoke')}</Button>
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
 </div>
+
+<!-- Invitation result: the link is always shown — email delivery is optional -->
+{#if showInviteResult && inviteResult}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click|self={closeInviteResult} on:keydown={(e) => e.key === 'Escape' && closeInviteResult()} role="dialog" aria-modal="true" aria-labelledby="invite-result-title" tabindex="-1">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <h3 id="invite-result-title">{$t('users.invite_created')}</h3>
+          <span class="modal-subtitle">{inviteResult.email}</span>
+        </div>
+        <button class="modal-close" on:click={closeInviteResult} aria-label={$t('common.close')}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="field-hint">
+          {inviteResult.email_sent ? $t('users.invite_email_sent', inviteResult.email) : $t('users.invite_email_not_sent')}
+        </p>
+        {#if inviteResult.existing_user}
+          <p class="field-hint">{$t('users.invite_existing_hint')}</p>
+        {/if}
+        <div class="form-field">
+          <span class="field-label">{$t('users.invite_link')}</span>
+          <div class="invite-link-box">{inviteResult.invite_url}</div>
+        </div>
+        <p class="field-hint">{$t('users.invite_link_hint')}</p>
+        <div class="modal-actions">
+          <Button variant="secondary" on:click={closeInviteResult}>{$t('common.close')}</Button>
+          <Button variant="primary" icon={copied ? 'check' : 'link'} on:click={copyInviteLink}>{copied ? $t('users.invite_copied') : $t('users.invite_copy')}</Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- Create User Modal -->
 {#if showCreate}
@@ -714,12 +808,12 @@
   <div class="modal-backdrop" on:click={handleBackdropClick} on:keydown={handleBackdropKey} role="dialog" aria-modal="true" aria-labelledby="create-user-title" tabindex="-1">
     <div class="modal">
       <div class="modal-header">
-        <h3 id="create-user-title">{$t('users.create_user')}</h3>
+        <h3 id="create-user-title">{$t('users.invite_user')}</h3>
         <button class="modal-close" on:click={closeModal} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
-      <form on:submit|preventDefault={handleCreate} class="modal-body">
+      <form on:submit|preventDefault={handleInvite} class="modal-body">
         <div class="form-field">
           <label class="field-label" for="user-email">{$t('login.email')}</label>
           <input
@@ -729,18 +823,6 @@
             placeholder="user@example.com"
             class="input"
             required
-          />
-        </div>
-        <div class="form-field">
-          <label class="field-label" for="user-password">{$t('login.password')}</label>
-          <input
-            id="user-password"
-            type="password"
-            bind:value={newPassword}
-            placeholder={$t('users.min_password')}
-            class="input"
-            required
-            minlength="6"
           />
         </div>
         {#if $isSuperAdmin}
@@ -773,7 +855,7 @@
         </div>
         <div class="modal-actions">
           <Button variant="secondary" on:click={closeModal}>{$t('common.cancel')}</Button>
-          <Button variant="primary" type="submit" loading={creating} icon="plus">{$t('users.create_user')}</Button>
+          <Button variant="primary" type="submit" loading={creating} icon="send">{$t('users.send_invite')}</Button>
         </div>
       </form>
     </div>
@@ -1656,6 +1738,48 @@
   }
 
   /* Telegram link modal */
+  .invite-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .invite-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-muted);
+  }
+  .invite-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .invite-email {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .invite-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+  }
+  .invite-link-box {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-xs);
+    padding: var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    word-break: break-all;
+    user-select: all;
+  }
+
   .telegram-code {
     font-family: var(--font-mono, monospace);
     font-size: var(--text-xl);

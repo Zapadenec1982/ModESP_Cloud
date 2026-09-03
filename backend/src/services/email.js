@@ -21,6 +21,7 @@ const ALARM_NAMES = {
     'protection.continuous_run_alarm':  'Безперервна робота',
     'protection.pulldown_alarm':        'Повільне охолодження',
     'protection.rate_alarm':            'Швидка зміна температури',
+    'device_offline':                   'Пристрій офлайн',
     'test_notification':                'Тестове сповіщення',
   },
   en: {
@@ -34,6 +35,7 @@ const ALARM_NAMES = {
     'protection.continuous_run_alarm':  'Continuous Run',
     'protection.pulldown_alarm':        'Slow Pulldown',
     'protection.rate_alarm':            'Rate of Change',
+    'device_offline':                   'Device offline',
     'test_notification':                'Test Notification',
   },
 };
@@ -110,6 +112,11 @@ async function send(emailAddress, payload) {
 
 // ── Email builder ─────────────────────────────────────────
 
+function alarmNameFor(lang, code) {
+  const names = ALARM_NAMES[lang] || ALARM_NAMES.uk;
+  return names[code] || names[`protection.${code}`] || code;
+}
+
 function buildEmail(payload) {
   const lang = 'uk'; // default Ukrainian; can be extended per-user later
 
@@ -139,7 +146,7 @@ function buildTestEmail(lang) {
 }
 
 function buildAlarmRaisedEmail(payload, lang) {
-  const alarmName = (ALARM_NAMES[lang] || ALARM_NAMES.uk)[payload.alarmCode] || payload.alarmCode;
+  const alarmName = alarmNameFor(lang, payload.alarmCode);
   const severity = payload.severity || 'warning';
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const sevLabel = (SEVERITY_LABELS[lang] || SEVERITY_LABELS.uk)[severity] || severity;
@@ -150,7 +157,8 @@ function buildAlarmRaisedEmail(payload, lang) {
   const time = formatTime(payload.timestamp);
   const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
 
-  const subject = `🚨 ${alarmName} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
+  const escalation = payload.escalation ? (lang === 'uk' ? `⏫ Не підтверджено ${payload.escalation.minutes} хв: ` : `⏫ Not acknowledged for ${payload.escalation.minutes} min: `) : '';
+  const subject = `${escalation}🚨 ${alarmName} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
 
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:${color};height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
@@ -178,7 +186,7 @@ function buildAlarmRaisedEmail(payload, lang) {
 }
 
 function buildAlarmClearedEmail(payload, lang) {
-  const alarmName = (ALARM_NAMES[lang] || ALARM_NAMES.uk)[payload.alarmCode] || payload.alarmCode;
+  const alarmName = alarmNameFor(lang, payload.alarmCode);
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
   const time = formatTime(payload.timestamp);
@@ -281,4 +289,125 @@ function formatDuration(ms) {
   return rem ? `${hrs} год ${rem} хв` : `${hrs} год`;
 }
 
-module.exports = { init, shutdown };
+// ── Transactional mail (invitations, password reset) ─────
+
+const TX = {
+  uk: {
+    invite_subject:  (org) => `Запрошення до «${org}» у ModESP Cloud`,
+    invite_title:    'Вас запрошено до ModESP Cloud',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' запрошує вас' : 'Вас запрошено'} приєднатися до організації «${escHtml(org)}» на платформі моніторингу холодильного обладнання ModESP Cloud.`,
+    invite_cta:      'Прийняти запрошення',
+    invite_expires:  (h) => `Посилання дійсне ${h} год. Якщо ви не очікували цього листа — просто проігноруйте його.`,
+    org:             'Організація',
+    role:            'Роль',
+    roles:           { admin: 'Адміністратор', technician: 'Технік', viewer: 'Перегляд' },
+    reset_subject:   'Скидання пароля ModESP Cloud',
+    reset_title:     'Скидання пароля',
+    reset_intro:     'Хтось (сподіваємось, ви) попросив скинути пароль вашого акаунта ModESP Cloud. Натисніть кнопку, щоб задати новий пароль.',
+    reset_cta:       'Задати новий пароль',
+    reset_code:      'Код (якщо кнопка не працює)',
+    reset_expires:   (m) => `Посилання дійсне ${m} хв. Якщо ви не просили скидання — нічого не робіть, пароль лишиться незмінним.`,
+    link_fallback:   'Або скопіюйте посилання у браузер:',
+  },
+  en: {
+    invite_subject:  (org) => `Invitation to “${org}” on ModESP Cloud`,
+    invite_title:    'You have been invited to ModESP Cloud',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' invites you' : 'You have been invited'} to join the organisation “${escHtml(org)}” on ModESP Cloud, the refrigeration monitoring platform.`,
+    invite_cta:      'Accept invitation',
+    invite_expires:  (h) => `The link is valid for ${h} hours. If you did not expect this email, simply ignore it.`,
+    org:             'Organisation',
+    role:            'Role',
+    roles:           { admin: 'Administrator', technician: 'Technician', viewer: 'Viewer' },
+    reset_subject:   'ModESP Cloud password reset',
+    reset_title:     'Password reset',
+    reset_intro:     'Someone (hopefully you) asked to reset the password of your ModESP Cloud account. Press the button to choose a new password.',
+    reset_cta:       'Choose a new password',
+    reset_code:      'Code (if the button does not work)',
+    reset_expires:   (m) => `The link is valid for ${m} minutes. If you did not request a reset, do nothing — your password stays as it is.`,
+    link_fallback:   'Or copy the link into your browser:',
+  },
+};
+
+function txLang(lang) { return lang === 'en' || lang === 'pl' || lang === 'de' ? 'en' : 'uk'; }
+
+function ctaButton(href, label) {
+  return `<p style="margin:24px 0;">
+    <a href="${href}" style="display:inline-block;padding:12px 24px;background:#3b82f6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;">${label}</a>
+  </p>`;
+}
+
+function txBody(title, intro, rows, button, note, link) {
+  return `<tr><td style="padding:32px;">
+    <h2 style="margin:0 0 16px;color:#f1f5f9;font-size:20px;">${title}</h2>
+    <p style="margin:0 0 16px;color:#cbd5e1;font-size:15px;line-height:1.5;">${intro}</p>
+    ${rows}
+    ${button}
+    <p style="margin:0 0 8px;color:#94a3b8;font-size:13px;line-height:1.5;">${note}</p>
+    <p style="margin:0;color:#64748b;font-size:12px;word-break:break-all;">${link}</p>
+  </td></tr>`;
+}
+
+/** True when RESEND_API_KEY is set and the client initialised. */
+function isConfigured() { return !!resend; }
+
+/**
+ * Invitation email. Resolves false when the channel is not configured — the
+ * caller then shows the link to the admin instead of failing the invite.
+ */
+async function sendInvitation({ to, link, tenantName, role, invitedBy, lang, expiresHours = 72 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const rows = infoRow(L.org, escHtml(tenantName)) + infoRow(L.role, L.roles[role] || escHtml(role));
+  const html = wrapHtml(txBody(
+    L.invite_title, L.invite_intro(tenantName, invitedBy), rows,
+    ctaButton(link, L.invite_cta), L.invite_expires(expiresHours),
+    `${L.link_fallback}<br>${escHtml(link)}`
+  ));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.invite_subject(tenantName), html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** Self-service password reset email. Resolves false when not configured. */
+async function sendPasswordReset({ to, link, code, lang, expiresMinutes = 30 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const rows = infoRow(L.reset_code, `<code style="font-family:monospace;letter-spacing:1px;">${escHtml(code)}</code>`);
+  const html = wrapHtml(txBody(
+    L.reset_title, L.reset_intro, rows,
+    ctaButton(link, L.reset_cta), L.reset_expires(expiresMinutes),
+    `${L.link_fallback}<br>${escHtml(link)}`
+  ));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.reset_subject, html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/**
+ * A pilot request from the landing page, to the founder (PILOT_REQUEST_EMAIL).
+ * Resolves false when e-mail or the recipient is not configured — the request
+ * is already stored in pilot_requests by then.
+ */
+async function sendPilotRequest({ to, request }) {
+  if (!resend || !to) return false;
+  const r = request || {};
+  const rows =
+    infoRow('Ім\'я', escHtml(r.name || '')) +
+    infoRow('Компанія', escHtml(r.company || '—')) +
+    infoRow('E-mail', escHtml(r.email || '')) +
+    infoRow('Телефон', escHtml(r.phone || '—')) +
+    infoRow('Сегмент', escHtml(r.segment || '—')) +
+    infoRow('Точок', escHtml(r.sites == null ? '—' : String(r.sites))) +
+    infoRow('Джерело', escHtml(r.source || 'landing')) +
+    infoRow('Мова', escHtml(r.lang || 'uk'));
+  const message = r.message ? `<p style="white-space:pre-wrap;">${escHtml(r.message)}</p>` : '';
+  const html = wrapHtml(`<h2 style="margin:0 0 12px;">Запит на пілот</h2><table>${rows}</table>${message}<p style="color:#888;font-size:12px;">id ${escHtml(String(r.id || ''))}</p>`);
+  const { error } = await resend.emails.send({
+    from: fromAddress, to, replyTo: r.email || undefined,
+    subject: `Запит на пілот: ${r.company || r.name || 'з лендінгу'}`, html,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+module.exports = { init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest };

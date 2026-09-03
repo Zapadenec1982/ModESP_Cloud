@@ -104,10 +104,14 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Device inventory CSV** — all devices with properties (name, model, location, serial number, firmware)
 - **Alarm history CSV** — filterable by severity and date range (up to 90 days)
 
-### PDF Report
-- **HACCP temperature report** — professional PDF with summary statistics, alarm timeline, hourly temperature log
-- Cyrillic support (Roboto font) — ready for Ukrainian regulatory submissions
-- Server-side generation (pdfmake) — no browser dependency
+### PDF Report (inspection-grade)
+- **HACCP temperature log per device or per site** (`GET /devices/:id/telemetry/export.pdf`, `GET /sites/:id/export.pdf`, up to 50 devices in one document)
+- Localised uk / en / pl / de (follows the interface language); organisation legal name and tax id, site address and time zone, timestamps in the site's local time
+- Summary per channel, alarms during the period with acknowledgement marks, temperature log, sensor note with the last service record, responsible-person signature block
+- **Tamper evidence:** every report gets a 12-character verification code and a SHA-256 of its data, printed in the footer; anyone can confirm it at `GET /api/public/report/:code` without logging in; every download is written to the audit log
+- **Three-year history:** recent periods come from raw telemetry (up to 31 days per report); periods beyond the plan's raw retention are served from the hourly archive `telemetry_hourly` (up to a year per report, kept 1095 days)
+- Cyrillic support (Roboto font), server-side generation (pdfmake) — no browser dependency
+- Empty periods answer `404 no_data` instead of producing a blank document
 
 ### Rate Limiting
 - 10 exports per minute per user — prevents abuse without blocking legitimate use
@@ -241,6 +245,13 @@ Operational events beyond alarms — equipment cycles, status changes, device co
 
 ## 10. Notifications & Alerting
 
+### Correctness and acknowledgement (plan epic 1.6)
+- Recipients: organisation admins; technicians and viewers through per-device grants **or** site grants (the same rule the API uses); superadmins only when `receive_all_tenant_alerts` is set
+- Per-user preferences ("My notifications", every role): on/off, minimum severity, channels, quiet hours with time zone — critical alarms and escalations always get through
+- Acknowledge: `POST /alarms/:id/ack` with an optional note, button on the Alarms page, shown in device alarm history; an unacknowledged critical alarm is re-sent once to admins after `ALARM_ACK_ESCALATION_MIN` (15) minutes, tracked in the database so restarts neither lose nor duplicate it
+- Offline is an alarm: `device_offline` (warning) is raised two minutes after the offline detector fires and closed by the device's next message, so outages show up in alarm lists, HACCP history and acknowledgement flows
+- Every user-path delivery (Telegram, Web Push, email) is logged with user and alarm; admins see it via `GET /alarms/:id/deliveries`
+
 Multi-channel push system — Telegram, Firebase (mobile), Web Push.
 
 ### Telegram Bot
@@ -302,10 +313,13 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 
 ### Authentication
 - **JWT tokens** — 15-minute access token, 30-day refresh token with rotation
-- **Password policy** — 15-character minimum (NIST SP 800-63B aligned, no complexity rules)
-- **HaveIBeenPwned check** — client-side k-anonymity check against breached password database
-- **Rate limiting** — 50 login attempts / 5 minutes / IP
-- **Password change** — requires old password verification, issues new tokens
+- **Password policy** — 15-character minimum on every path (create, change, reset, invitation, seed script), NIST SP 800-63B aligned, no complexity rules
+- **HaveIBeenPwned check** — client-side k-anonymity check against breached password database (allowed in CSP)
+- **Rate limiting** — 50 login attempts / 5 minutes / IP; 10 reset requests / hour / IP
+- **Password change** — requires old password verification
+- **Invitations** — admins invite an email with a role; the invitee opens `#/invite/<token>` (72 h), accepts the terms and sets a password, or proves an existing account's password to join a second organisation; the link is always shown to the admin so onboarding works before email is configured
+- **Self-service reset** — "Forgot password?" emails a `#/reset` link with a 30-minute code (same code path as the admin-generated code, which stays as the fallback)
+- **Self-service router** — `/api/profile` carries own profile, email/password, Telegram link and Web Push subscription for every role; technician sessions survive a reload
 
 ### Role-Based Access Control
 
@@ -315,6 +329,17 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 | **Admin** | Own tenant | Full control: devices, users, firmware, notifications |
 | **Technician** | Assigned devices | View, send commands, deploy firmware, manage service records |
 | **Viewer** | Assigned devices | Read-only access (no commands, no editing) |
+
+### Command safety and tenant isolation
+- `POST /devices/:id/command` is admin/technician only (viewers are read-only even with device access); values are validated against `state_meta.json` (type, min/max, step); setpoint, protection limits, manual defrost and alarm reset require `confirm: true`, and the WebUI asks first
+- Every command is audited as `device.command`; admins see the history per device (`GET /devices/:id/commands`, "Command history" in the parameter editor)
+- WebSocket global events (alarms) are delivered only to sockets of the alarm's tenant; the superadmin sees all
+- Pending controllers are claimed with the code printed on the controller (`POST /devices/claim`): an organisation sees, assigns and recovers only what it has claimed; the superadmin sees the whole queue with codes
+
+### Plans, organisation status, settings (plan epic 1.8)
+- `plan_limits` catalogue (Старт / Об'єкт / Мережа / Enterprise / Партнер): device, site and user caps, retention, sampling, features; assignment, user creation/invitation and site creation answer `402 plan_limit` at the cap, HACCP PDF / energy / isochrones answer `402 plan_feature` outside the plan; the WebUI shows usage against the limit and an upgrade hint
+- `tenants.status` (trial, active, past_due, suspended, closed) with billing identity fields; a suspended organisation cannot sign in, refresh or switch, and its controllers get no broker topics while keeping their credentials, so reactivation is instant
+- Organisation settings page (admins): time zone, notification language, electricity tariff and currency, door/pulldown alarm delays, offline threshold and offline-alarm delay, acknowledgement escalation — read live by the MQTT and push services
 
 ### Per-Device Assignment
 - Admin assigns specific devices to technician/viewer users
@@ -416,21 +441,41 @@ Production-ready deployment with TLS, backups, and monitoring.
 ### Database
 - PostgreSQL 16 with connection pooling (max 30 connections)
 - Statement timeout (30s) prevents runaway queries
-- Monthly telemetry partitions with automatic creation and 90-day cleanup
+- Monthly telemetry partitions: created 6 months ahead by `modesp-telemetry-partition.timer`; raw rows are folded into `telemetry_hourly` and purged per the organisation's plan retention by `cleanup-telemetry.js` (daily, `modesp-retention-cleanup.timer`), partitions are dropped once older than the longest plan retention; `drop_telemetry_partition()` refuses anything younger than 7 days
 - 18+ tables with proper indexes, foreign keys, and constraints
 
 ### Monitoring
-- `GET /api/health` — database, MQTT, uptime status
+- `GET /api/health` — database, MQTT, uptime, plus categorical platform checks (`platform`, `checks.backup/partitions/disk`) sized for an external keyword probe (UptimeRobot / Better Stack)
+- `GET /api/health/details` (superadmin) — version, memory, broker client count (`$SYS`), backup age and size, partition headroom, free disk, per-channel delivery counters, Telegram bot health
+- `modesp-alert@.service` — every ModESP unit has `OnFailure=`; a failed backup, cleanup, partition run or a backend crash loop posts the unit name and its last journal lines to a Telegram group (`PLATFORM_ALERT_CHAT_ID`)
+- Restart safety: `shutdown()` flushes every dirty device state to the DB, and the next start re-arms the nuisance timers of door/pulldown alarms that were pending, so a door left open across a restart still alarms
+- journald capped at 500 MB / 30 days (`infra/journald/modesp.conf`); batch messages logged at `debug`
 - StateMap monitoring — device count, total keys, estimated memory usage (logged every 60s)
 - Pino structured logging (JSON in production)
 
+### Releases and environments
+- Tag `vX.Y.Z` → GitHub Release with `modesp-cloud-vX.Y.Z.tar.gz` (+ SHA-256), built only after CI and the empty-database migration check pass (`.github/workflows/release.yml`)
+- `infra/deploy.sh init | release | rollback | status`: releases under `/opt/modesp-releases`, secrets in `shared/`, atomic symlink switch, health gate on `/api/health` with automatic rollback; `CHANGELOG.md` is the release text
+- Every green `main` is installed on the staging/demo server automatically once `STAGING_HOST` and the SSH key are configured
+- Production carries no synthetic data: `purge-demo.js` removes demo organisations, the provisioning scripts refuse `NODE_ENV=production` without `--allow-production`, and a showcase status link (`rate_limit_exempt`) serves the landing page
+
+### Geo services licensing
+- Production refuses to start with the public Nominatim endpoint, the OSRM demo server, keyless Open-Meteo or public OSM tile hosts configured (`ALLOW_NONCOMMERCIAL_GEO=true` overrides knowingly); `infra/geo/` runs OSRM and Nominatim on the Ukraine extract in Docker; Open-Meteo uses a paid key on the customer host; tile hosts for the CSP come from `MAP_TILE_HOSTS`
+- Weather and the service-round planner are plan features (`weather`, `routing`) of the network, enterprise and partner plans
+
+### Landing page and public pages
+- `landing/` (static, no build, own CSP) at `/`: what the controller does, three customer segments, a 30-day chart, a fine-vs-subscription calculator, prices read live from `plan_limits` (`GET /api/public/plans`), a partner page, legal pages generated from `docs/legal`, `robots.txt` and `sitemap.xml`
+- Pilot request form → `POST /api/public/pilot-request` (stored in `pilot_requests`, e-mailed to the founder, honeypot-protected); superadmin reads leads at `GET /api/pilot-requests`
+- The WebUI moved to `/cloud/`; old `#/…` links are redirected by the landing; the login page links to the terms, privacy policy and platform status; public site pages show the organisation, "Powered by ModESP Cloud", a warning a week before the link expires and a "I want this for my sites" call to action
+
 ### Backups & Maintenance
-- Daily PostgreSQL dump at 2:00 AM (30-day retention)
-- Telemetry partition cleanup at 3:00 AM daily
+- Daily archive at 02:00 via `modesp-backup.timer` (`infra/scripts/backup-postgres.sh`): `pg_dump` custom format + roles + `.env`/firmware/TLS/broker config in one tarball with a sha256 manifest; 14-day local retention, optional GPG encryption, off-site rsync with 30-day remote pruning, `last-success` marker; restore runbook in `docs/runbooks/restore.md`
+- Row retention by `modesp-retention-cleanup.timer` (`cleanup-weather.js`, `cleanup-aux.js`): weather observations, events, notification log, cleared alarms, expired refresh tokens; every script is a dry-run without `--apply`
 - Monthly partition pre-creation (25th of each month)
 
 ### Deployment
-- systemd service with automatic restart
+- systemd service with automatic restart; `Wants=` (not `Requires=`) on PostgreSQL and Mosquitto so a broker or database restart never leaves the backend stopped
+- certbot deploy hook (`infra/scripts/tls-deploy-hook.sh`) installs renewed certificates for Mosquitto, reloads instead of restarting, and verifies the served certificate before falling back to a restart
 - Nginx reverse proxy with WebSocket upgrade support
 - Git-based deploy (`git pull` + `systemctl restart`)
 

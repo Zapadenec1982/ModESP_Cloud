@@ -403,7 +403,7 @@ PK починається з `site_id`, тому sweep по терміну зб�
 власного індексу.
 
 **Зберігання, не партиціонування.** `WEATHER_RETENTION_DAYS=395` (порівняння рік-до-року ще працює),
-чистить `backend/scripts/cleanup-weather.js` за cron поряд із `cleanup-telemetry.js`. Обсяг малий:
+чистить `backend/scripts/cleanup-weather.js` щодня з таймера `modesp-retention-cleanup.timer`. Обсяг малий:
 одна точка × 24 години = 24 рядки/добу, тобто ~9 тис. рядків на точку на рік.
 
 Запис — `INSERT ... ON CONFLICT (site_id, observed_at) DO NOTHING`, тому перезапуск бекенду в межах
@@ -517,28 +517,104 @@ CREATE POLICY tenant_isolation ON devices
 
 ---
 
+## Звіти HACCP і погодинний архів (migration 028)
+
+### `telemetry_hourly` — архів на 3 роки
+```sql
+CREATE TABLE telemetry_hourly (
+  tenant_id UUID NOT NULL,
+  device_id VARCHAR(16) NOT NULL,
+  channel   VARCHAR(16) NOT NULL,
+  hour      TIMESTAMPTZ NOT NULL,     -- date_trunc('hour', time)
+  min REAL NOT NULL, max REAL NOT NULL, avg REAL NOT NULL,
+  samples   INT NOT NULL,
+  PRIMARY KEY (tenant_id, device_id, channel, hour)
+);
+CREATE INDEX idx_telemetry_hourly_hour ON telemetry_hourly (hour);
+```
+Заповнюється `cleanup-telemetry.js` (upsert, ідемпотентно). Сирі рядки живуть стільки, скільки
+дозволяє план організації; звіт HACCP за старіший період будується з цієї таблиці (`source =
+'hourly'`). Не партиціонується: ~26 KB на пристрій-канал на рік.
+
+### `report_exports` — реєстр сформованих звітів
+```sql
+CREATE TABLE report_exports (
+  code         VARCHAR(16) PRIMARY KEY,    -- 12 символів, друкується XXXX-XXXX-XXXX
+  kind         VARCHAR(8)  NOT NULL CHECK (kind IN ('device', 'site')),
+  tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  device_id    VARCHAR(16),                -- mqtt_device_id для kind = device
+  site_id      UUID REFERENCES sites(id) ON DELETE SET NULL,
+  period_from  TIMESTAMPTZ NOT NULL,
+  period_to    TIMESTAMPTZ NOT NULL,
+  bucket       VARCHAR(4)  NOT NULL,
+  source       VARCHAR(8)  NOT NULL,       -- raw | hourly
+  lang         VARCHAR(2)  NOT NULL,
+  sha256       CHAR(64)    NOT NULL,       -- відбиток канонічних даних звіту
+  generated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+Один рядок на кожен сформований PDF. `GET /api/public/report/:code` читає звідси й повертає
+тільки те, що вже є у надрукованому документі. Таблиця не чиститься ретенцією.
+
+### `tenant_settings.raw_retention_days` — grandfathering
+`INT NULL CHECK (7..1100)`. Коли задано — має пріоритет над `plan_limits.retention_days` і для
+`cleanup-telemetry.js`, і для вибору джерела звіту HACCP. Міграція 028 виставляє 400 усім
+організаціям, що існували на момент застосування і чий план дає менше; змінює лише superadmin
+(`PATCH /tenants/:id/settings`), явна зміна плану скидає в `NULL`.
+
+### `site_public_links.rate_limit_exempt` (migration 029)
+`BOOLEAN NOT NULL DEFAULT false`. Showcase-посилання на демо-точку з лендінгу: його токен
+пропускає лімітер `/api/public` (30 переглядів / 5 хв на IP), кеш хешів у `routes/public.js`
+оновлюється щохвилини. Виставляє `seed-demo.js` або superadmin у SQL; невідомий, відкликаний
+чи протермінований токен лімітується як і раніше.
+
+### Ціни планів і запити на пілот (migration 030)
+`plan_limits` отримує `tagline`, `price_controller_uah`, `price_site_uah`, `price_base_uah`,
+`price_note` — прайс лендінгу (`GET /api/public/plans`) і каталог лімітів в одному рядку;
+значення з `docs/BUSINESS_ANALYSIS_SAAS_UA.md` §5.2, `NULL` — «за запитом».
+`pilot_requests (id, name, company, email, phone, segment, sites, message, source, lang, ip,
+emailed_at, created_at)` — форма з лендінгу; зберігається завжди, `emailed_at` ставиться після
+листа на `PILOT_REQUEST_EMAIL`. Роль застосунку: SELECT, INSERT, UPDATE (без DELETE).
+
 ## Партиціонування телеметрії — автоматизація
 
-```sql
-CREATE OR REPLACE FUNCTION create_telemetry_partition(year INT, month INT)
-RETURNS VOID AS $$
-DECLARE
-  partition_name TEXT;
-  start_date DATE;
-  end_date DATE;
-BEGIN
-  partition_name := format('telemetry_%s_%s', year, lpad(month::TEXT, 2, '0'));
-  start_date := make_date(year, month, 1);
-  end_date := start_date + INTERVAL '1 month';
+Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
+міграція 023). Завдяки цьому таймери systemd працюють від застосункової ролі `modesp_cloud`,
+хоча батьківська таблиця і партиції належать `postgres`. `EXECUTE` відкликано в `PUBLIC` і
+надано лише `modesp_cloud`.
 
-  EXECUTE format(
-    'CREATE TABLE IF NOT EXISTS %I PARTITION OF telemetry
-     FOR VALUES FROM (%L) TO (%L)',
-    partition_name, start_date, end_date
-  );
-END;
-$$ LANGUAGE plpgsql;
+```sql
+-- створює public.telemetry_YYYY_MM + унікальний індекс для ON CONFLICT DO NOTHING; ідемпотентна
+SELECT create_telemetry_partition(2026, 10);
+
+-- від'єднує і видаляє партицію; TRUE — видалено, FALSE — такої партиції вже нема.
+-- Приймає лише імена telemetry_YYYY_MM і відмовляє, якщо діапазон закрився < 7 днів тому.
+SELECT drop_telemetry_partition('telemetry_2026_05');
 ```
+
+| Скрипт | Таймер | Що робить |
+|---|---|---|
+| `backend/src/scripts/ensure-partitions.js` | `modesp-telemetry-partition.timer`, 25-го | партиції на поточний місяць + `PARTITION_MONTHS_AHEAD` (6) уперед |
+| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`; видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90); скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
+
+---
+
+## Ретенція інших таблиць
+
+`backend/scripts/cleanup-aux.js --apply` (таймер `modesp-retention-cleanup.timer`, щодня 03:30,
+після `cleanup-weather.js`), пакетами по 10 000 рядків:
+
+| Таблиця | Колонка | Змінна | Дефолт |
+|---|---|---|---|
+| `events` | `time` | `EVENT_RETENTION_DAYS` | 365 |
+| `notification_log` | `created_at` | `NOTIFICATION_LOG_RETENTION_DAYS` | 90 |
+| `alarms` (лише `active = false`) | `cleared_at` | `ALARM_RETENTION_DAYS` | 365 |
+| `refresh_tokens` | `expires_at` | — | лише протерміновані |
+| `weather_observations` | `observed_at` | `WEATHER_RETENTION_DAYS` | 395 |
+
+`0` вимикає окремий sweep. `audit_log` не чиститься — тригер `trg_audit_log_immutable` забороняє
+`UPDATE`/`DELETE`.
 
 ---
 
@@ -568,3 +644,7 @@ $$ LANGUAGE plpgsql;
   `users.base_latitude` / `base_longitude` / `base_address`; backfill точок з `devices.location`.
   Свідомі рішення на запис: немає композитного FK `devices → sites`, немає RLS на нових таблицях,
   немає тригера `updated_at`, `geocode_cache` без `tenant_id`.
+- 2026-09-02 — Міграція 028: `telemetry_hourly` (погодинний архів на 3 роки) і `report_exports` (реєстр звітів HACCP з кодом перевірки та SHA-256); `cleanup-telemetry.js` перенесено в щоденний `modesp-retention-cleanup`, ретенція сирої телеметрії — за `plan_limits.retention_days`.
+- 2026-09-02 — Міграція 029: `site_public_links.rate_limit_exempt` (showcase-посилання без ліміту переглядів). Права ролі застосунку — `infra/sql/app-grants.sql`, перевірка — `infra/sql/check-grants.sql` (CI, `setup.sh`, `deploy.sh`).
+- 2026-09-02 — Міграція 030: ціни в `plan_limits`, таблиця `pilot_requests`.
+- 2026-09-02 — Міграція 031: функції планів `weather` і `routing` для `pro`/`enterprise`/`partner`.

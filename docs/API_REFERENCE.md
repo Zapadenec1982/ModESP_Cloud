@@ -95,6 +95,55 @@ Authorization: Bearer <access_token>
 
 ---
 
+### `POST /auth/forgot-password`
+Самостійне скидання пароля (публічний, ліміт 10 запитів/год з IP). Відповідь однакова незалежно від того,
+чи існує адреса. Для активного акаунта генерується той самий 16-символьний код, що й в адмінському
+потоці, і надсилається листом (Resend) як посилання `#/reset?email=…&code=…`; без налаштованої пошти
+залишається адмінський код.
+
+```json
+{ "email": "tech@example.com", "lang": "uk" }
+```
+
+**Response 200:** `{ "data": { "message": "If an account with that email exists, a reset link has been sent" } }`
+
+### `POST /auth/reset-password`
+Завершення скидання (публічний): код + новий пароль (політика — мінімум 15 символів). Скидає всі
+refresh-токени користувача.
+
+```json
+{ "email": "tech@example.com", "reset_code": "0a1b2c3d4e5f6789", "new_password": "…15+ символів…" }
+```
+
+### `GET /auth/invite/:token`
+Публічний перегляд запрошення (`#/invite/<token>`). `404` — невідомий токен; `410` з
+`error: invitation_accepted | invitation_revoked | invitation_expired | invitation_tenant_inactive`.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "email": "new.tech@example.com",
+    "role": "technician",
+    "tenant": { "name": "Org A", "slug": "org-a" },
+    "existing_user": false,
+    "expires_at": "2026-09-05T09:00:00.000Z"
+  }
+}
+```
+
+### `POST /auth/invite/:token/accept`
+Прийняття запрошення. Новий акаунт: `password` (мінімум 15 символів) стає паролем; наявний акаунт
+(`existing_user: true`): `password` — його поточний пароль, після перевірки акаунт додається до
+організації зі своєю поточною роллю. `accept_terms` має бути `true`. Відповідь — як у `POST /auth/login`
+(`201` для нового акаунта, `200` для наявного), плюс `created`.
+
+```json
+{ "password": "…", "accept_terms": true }
+```
+
+---
+
 ## Пристрої
 
 ### `GET /devices`
@@ -300,43 +349,28 @@ Authorization: Bearer <access_token>
 ---
 
 ### `POST /devices/:id/command`
-Відправити команду на пристрій.
+Надіслати команду контролеру. Ролі: **admin, technician** (viewer отримує 403 ще до перевірки доступу до
+пристрою). Значення перевіряється за `state_meta.json`: тип (`bool`/`int`/`float`), `min`/`max`, крок
+`step`; булеві приймають `true/false/1/0`. Ключі, що змінюють роботу обладнання (`thermostat.setpoint`,
+`thermostat.differential`, `protection.high_limit`, `protection.low_limit`, `protection.manual_reset`,
+`protection.reset_alarms`, `defrost.manual_start`, `defrost.manual_stop`; позначені `dangerous: true` у
+`GET /api/meta`), приймаються лише з `confirm: true` — інакше `400 confirmation_required`.
 
-**Ролі:** admin, technician
-
-**Body:**
 ```json
-{
-  "cmd": "set_setpoint",
-  "value": 3.5
-}
+{ "key": "thermostat.setpoint", "value": -18, "confirm": true }
 ```
 
-**Command translation (REST → MQTT):**
-API команда транслюється в individual MQTT key зі скалярним значенням.
+**Response 200:** `{ "data": { "device_id": "A4CF12", "key": "thermostat.setpoint", "value": -18, "sent": true } }`
 
-| API cmd | MQTT topic key | Тип значення |
-|---------|----------------|-------------|
-| `set_setpoint` | `thermostat.setpoint` | float |
-| `reset_alarms` | `protection.reset_alarms` | bool (true) |
-| `start_defrost` | `defrost.manual_start` | bool (true) |
-| `set_parameter` | `{key}` (будь-який writable key) | typed |
+Кожна команда записується в журнал дій як `device.command` (`changes: { key, value, confirmed, dangerous }`).
 
-Для `set_parameter` передавати key напряму:
+### `GET /devices/:id/commands?limit=50`
+Історія команд пристрою з журналу дій (admin; superadmin — будь-який пристрій).
+
 ```json
-{ "cmd": "set_parameter", "key": "thermostat.differential", "value": 2.5 }
+{ "data": [ { "id": 1, "created_at": "…", "user_email": "tech@example.com", "user_role": "technician",
+              "key": "thermostat.setpoint", "value": "-18", "confirmed": true, "dangerous": true, "status_code": 200 } ] }
 ```
-
-Валідація через state_meta: тип, min/max, writable flag.
-
-**Response 200:**
-```json
-{ "status": "sent", "mqtt_topic": "thermostat.setpoint", "value": "3.5" }
-```
-
----
-
-## Телеметрія
 
 ### `GET /devices/:id/telemetry`
 Часові ряди температур (raw data).
@@ -523,6 +557,28 @@ Max range: 31 day.
 
 ---
 
+### `POST /alarms/:id/ack`
+Взяти аварію в роботу (admin, technician з доступом до пристрою). Один раз на аварію: повторно —
+`409 already_acknowledged`. Розсилає WebSocket-подію `alarm_ack`. Списки аварій віддають
+`acknowledged_at`, `acknowledged_by_email`, `ack_note`, `escalated_at`.
+
+```json
+{ "note": "Виїжджаю, буду за 30 хв" }
+```
+
+### `GET /alarms/:id/deliveries`
+Журнал доставки сповіщень цієї аварії (admin): канал, статус, помилка, користувач або підписник.
+
+Правила розсилки (push.js): адміністратори організації; техніки/глядачі — через `user_devices ∪
+user_sites`; superadmin — лише з `users.receive_all_tenant_alerts`; налаштування користувача
+(`GET/PUT /profile/notifications`): увімкнено, мінімальна важливість, канали, тихі години (критичні
+й ескалації проходять завжди). Критична аварія без підтвердження за `ALARM_ACK_ESCALATION_MIN`
+(15) хв один раз повторно надсилається адміністраторам (`alarms.escalated_at`). Втрата зв'язку —
+аварія `device_offline` (warning) через `OFFLINE_ALARM_DELAY_MS` (2 хв) після виявлення офлайну,
+закривається першим повідомленням пристрою.
+
+---
+
 ## Events (Phase 11a)
 
 ### `GET /devices/:id/events`
@@ -551,9 +607,13 @@ Max range: 31 day.
 
 ---
 
-## Data Export (Phase 11b)
+## Data Export
 
-Всі export endpoints захищені rate limiter (10 req/min/user).
+Усі export-ендпоінти захищені rate limiter (10 req/min/user). Кожне завантаження (і GET також)
+пишеться в `audit_log` (`export.telemetry_csv`, `export.inventory_csv`, `export.alarms_csv`,
+`export.haccp_pdf`, `export.haccp_site_pdf`) — інспектор чи клієнт завжди може дізнатися, хто і
+коли формував документ. PDF-звіти доступні лише планам із функцією `reports` (інакше
+`402 plan_feature`).
 
 ### `GET /devices/:id/telemetry/export.csv`
 CSV export телеметрії пристрою.
@@ -566,8 +626,9 @@ CSV export телеметрії пристрою.
 
 Включає UTF-8 BOM для сумісності з Excel. Max 500k рядків. RFC 4180.
 
-### `GET /devices/export.csv`
-CSV інвентаризація всіх пристроїв тенанту.
+### `GET /devices/export/inventory.csv`
+CSV інвентаризація всіх пристроїв тенанту (раніше `GET /devices/export.csv`; старий шлях
+більше не існує — він конфліктував з `/devices/:id`).
 
 **Columns:** Device ID, Name, Location, Serial, Model, Firmware, Online, Last Seen (+ Tenant для superadmin)
 
@@ -579,22 +640,67 @@ CSV export алармів.
 **Columns:** Device, Device Name, Alarm Code, Severity, Active, Value, Limit, Started, Cleared (+ Tenant для superadmin)
 
 ### `GET /devices/:id/telemetry/export.pdf`
-HACCP Temperature Compliance Report (PDF).
+Журнал контролю температури HACCP для одного пристрою (PDF) — документ, який можна показати
+інспектору.
 
 **Query params:**
-- `from`, `to` (ISO, max 31 день)
+- `from`, `to` (ISO). Первинні вимірювання — до 31 дня; якщо період старший за зберігання
+  сирих даних плану (`plan_limits.retention_days`), звіт будується з погодинного архіву
+  `telemetry_hourly` (до 366 днів у одному звіті, архів зберігається 3 роки)
 - `channels=air,evap,setpoint` (default: air,evap,setpoint)
-- `bucket=1h` — розмір bucket: `5m`, `15m`, `1h`, `6h`, `1d` (default: `1h`)
+- `bucket=1h` — `5m`, `15m`, `1h`, `6h`, `1d` (default `1h`). На архівних даних bucket
+  розширюється щонайменше до `1h`; для довгих періодів — до `6h`/`1d`, щоб таблиця не
+  перевищила 10 000 рядків
+- `lang=uk|en|pl|de` (default: мова організації або `uk`)
 
-**PDF Layout:**
-- Header: ModESP HACCP Temperature Compliance Log
-- Device info: name, location, serial, model, period, generated by
-- Summary table: channel, min/max/avg °C, samples
-- Alarms during period (if any)
-- Temperature log (hourly avg per channel)
-- Footer: page N/M
+**Headers відповіді:** `X-Report-Code` (`XXXX-XXXX-XXXX`), `X-Report-Sha256`, `X-Report-Source`
+(`raw` | `hourly`); усі три відкриті через `Access-Control-Expose-Headers`.
 
-**Guard:** max 10k data points. Робото шрифт з кирилицею.
+**Вміст PDF:**
+- Заголовок мовою звіту; організація (`tenants.legal_name`, код ЄДРПОУ/ІПН), точка з адресою
+  і часовим поясом (`tenant_settings.timezone`, для точки — `sites.timezone`)
+- Обладнання: назва, ідентифікатор, серійний номер, модель; період і інтервал; хто і коли
+  сформував; джерело даних
+- Підсумок по каналах (мін/макс/сер., кількість вимірювань), аварії за період
+  (з відміткою підтвердження), температурний журнал у **місцевому часі точки**
+- Примітка про датчики з останнім сервісним записом, блок «Відповідальна особа / посада /
+  підпис / дата»
+- Футер на кожній сторінці: код перевірки, SHA-256 даних звіту, URL перевірки
+
+**Помилки:** `400 validation_failed` (дати, bucket), `404 no_data` (за період немає даних —
+порожній «журнал» не формується), `402 plan_feature`.
+
+### `GET /sites/:id/export.pdf`
+Той самий журнал для всіх активних пристроїв точки (до 50) — один документ, розділ на
+пристрій. Admin бачить усі точки організації; technician/viewer — лише з грантом у
+`user_sites` (інакше `403`). Параметри й заголовки — як у пристрою.
+
+### `GET /api/public/report/:code`
+Перевірка справжності звіту. **Без автентифікації**, лімітер `/api/public`. Код із футера
+(дефіси й регістр не важливі). Повертає лише те, що вже надруковано у звіті:
+
+```json
+{
+  "data": {
+    "code": "K7Q2-M9XA-4H3P",
+    "kind": "device",
+    "organisation": "ТОВ «Морозко»",
+    "site": "Магазин №1",
+    "device": "Вітрина 1",
+    "period_from": "2026-08-01T00:00:00.000Z",
+    "period_to": "2026-08-31T23:59:59.000Z",
+    "bucket": "1h",
+    "source": "raw",
+    "lang": "uk",
+    "sha256": "3c1f…",
+    "generated_at": "2026-09-02T09:12:41.000Z",
+    "valid": true
+  }
+}
+```
+
+Невідомий код — `404 not_found` без деталей. Жодних ідентифікаторів, телеметрії чи даних
+користувачів у відповіді немає.
 
 ---
 
@@ -1314,6 +1420,37 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 
 **Response 200:** оновлений профіль тієї ж форми.
 
+### `PUT /profile`
+Власні email та/або пароль (колишній `PUT /users/me`). Зміна пароля вимагає `old_password`; політика —
+мінімум 15 символів.
+
+```json
+{ "email": "new@example.com", "password": "…15+…", "old_password": "…" }
+```
+
+### `PUT /profile/password`
+```json
+{ "old_password": "…", "new_password": "…15+ символів…" }
+```
+
+### `POST /profile/telegram-link` · `DELETE /profile/telegram-link`
+Код прив'язки Telegram для власного акаунта (16 символів, 15 хв) / відв'язати.
+
+### `POST /profile/push-subscription` · `DELETE /profile/push-subscription`
+Зберегти / видалити Web Push підписку поточного браузера:
+```json
+{ "endpoint": "https://…", "keys": { "p256dh": "…", "auth": "…" } }
+```
+
+---
+
+### `GET /profile/notifications` · `PUT /profile/notifications`
+Власні налаштування сповіщень (часткове оновлення):
+```json
+{ "enabled": true, "min_severity": "warning", "telegram": true, "webpush": true, "email": false,
+  "quiet_from": "22:00", "quiet_to": "07:00", "quiet_tz": "Europe/Kyiv" }
+```
+
 ---
 
 ## Публічна сторінка статусу точки
@@ -1321,6 +1458,29 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 Найризикованіша частина гео-функціоналу: помилка тут публічно оприлюднює дані тенанта. Тому роутер
 змонтований під `/api/public` **вище** `app.use('/api', authenticate)` — Express виконує middleware у
 порядку реєстрації, тож перенесення цього рядка нижче зламає тест, а не поверне 401.
+
+### `GET /api/public/plans`
+Публічні плани для сторінки цін лендінгу. **Без автентифікації**, `Cache-Control: public, max-age=300`.
+Ті самі рядки `plan_limits`, за якими платформа рахує ліміти: `plan`, `name`, `tagline`,
+`max_devices/sites/users`, `retention_days`, `sampling_sec`, `features`, `price_controller_uah`,
+`price_site_uah`, `price_base_uah`, `price_note` (грн на місяць без ПДВ, `null` — за запитом).
+
+### `POST /api/public/pilot-request`
+Форма «Запит на пілот» з лендінгу. **Без автентифікації**, лімітер `/api/public`.
+
+```json
+{ "name": "Олена", "company": "Аптека №7", "email": "olena@example.com", "phone": "+380…",
+  "segment": "pharma", "sites": 3, "message": "…", "source": "landing", "lang": "uk", "website": "" }
+```
+
+`name` і коректний `email` обов'язкові (`400 validation_failed`); `segment` — `service | retail |
+horeca | pharma | other` (інше → `other`). `website` — honeypot: заповнений відповідає `200`
+і нічого не зберігає. Запит спершу пишеться в `pilot_requests`, потім надсилається на
+`PILOT_REQUEST_EMAIL`; відповідь `201 { "received": true, "emailed": true|false }`.
+
+### `GET /api/pilot-requests`
+Список запитів на пілот (тільки superadmin), `?limit=50&offset=0`, `meta.total`; IP не
+повертається.
 
 ### `GET /api/public/site`
 Публічний read-only статус однієї точки. **Без автентифікації.**
@@ -1332,13 +1492,18 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 `https://modesp.com.ua/#/public/site/<token>` — фрагмент URL браузер на сервер не надсилає, тож токен
 не потрапляє ні в серверні логи, ні в `Referer`.
 
-**Rate limit:** 30 запитів / 5 хв на IP (власний лімітер, не спільний з `/api`).
+**Rate limit:** 30 запитів / 5 хв на IP (власний лімітер, не спільний з `/api`). Посилання з
+`site_public_links.rate_limit_exempt = true` (showcase демо-точки з лендінгу, ставить
+`seed-demo.js`) лімітер пропускають; відкликання чи закінчення терміну повертає ліміт протягом
+хвилини.
 
 **Response 200:**
 ```json
 {
   "data": {
     "name": "АТБ №142",
+    "organisation": "ТОВ «Мережа»",
+    "link_expires_at": "2026-12-01T00:00:00.000Z",
     "city": "Львів",
     "region": "Львівська область",
     "country": "Україна",
@@ -1504,6 +1669,36 @@ superadmin, що діє в тенанті A, видав би користува�
 
 **Ролі:** admin
 
+### `POST /users/invite`
+Запросити email до організації (admin — у власну; superadmin може передати `tenant_id`). Створює
+одноразове посилання на 72 години і надсилає лист (Resend), якщо пошта налаштована; посилання
+завжди повертається адміністратору, щоб онбординг працював і без пошти. Для email, який уже має
+акаунт, прийняття додає цей акаунт до організації (`existing_user: true`). Повторне запрошення тієї
+самої адреси відкликає попереднє. `409`, якщо користувач уже є учасником.
+
+```json
+{ "email": "new.tech@example.com", "role": "technician", "tenant_id": "uuid (лише superadmin)", "lang": "uk" }
+```
+
+**Response 201:**
+```json
+{
+  "data": {
+    "id": "uuid", "email": "new.tech@example.com", "role": "technician", "tenant_id": "uuid",
+    "existing_user": false, "email_sent": false,
+    "invite_url": "https://modesp.com.ua/#/invite/<64 hex>",
+    "created_at": "…", "expires_at": "…"
+  }
+}
+```
+
+### `GET /users/invitations`
+Відкриті (не прийняті, не відкликані, не протерміновані) запрошення організації; superadmin — усі або
+`?tenant_id=`.
+
+### `DELETE /users/invitations/:id`
+Відкликати запрошення. `404`, якщо його нема, воно вже прийняте або належить іншій організації.
+
 ---
 
 ## Per-Device RBAC (Phase 7a) + Per-Site RBAC (Phase 14)
@@ -1560,31 +1755,10 @@ superadmin, що діє в тенанті A, видав би користува�
 
 ## Push сповіщення
 
-### `POST /users/me/push-token`
-Зареєструвати FCM токен.
-
-```json
-{ "token": "fcm_token_here" }
-```
-
-### `POST /users/me/telegram`
-Прив'язати Telegram акаунт.
-
-```json
-{ "telegram_id": 123456789 }
-```
-
-### `GET /users/me/notifications`
-Налаштування підписок на сповіщення.
-
-### `PUT /users/me/notifications`
-```json
-{
-  "alarm_critical": true,
-  "alarm_warning": false,
-  "device_offline": true
-}
-```
+Самообслуговування каналів живе на `/api/profile` (див. «Профіль користувача»):
+`POST/DELETE /profile/telegram-link` (код прив'язки бота) і `POST/DELETE /profile/push-subscription`
+(Web Push підписка браузера). Адміністратор генерує код прив'язки для іншого користувача через
+`POST /users/:id/telegram-link`. Підписки на сповіщення організації — `/api/notifications`.
 
 ---
 
@@ -1691,6 +1865,42 @@ Soft-delete тенант. Не можна видалити якщо є прис�
   }
 }
 ```
+
+### `GET /tenants/plans`
+Каталог планів (`plan_limits`): `max_devices`, `max_sites`, `max_users` (`null` — без обмежень),
+`retention_days`, `sampling_sec`, `features`. Використання проти ліміту повертають `GET /tenants` і
+`GET /tenants/:id` (`device_count` — лише активні, `pending_count`, `site_count`, `user_count`, `max_*`).
+
+Перевищення ліміту при призначенні контролера, створенні/запрошенні користувача або створенні точки —
+`402 plan_limit` з `resource`, `limit`, `current`, `plan`. Функції плану (`reports` — PDF HACCP,
+`energy` — енергозвіт, `geo` — ізохрони) — `402 plan_feature`; superadmin проходить завжди.
+
+### Стан організації (`tenants.status`)
+`trial` | `active` | `past_due` | `suspended` | `closed`. Перші три — «відкриті»: вхід, оновлення сесії,
+перемикання організації і топіки брокера працюють. `suspended`/`closed`: `401 tenant_suspended` при вході
+та оновленні токена, пристрої організації не отримують жодного топіка (CONNECT проходить, облікові дані
+зберігаються — після реактивації зв'язок відновлюється сам). Поле `active` лишається дзеркалом статусу.
+`PATCH /tenants/:id` (superadmin) приймає `status`, `plan` (у т.ч. `partner`), `trial_expires_at`,
+`billing_email`, `legal_name`, `tax_id`, `billing_currency`, `contract_started_at`.
+
+### `GET /tenants/:id/settings` · `PATCH /tenants/:id/settings`
+Налаштування організації — адміністратор власної організації або superadmin. `null` скидає перевизначення
+до значення платформи (`defaults` у відповіді).
+
+```json
+{ "timezone": "Europe/Kyiv", "locale": "uk", "electricity_rate": 7.5, "electricity_currency": "UAH",
+  "door_alarm_delay_ms": 600000, "pulldown_alarm_delay_ms": 300000,
+  "offline_threshold_ms": 90000, "offline_alarm_delay_ms": 120000, "ack_escalation_min": 15,
+  "raw_retention_days": 400 }
+```
+
+`raw_retention_days` (7–1100, `null` — за планом) змінює лише superadmin (інакше `403`); це
+перевизначення зберігання сирої телеметрії над `plan_limits.retention_days` (grandfathering для
+організацій, що існували до появи ретенції за планом). Відповідь містить і `retention_days` —
+чинне значення. Явна зміна `plan` через `PATCH /tenants/:id` скидає перевизначення.
+
+### `DELETE /tenants/bulk`
+`{ "ids": [...] }` — масове видалення (superadmin). Маршрут оголошено перед `DELETE /tenants/:id`.
 
 ---
 
@@ -1887,23 +2097,20 @@ bootstrap credentials, щоб пристрій зміг підключитися
 ## Auto-discovery (Pending Devices)
 
 ### `GET /devices/pending`
-Список пристроїв, що очікують призначення tenant.
+Черга очікування. Адміністратор організації бачить **лише пристрої, які його організація додала за
+кодом** (`POST /devices/claim`); superadmin бачить усю чергу разом із `claim_code` і
+`claimed_by_tenant_id`.
 
-**Ролі:** admin
+### `POST /devices/claim`
+Додати pending-контролер до своєї організації за кодом, надрукованим на ньому (6–12 символів; пробіли,
+дефіси й регістр ігноруються). `404` — коду нема серед pending; `409` — пристрій уже додала інша
+організація. Далі його можна призначити через `POST /devices/pending/:mqttId/assign`.
 
-**Response 200:**
 ```json
-{
-  "devices": [
-    {
-      "mqtt_device_id": "A4CF12",
-      "first_seen": "2026-03-07T10:30:00Z",
-      "last_seen": "2026-03-07T10:35:00Z",
-      "firmware_version": "1.2.3"
-    }
-  ]
-}
+{ "claim_code": "ABCD-2345" }
 ```
+
+**Response 200:** `{ "data": { "id": "uuid", "mqtt_device_id": "A4CF12", "online": true, "claimed": true } }`
 
 ### `POST /devices/pending/:mqtt_device_id/assign`
 Призначити pending пристрій тенанту.
@@ -2083,3 +2290,7 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-03-24 — Phase 13: Device Models CRUD (GET/POST/PATCH/DELETE /device-models), Energy summary (GET /devices/:id/energy/summary), PATCH /devices/:id accepts model_id and power_overrides.
 - 2026-03-31 — Device map: devices отримали latitude/longitude (migration 018); GET /devices, GET /devices/:id повертають координати; PATCH /devices/:id приймає latitude/longitude (null = прибрати з карти).
 - 2026-08-23 — Phase 14 (Sites & Geo): Sites CRUD (`/sites`) з геокодуванням, погодою, найближчими техніками та публічними посиланнями; геокодер-проксі (`/geo/search`, `/geo/reverse`); карта (`/map/devices`, `/map/filters`, `/map/alarm-heatmap`, `/map/isochrones`, `POST /map/route`); гео-статистика (`/stats/geo` + `export.csv`); профіль з домашньою базою (`/profile`); гранти на точки (`/users/:id/sites`); неавтентифікована публічна сторінка статусу (`/api/public/site` + заголовок `X-Site-Token`); `site_id` у PATCH /devices/:id і `site_*` поля у видачі пристроїв; нові колонки CSV-імпорту; окремий rate limiter 30/хв на користувача для ендпоінтів із зовнішніми сервісами.
+- 2026-09-02 — HACCP (епік 1.9): `GET /devices/:id/telemetry/export.pdf` перероблено (локалізація uk/en/pl/de, реквізити організації і точки, місцевий час, підпис, код перевірки й SHA-256, погодинний архів для старих періодів), новий `GET /sites/:id/export.pdf`, публічна перевірка `GET /api/public/report/:code`, інвентаризація переїхала на `GET /devices/export/inventory.csv`; усі експорти пишуться в `audit_log`.
+- 2026-09-02 — Епік 1.10: showcase-посилання без ліміту переглядів (`rate_limit_exempt`); `DELETE /tenants/:id` виконує спільну з `purge-demo.js` процедуру (`services/tenant-delete.js`).
+- 2026-09-02 — Епік 1.11: `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `GET /api/public/site` додає `organisation` і `link_expires_at` (сторінка каже, чия вона, і попереджає за тиждень до закінчення посилання).
+- 2026-09-02 — Епік 1.2: `GET /sites/:id/weather`, `GET /sites/:id/weather/history` і `POST /map/route` відповідають `402 plan_feature` поза планами з функціями `weather`/`routing`.

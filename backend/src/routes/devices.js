@@ -14,13 +14,17 @@ const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
 const stateMeta  = require('../config/state_meta.json');
+const { DANGEROUS_KEYS, validateCommandValue } = require('../config/command-policy');
+const { normalizeClaimCode } = require('../lib/claim-code');
+const planMw = require('../middleware/plan');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
 const router = Router();
 
-// Build Set of writable keys for command validation
+// Writable keys + their metadata (type/min/max/step) for command validation
 const writableKeys = new Set(stateMeta.subscribeKeys);
+const metaByKey = new Map(stateMeta.meta.map(m => [m.key, m]));
 
 // Auth helper: skip authorize middleware when AUTH_ENABLED=false
 const maybeAuthorize = (...roles) =>
@@ -161,6 +165,11 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 // List pending (unassigned) devices — from SYSTEM tenant.
 router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
   try {
+    // Plan epic 1.7: an organisation sees only the pending devices it has claimed
+    // with the code printed on the controller; the superadmin sees the queue.
+    const isSuperAdmin = !AUTH_ENABLED || !req.user || req.user.role === 'superadmin';
+    const claimScope   = isSuperAdmin ? '' : ' AND d.claimed_by_tenant_id = $2';
+    const claimParams  = isSuperAdmin ? [db.SYSTEM_TENANT_ID] : [db.SYSTEM_TENANT_ID, req.tenantId];
     // Pending devices live in the SYSTEM tenant, which owns no sites, so the
     // joined columns are always NULL here. They are selected anyway so the
     // pending row has the same shape as an assigned one — and the join predicate
@@ -168,12 +177,13 @@ router.get('/pending', maybeAuthorize('admin'), async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT d.id, d.mqtt_device_id, d.firmware_version, d.online, d.last_seen, d.created_at,
               d.name, d.serial_number, d.location, d.model,
+              d.claim_code, d.claimed_by_tenant_id,
               ${SITE_COLUMNS}
        FROM devices d
        ${SITE_JOIN}
-       WHERE d.tenant_id = $1 AND d.status = 'pending'
+       WHERE d.tenant_id = $1 AND d.status = 'pending'${claimScope}
        ORDER BY d.created_at DESC`,
-      [db.SYSTEM_TENANT_ID]
+      claimParams
     );
 
     const devices = rows.map(row => {
@@ -198,11 +208,14 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
   try {
     const { mqttId } = req.params;
 
-    // Find pending device in SYSTEM tenant
+    // Find pending device in SYSTEM tenant (an organisation may only touch
+    // devices it has claimed; the superadmin any)
+    const isSuperAdmin = !AUTH_ENABLED || !req.user || req.user.role === 'superadmin';
     const { rows } = await db.query(
       `SELECT id, mqtt_device_id FROM devices
-       WHERE mqtt_device_id = $1 AND tenant_id = $2 AND status = 'pending'`,
-      [mqttId, db.SYSTEM_TENANT_ID]
+       WHERE mqtt_device_id = $1 AND tenant_id = $2 AND status = 'pending'
+         ${isSuperAdmin ? '' : 'AND claimed_by_tenant_id = $3'}`,
+      isSuperAdmin ? [mqttId, db.SYSTEM_TENANT_ID] : [mqttId, db.SYSTEM_TENANT_ID, req.tenantId]
     );
 
     if (rows.length === 0) {
@@ -510,13 +523,32 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
 // Use when: device was factory-reset AND was previously soft-deleted (edge case).
 router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
   try {
-    const { mqtt_device_id } = req.body;
-    if (!mqtt_device_id || typeof mqtt_device_id !== 'string' || !/^[A-F0-9]{6}$/.test(mqtt_device_id)) {
+    const raw = req.body?.mqtt_device_id;
+    if (!raw || typeof raw !== 'string' || !/^[A-Fa-f0-9]{6,12}$/.test(raw)) {
       return res.status(400).json({
         error: 'validation_failed',
-        message: 'mqtt_device_id must be a 6-char hex string (e.g. C7B0E9)',
+        message: 'mqtt_device_id must be a 6-12 char hex string (e.g. C7B0E9)',
         status: 400,
       });
+    }
+    const mqtt_device_id = raw.toUpperCase();
+
+    // An organisation admin may recover its own devices (or an id nobody owns);
+    // another organisation's device is not theirs to reset to pending.
+    const isSuperAdmin = !AUTH_ENABLED || !req.user || req.user.role === 'superadmin';
+    if (!isSuperAdmin) {
+      const { rows: owner } = await db.query(
+        'SELECT tenant_id, status FROM devices WHERE mqtt_device_id = $1', [mqtt_device_id]);
+      if (owner.length && owner[0].tenant_id !== req.tenantId && owner[0].tenant_id !== db.SYSTEM_TENANT_ID) {
+        return res.status(404).json({ error: 'not_found', message: `Device ${mqtt_device_id} not found`, status: 404 });
+      }
+      if (owner.length && owner[0].tenant_id === db.SYSTEM_TENANT_ID) {
+        const { rows: claim } = await db.query(
+          'SELECT claimed_by_tenant_id FROM devices WHERE mqtt_device_id = $1', [mqtt_device_id]);
+        if (claim[0].claimed_by_tenant_id && claim[0].claimed_by_tenant_id !== req.tenantId) {
+          return res.status(404).json({ error: 'not_found', message: `Device ${mqtt_device_id} not found`, status: 404 });
+        }
+      }
     }
 
     const bootstrapKey = process.env.MQTT_BOOTSTRAP_PASSWORD;
@@ -532,18 +564,26 @@ router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
 
     // Upsert: if device exists (even if deleted), reset to pending with bootstrap creds.
     // If device doesn't exist at all, create it fresh.
+    // The recovering organisation keeps the device in its own pending list
+    // (claimed_by_tenant_id); the superadmin leaves it unclaimed.
+    const claimedBy = isSuperAdmin ? null : req.tenantId;
     await db.query(
-      `INSERT INTO devices (tenant_id, mqtt_device_id, status, mqtt_username, mqtt_password_hash, online, last_seen)
-       VALUES ($1, $2, 'pending', $3, $4, false, NOW())
+      `INSERT INTO devices (tenant_id, mqtt_device_id, status, mqtt_username, mqtt_password_hash, online, last_seen,
+                            claim_code, claimed_by_tenant_id)
+       VALUES ($1, $2, 'pending', $3, $4, false, NOW(), $5, $6)
        ON CONFLICT (mqtt_device_id) DO UPDATE
          SET status = 'pending', deleted_at = NULL,
              tenant_id = EXCLUDED.tenant_id,
              mqtt_username = EXCLUDED.mqtt_username,
              mqtt_password_hash = EXCLUDED.mqtt_password_hash,
              site_id = NULL,
-             assigned_at = NULL`,
-      [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash]
+             assigned_at = NULL,
+             claim_code = COALESCE(devices.claim_code, EXCLUDED.claim_code),
+             claimed_by_tenant_id = COALESCE($6, devices.claimed_by_tenant_id)`,
+      [db.SYSTEM_TENANT_ID, mqtt_device_id, `device_${mqtt_device_id}`, bootstrapHash,
+       require('../lib/claim-code').generateClaimCode(), claimedBy]
     );
+    req.auditContext = { entityId: mqtt_device_id, action: 'device.recover' };
 
     // The device is back to pending; a retained `_set_tenant <old slug>` left by
     // autoReassignDevice would otherwise be replayed on its next subscribe and undo this.
@@ -560,6 +600,38 @@ router.post('/recover', maybeAuthorize('admin'), async (req, res, next) => {
         message: 'Device recovery initiated. It will appear in Pending Devices when it reconnects with bootstrap credentials.',
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── POST /api/devices/claim ───────────────────────────────
+// An organisation admin types the code printed on the controller; from then on
+// the pending device shows up in that organisation's queue and can be assigned.
+router.post('/claim', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const code = normalizeClaimCode(req.body?.claim_code);
+    if (!code) {
+      return res.status(400).json({
+        error: 'validation_failed', message: 'claim_code must be the 6-12 character code printed on the controller', status: 400,
+      });
+    }
+    const { rows } = await db.query(
+      `SELECT id, mqtt_device_id, claimed_by_tenant_id, online, last_seen, firmware_version
+         FROM devices
+        WHERE claim_code = $1 AND status = 'pending' AND tenant_id = $2`,
+      [code, db.SYSTEM_TENANT_ID]
+    );
+    if (rows.length !== 1) {
+      return res.status(404).json({ error: 'not_found', message: 'No pending controller with this code', status: 404 });
+    }
+    const dev = rows[0];
+    if (dev.claimed_by_tenant_id && dev.claimed_by_tenant_id !== req.tenantId) {
+      return res.status(409).json({ error: 'conflict', message: 'This controller was already claimed by another organization', status: 409 });
+    }
+    await db.query('UPDATE devices SET claimed_by_tenant_id = $1 WHERE id = $2', [req.tenantId, dev.id]);
+    req.auditContext = { entityId: dev.mqtt_device_id, action: 'device.claim', changes: { claim_code: code } };
+    res.json({ data: { id: dev.id, mqtt_device_id: dev.mqtt_device_id, online: dev.online, last_seen: dev.last_seen, firmware_version: dev.firmware_version, claimed: true } });
   } catch (err) {
     next(err);
   }
@@ -595,11 +667,13 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     const isSuperAdmin = req.user && req.user.role === 'superadmin';
     const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
 
-    // Verify device exists and is pending
+    // Verify device exists and is pending — and, for an organisation admin,
+    // that the organisation has claimed it with the controller's code.
     const { rows } = await db.query(
       `SELECT id, mqtt_device_id, status FROM devices
-       WHERE mqtt_device_id = $1 AND tenant_id = $2 AND status = 'pending'`,
-      [mqttId, db.SYSTEM_TENANT_ID]
+       WHERE mqtt_device_id = $1 AND tenant_id = $2 AND status = 'pending'
+         ${isSuperAdmin ? '' : 'AND claimed_by_tenant_id = $3'}`,
+      isSuperAdmin ? [mqttId, db.SYSTEM_TENANT_ID] : [mqttId, db.SYSTEM_TENANT_ID, req.tenantId]
     );
 
     if (rows.length === 0) {
@@ -611,6 +685,10 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
     }
 
     // Look up tenant slug for MQTT command
+    // Plan capacity (plan epic 1.8): the organisation's active devices against max_devices
+    const cap = await planMw.checkCapacity(targetTenantId, 'devices');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
+
     const tenantRes = await db.query(
       `SELECT slug FROM tenants WHERE id = $1`,
       [targetTenantId]
@@ -1550,10 +1628,14 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
 
 // ── POST /api/devices/:id/command ─────────────────────────────
 // Send a command to a device. Body: { key, value }
-router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
+// Viewers are read-only: the role gate comes BEFORE the per-device check so a
+// viewer with device access still gets 403 here. Values are validated against
+// state_meta.json and the keys in command-policy.js need an explicit confirm.
+router.post('/:id/command', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { key, value } = req.body || {};
+    const { key, confirm } = req.body || {};
+    let { value } = req.body || {};
 
     if (!key || value === undefined) {
       return res.status(400).json({
@@ -1568,6 +1650,23 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
       return res.status(400).json({
         error: 'validation_failed',
         message: `Key "${key}" is not a writable parameter`,
+        status: 400,
+      });
+    }
+
+    const meta = metaByKey.get(key);
+    if (meta) {
+      const check = validateCommandValue(meta, value);
+      if (!check.ok) {
+        return res.status(400).json({ error: 'validation_failed', message: check.message, status: 400 });
+      }
+      value = check.value;
+    }
+
+    if (DANGEROUS_KEYS.has(key) && confirm !== true) {
+      return res.status(400).json({
+        error: 'confirmation_required',
+        message: `"${key}" changes how the equipment runs — resend with confirm: true`,
         status: 400,
       });
     }
@@ -1595,8 +1694,11 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
 
     mqttSvc.sendCommand(tenantSlug, mqttId, key, value);
 
-    // Audit: which command was sent
-    req.auditContext = { entityId: mqttId, changes: { key, value: String(value) } };
+    // Audit: which command was sent (GET /devices/:id/commands reads these rows back)
+    req.auditContext = {
+      entityId: mqttId, action: 'device.command',
+      changes: { key, value: String(value), confirmed: confirm === true, dangerous: DANGEROUS_KEYS.has(key) },
+    };
 
     res.json({
       data: { device_id: mqttId, key, value, sent: true },
@@ -1609,6 +1711,38 @@ router.post('/:id/command', checkDeviceAccess(), async (req, res, next) => {
         status: 503,
       });
     }
+    next(err);
+  }
+});
+
+// ── GET /api/devices/:id/commands ─────────────────────────────
+// Command history from the audit log (organisation admins; superadmin any).
+router.get('/:id/commands', maybeAuthorize('admin'), checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { where, params } = buildDeviceWhere(id, req);
+    const { rows } = await db.query(`SELECT mqtt_device_id, tenant_id FROM devices WHERE ${where}`, params);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: `Device ${id} not found`, status: 404 });
+    }
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+    const scope = isSuperAdmin ? '' : ' AND (a.tenant_id = $3 OR a.tenant_id IS NULL)';
+    const q = [rows[0].mqtt_device_id, limit];
+    if (!isSuperAdmin) q.push(req.tenantId);
+    const { rows: cmds } = await db.query(
+      `SELECT a.id, a.created_at, a.user_email, a.user_role, a.status_code, a.ip,
+              a.changes->>'key' AS key, a.changes->>'value' AS value,
+              (a.changes->>'confirmed')::boolean AS confirmed,
+              (a.changes->>'dangerous')::boolean AS dangerous
+         FROM audit_log a
+        WHERE a.action = 'device.command' AND a.entity_id = $1${scope}
+        ORDER BY a.created_at DESC
+        LIMIT $2`,
+      q
+    );
+    res.json({ data: cmds });
+  } catch (err) {
     next(err);
   }
 });

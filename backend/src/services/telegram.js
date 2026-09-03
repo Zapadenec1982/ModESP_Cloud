@@ -69,6 +69,8 @@ const STRINGS = {
     duration_label: '\u{23F1}\u{FE0F} Тривалість',
     device_offline_msg: '\u{26AA} Пристрій офлайн',
     device_last_seen: '\u{1F550} Востаннє',
+    escalation_prefix: '\u{23EB} Не підтверджено {0} хв \u{2014} потрібна реакція',
+    alarm_device_offline: 'Пристрій офлайн',
     test_notification: '\u{1F514} Тестове сповіщення ModESP Cloud\n\nЯкщо ви бачите це повідомлення \u{2014} сповіщення працюють коректно!',
     device_label: '\u{1F4CD} Пристрій',
     // Alarm names
@@ -140,6 +142,8 @@ const STRINGS = {
     duration_label: '\u{23F1}\u{FE0F} Duration',
     device_offline_msg: '\u{26AA} Device offline',
     device_last_seen: '\u{1F550} Last seen',
+    escalation_prefix: '\u{23EB} Not acknowledged for {0} min \u{2014} action needed',
+    alarm_device_offline: 'Device offline',
     test_notification: '\u{1F514} ModESP Cloud test notification\n\nIf you see this message \u{2014} notifications are working correctly!',
     device_label: '\u{1F4CD} Device',
     alarm_high_temp:       'High temperature',
@@ -162,6 +166,7 @@ const STRINGS = {
 };
 
 const ALARM_KEY_MAP = {
+  device_offline:        'alarm_device_offline',
   high_temp_alarm:       'alarm_high_temp',
   low_temp_alarm:        'alarm_low_temp',
   sensor1_alarm:         'alarm_sensor1',
@@ -224,6 +229,18 @@ function matchButton(text) {
 
 // ── Init / Shutdown ───────────────────────────────────────
 
+const botHealth = {
+  configured: false,
+  bot_username: null,
+  get_me_ok_at: null,
+  get_me_error: null,
+  last_polling_error_at: null,
+  last_polling_error: null,
+};
+
+/** Bot health for /api/health/details. */
+function health() { return { ...botHealth }; }
+
 function init(log) {
   logger = log.child({ svc: 'telegram' });
 
@@ -234,8 +251,24 @@ function init(log) {
   }
 
   bot = new TelegramBot(token, { polling: true });
+  botHealth.configured = true;
+
+  // One getMe() at start proves the token: a revoked or mistyped token otherwise
+  // only shows up as an endless stream of polling errors.
+  bot.getMe()
+    .then((me) => {
+      botHealth.bot_username = me.username || null;
+      botHealth.get_me_ok_at = new Date().toISOString();
+      botHealth.get_me_error = null;
+    })
+    .catch((err) => {
+      botHealth.get_me_error = String(err && err.message || err).slice(0, 200);
+      logger.error({ err: err.message }, 'Telegram getMe failed — check TELEGRAM_BOT_TOKEN');
+    });
 
   bot.on('polling_error', (err) => {
+    botHealth.last_polling_error_at = new Date().toISOString();
+    botHealth.last_polling_error = String(err && err.message || err).slice(0, 200);
     logger.error({ err: err.message }, 'Telegram polling error');
   });
 
@@ -247,6 +280,7 @@ function init(log) {
 }
 
 function shutdown() {
+  botHealth.configured = false;
   if (bot) {
     bot.stopPolling();
     bot = null;
@@ -865,6 +899,9 @@ function buildAlarmRaisedMessage(chatId, payload) {
     `${emoji} ${t(chatId, 'alarm_raised')}: ${aName}`,
     `${t(chatId, 'device_label')}: ${deviceLabel}`,
   ];
+  if (payload.escalation) {
+    lines.unshift(t(chatId, 'escalation_prefix').replace('{0}', String(payload.escalation.minutes)));
+  }
   if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
 
   const airTemp = Number(payload.airTemp);
@@ -946,4 +983,4 @@ async function safeSend(chatId, text) {
   } catch (_) {}
 }
 
-module.exports = { init, shutdown };
+module.exports = { init, shutdown, health };

@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getPendingDevices, assignDevice, deletePendingDevice, batchRegisterDevices, getTenants } from '../lib/api.js'
+  import { getPendingDevices, assignDevice, deletePendingDevice, batchRegisterDevices, getTenants, claimDevice } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { isSuperAdmin, navigate } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
@@ -17,6 +17,26 @@
   let devices = []
   let loading = true
   let error = null
+
+  // Claim by the code printed on the controller (plan epic 1.7). An organisation
+  // sees only the pending devices it has claimed; the superadmin sees the queue.
+  let claimCode = ''
+  let claiming = false
+
+  async function handleClaim() {
+    if (!claimCode.trim()) return
+    claiming = true
+    try {
+      const dev = await claimDevice(claimCode.trim())
+      toast.success($t('pending.claimed', dev.mqtt_device_id))
+      claimCode = ''
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      claiming = false
+    }
+  }
 
   // Assign modal state
   let assigningDevice = null
@@ -300,6 +320,16 @@
     <Button variant="secondary" icon="refresh" on:click={load}>{$t('common.refresh')}</Button>
   </PageHeader>
 
+  <form class="claim-form" on:submit|preventDefault={handleClaim}>
+    <div class="claim-text">
+      <span class="claim-title">{$t('pending.claim_title')}</span>
+      <span class="claim-hint">{$t('pending.claim_hint')}</span>
+    </div>
+    <input class="claim-input" bind:value={claimCode} placeholder="ABCD-2345" maxlength="14"
+           autocomplete="off" spellcheck="false" aria-label={$t('pending.claim_code')} />
+    <Button variant="primary" type="submit" icon="plus" loading={claiming} disabled={!claimCode.trim()}>{$t('pending.claim_submit')}</Button>
+  </form>
+
   {#if loading}
     <div class="skeleton-list">
       {#each Array(3) as _}
@@ -312,7 +342,7 @@
     <EmptyState
       icon="wifi"
       title={$t('pending.no_pending')}
-      message={$t('pending.no_pending_hint')}
+      message={$isSuperAdmin ? $t('pending.no_pending_hint') : $t('pending.no_pending_hint_claim')}
     />
   {:else}
     <div class="device-list">
@@ -330,6 +360,11 @@
             <Badge variant={dev.online ? 'success' : 'neutral'} size="sm">
               {dev.online ? 'Online' : 'Offline'}
             </Badge>
+            {#if $isSuperAdmin && dev.claim_code}
+              <Badge variant={dev.claimed_by_tenant_id ? 'success' : 'warning'} size="sm">
+                {$t('pending.claim_code_label', dev.claim_code)}
+              </Badge>
+            {/if}
           </div>
           <div class="device-meta">
             {#if dev.location}
@@ -613,6 +648,31 @@
 {/if}
 
 <style>
+  .claim-form {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+  }
+  .claim-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; min-width: 0; }
+  .claim-title { font-weight: 600; font-size: var(--text-sm); }
+  .claim-hint { font-size: var(--text-xs); color: var(--text-muted); }
+  .claim-input {
+    font-family: var(--font-mono, monospace);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    width: 160px;
+  }
+
   .pending-page {
     display: flex;
     flex-direction: column;

@@ -5,8 +5,8 @@
  * Seed an admin or superadmin user for a given tenant.
  *
  * Usage:
- *   node src/db/seed-admin.js --email admin@example.com --password secret123
- *   node src/db/seed-admin.js --email super@example.com --password secret123 --role superadmin
+ *   node src/db/seed-admin.js --email admin@example.com --password 'a-long-passphrase-15+'
+ *   node src/db/seed-admin.js --email super@example.com --password 'a-long-passphrase-15+' --role superadmin
  *
  * Options:
  *   --tenant-id  UUID (default: SYSTEM_TENANT_ID)
@@ -16,6 +16,7 @@
 require('dotenv').config();
 
 const { Pool } = require('pg');
+const { MIN_PASSWORD_LENGTH } = require('../lib/password-policy');
 const { hashPassword } = require('../services/auth');
 
 async function main() {
@@ -40,8 +41,8 @@ async function main() {
     process.exit(1);
   }
 
-  if (password.length < 6) {
-    console.error('Password must be at least 6 characters');
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    console.error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     process.exit(1);
   }
 

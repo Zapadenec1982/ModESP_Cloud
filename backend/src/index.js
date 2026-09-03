@@ -26,6 +26,8 @@ const { authenticate, authorize, requireSuperadmin } = require('./middleware/aut
 const createAuditMiddleware = require('./middleware/audit');
 
 const { timingSafeEqual } = require('crypto');
+const { generateClaimCode, normalizeClaimCode } = require('./lib/claim-code');
+const { DANGEROUS_KEYS } = require('./config/command-policy');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -44,29 +46,14 @@ if (AUTH_ENABLED) {
   }
 }
 
-// ── Third-party licensing reminder ────────────────────────
-// Nominatim, Open-Meteo, the OSRM demo server and OpenRouteService are all free for
-// NON-COMMERCIAL use only. ModESP Cloud is a commercial product, so every enabled
-// service needs a paid plan or a self-hosted instance before production.
-// Warn only — never process.exit: breaking a running production system over a
-// licensing note would be worse than the note being missed.
-function logThirdPartyLicensing() {
-  const enabled = [];
-  if (geocodeSvc.isEnabled())         enabled.push('Nominatim (geocoding)');
-  if (weatherSvc.isEnabled())         enabled.push('Open-Meteo (outdoor weather, site timezones)');
-  if (routingSvc.isEnabled())         enabled.push('OSRM (route / service-round planning)');
-  if (routingSvc.isochronesEnabled()) enabled.push('OpenRouteService (isochrones)');
-  if (enabled.length === 0) return;
-
-  const message = 'Third-party geo services are enabled under free / non-commercial terms — '
-    + 'buy a plan or self-host before production. See docs/THIRD_PARTY_LICENSING.md';
-  if (process.env.NODE_ENV === 'production') {
-    logger.warn({ services: enabled }, message);
-  } else {
-    logger.info({ services: enabled }, message);
-  }
+// ── Third-party licensing guard (plan epic 1.2) ───────────
+// Nominatim's public endpoint, the OSRM demo server, Open-Meteo without a key and
+// the public OSM tiles are non-commercial only. In production the process refuses
+// to start with any of them configured unless ALLOW_NONCOMMERCIAL_GEO=true.
+const licensing = require('./lib/licensing-check');
+if (!licensing.enforce({ env: process.env, logger })) {
+  process.exit(1);
 }
-logThirdPartyLicensing();
 
 // ── Express ───────────────────────────────────────────
 const app    = express();
@@ -85,6 +72,11 @@ app.use(cors({
   credentials: true,
 }));
 
+// Map tile origins allowed by the CSP. Must match the host in VITE_MAP_TILE_URL
+// (webui/.env) and the two CSP headers in infra/nginx/modesp.conf.
+const MAP_TILE_HOSTS = (process.env.MAP_TILE_HOSTS || 'https://tile.openstreetmap.org,https://*.tile.openstreetmap.org')
+  .split(',').map(h => h.trim()).filter(Boolean);
+
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: {
@@ -92,8 +84,8 @@ app.use(helmet({
       defaultSrc:    ["'self'"],
       scriptSrc:     ["'self'"],
       styleSrc:      ["'self'", "'unsafe-inline'"], // Svelte inline styles
-      imgSrc:        ["'self'", "data:", "https://tile.openstreetmap.org", "https://*.tile.openstreetmap.org"], // OSM tiles (map page)
-      connectSrc:    ["'self'", "wss:", "ws:"],     // WebSocket
+      imgSrc:        ["'self'", "data:", ...MAP_TILE_HOSTS], // map tiles — MAP_TILE_HOSTS (webui VITE_MAP_TILE_URL host)
+      connectSrc:    ["'self'", "wss:", "ws:", "https://api.pwnedpasswords.com"], // WebSocket + HIBP k-anonymity check
       fontSrc:       ["'self'"],
       objectSrc:     ["'none'"],
       frameAncestors: ["'none'"],
@@ -108,6 +100,22 @@ app.use(helmet({
 const authLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 50,                    // 50 attempts per IP per 5 min
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
+});
+// Self-service password reset and invitation acceptance: public, email-keyed
+// flows. 10 per IP per hour is generous for a human and useless for enumeration.
+const resetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
+});
+const inviteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many attempts, try again later', status: 429 },
@@ -129,12 +137,15 @@ const registerLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
 });
-// Public site status page — unauthenticated, so the only key available is the IP
+// Public site status page — unauthenticated, so the only key available is the IP.
+// Showcase links (site_public_links.rate_limit_exempt) skip it, see routes/public.js.
+const publicRoutes = require('./routes/public');
 const publicLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 30,                    // 30 views per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => publicRoutes.isExempt(req),
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 // Routes that reach a third party (Nominatim / Open-Meteo / OSRM / OpenRouteService).
@@ -149,25 +160,19 @@ const externalLimiter = rateLimit({
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
-// ── Health check (no auth / no tenant) ────────────────────────
-app.get('/api/health', async (_req, res) => {
-  const dbOk   = await db.healthy();
-  const mqttOk = mqttSvc.isConnected();
-  const status  = dbOk && mqttOk ? 'ok' : 'degraded';
-  const code    = status === 'ok' ? 200 : 503;
-
-  res.status(code).json({
-    status,
-    db:     dbOk   ? 'ok' : 'error',
-    mqtt:   mqttOk ? 'ok' : 'error',
-    uptime: Math.floor(process.uptime()),
-  });
-});
+// ── Health check (no auth / no tenant; /details authenticates itself) ──
+app.use('/api/health', require('./routes/health'));
 
 // ── Parameter metadata (no auth — same for all devices) ──────────
 const stateMeta = require('./config/state_meta.json');
+// `dangerous` marks the keys POST /devices/:id/command accepts only with
+// confirm: true (config/command-policy.js) — the WebUI asks before sending them.
+const stateMetaResponse = {
+  ...stateMeta,
+  meta: stateMeta.meta.map(m => ({ ...m, dangerous: DANGEROUS_KEYS.has(m.key) })),
+};
 app.get('/api/meta', (_req, res) => {
-  res.json(stateMeta);
+  res.json(stateMetaResponse);
 });
 
 // ── VAPID public key for Web Push (no auth — needed before subscription) ──
@@ -230,6 +235,10 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
 
   const mqttDeviceId = device_id.toUpperCase();
   const username = `device_${mqttDeviceId}`;
+  // Claim code printed on the controller (plan epic 1.7). Reported by the
+  // firmware when it was flashed at production; generated otherwise so the
+  // superadmin can hand it to the organisation.
+  const claimCode = normalizeClaimCode(req.body?.claim_code) || generateClaimCode();
 
   try {
     // Lazy-compute bootstrap hash (once, cached for process lifetime)
@@ -299,9 +308,10 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
           `UPDATE devices
               SET tenant_id = $1, status = 'pending',
                   mqtt_username = $2, mqtt_password_hash = $3,
-                  assigned_at = NULL
+                  assigned_at = NULL,
+                  claim_code = COALESCE(claim_code, $5)
             WHERE mqtt_device_id = $4`,
-          [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId]
+          [db.SYSTEM_TENANT_ID, username, _bootstrapHash, mqttDeviceId, claimCode]
         );
         // Clean up RBAC assignments (device will be re-assigned by admin)
         await db.query(
@@ -332,9 +342,9 @@ app.post('/api/devices/register', registerLimiter, async (req, res) => {
     } else {
       // Create new pending device in SYSTEM tenant
       await db.query(
-        `INSERT INTO devices (tenant_id, mqtt_device_id, status, online)
-         VALUES ($1, $2, 'pending', false)`,
-        [db.SYSTEM_TENANT_ID, mqttDeviceId]
+        `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, claim_code)
+         VALUES ($1, $2, 'pending', false, $3)`,
+        [db.SYSTEM_TENANT_ID, mqttDeviceId, claimCode]
       );
     }
 
@@ -396,13 +406,16 @@ app.use('/api', createAuditMiddleware(logger));
 // second case reads THIS file and asserts the mount below still precedes the JWT
 // gate — so a future reorder fails a test instead of 401ing every status page.
 // The raw token travels in the X-Site-Token header, never in the path (access.log).
-app.use('/api/public', publicLimiter, require('./routes/public'));
+app.use('/api/public', publicLimiter, publicRoutes);
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {
   // Public auth routes (no JWT required)
   // Rate limit login only — refresh fires automatically and shouldn't count
   app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/forgot-password', resetLimiter);
+  app.use('/api/auth/reset-password', resetLimiter);
+  app.use('/api/auth/invite', inviteLimiter);
   app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT
@@ -424,6 +437,7 @@ if (AUTH_ENABLED) {
   app.use('/api/firmware', require('./routes/firmware'));
   app.use('/api/ota',      require('./routes/ota'));
   app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
+  app.use('/api/pilot-requests', requireSuperadmin, require('./routes/pilot-requests'));
 } else {
   // Dev fallback: tenant from header
   app.use('/api', tenantMw);
@@ -435,9 +449,10 @@ app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
 app.use('/api/devices',  require('./routes/events'));     // /:id/events
-const { deviceRouter: exportDevices, alarmRouter: exportAlarms } = require('./routes/export');
+const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('./routes/export');
 app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
 app.use('/api/alarms',   exportAlarms);                   // /export.csv
+app.use('/api/sites',    exportSites);                    // /:id/export.pdf (HACCP, whole site)
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
 app.use('/api/device-models', require('./routes/device-models'));

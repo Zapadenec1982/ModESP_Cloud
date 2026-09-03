@@ -19,9 +19,9 @@ function remove(id) {
 }
 
 export const toast = {
-  success: (msg) => add('success', msg),
-  error:   (msg) => add('error', msg, 6000),
-  warning: (msg) => add('warning', msg, 5000),
-  info:    (msg) => add('info', msg),
+  success: (msg, duration = 4000) => add('success', msg, duration),
+  error:   (msg, duration = 6000) => add('error', msg, duration),
+  warning: (msg, duration = 5000) => add('warning', msg, duration),
+  info:    (msg, duration = 4000) => add('info', msg, duration),
   remove,
 }

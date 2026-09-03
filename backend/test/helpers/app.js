@@ -87,6 +87,9 @@ function createTestApp() {
   // Auth routes (public)
   app.use('/api/auth', require('../../src/routes/auth'));
 
+  // Health: public summary + superadmin details, above the JWT gate as in index.js
+  app.use('/api/health', require('../../src/routes/health'));
+
   // Public site status page — UNAUTHENTICATED by design, and therefore mounted
   // in the same position it holds in src/index.js: above the JWT gate. Kept here
   // so any suite using this helper exercises the real order; public-site.test.js
@@ -95,6 +98,9 @@ function createTestApp() {
 
   // JWT gate
   app.use('/api', authenticate);
+
+  // Own profile (any role) — ABOVE the admin-only /api/users mount, as in index.js
+  app.use('/api/profile',  require('../../src/routes/profile'));
 
   // Admin-only routes
   app.use('/api/tenants',  authorize('admin'), require('../../src/routes/tenants'));
@@ -106,6 +112,7 @@ function createTestApp() {
 
   // Superadmin-only
   app.use('/api/audit-log', requireSuperadmin, require('../../src/routes/audit'));
+  app.use('/api/pilot-requests', requireSuperadmin, require('../../src/routes/pilot-requests'));
 
   // Routes that all authed users can access
   app.use('/api/devices', require('../../src/routes/devices'));
@@ -114,6 +121,12 @@ function createTestApp() {
   app.use('/api/devices', require('../../src/routes/alarms'));
   app.use('/api/notifications', require('../../src/routes/notifications'));
   app.use('/api/fleet',   require('../../src/routes/fleet'));
+  // Sites and exports, mounted as index.js does (plan-limit and feature gates live there)
+  app.use('/api/sites',   require('../../src/routes/sites'));
+  const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('../../src/routes/export');
+  app.use('/api/devices', exportDevices);
+  app.use('/api/alarms',  exportAlarms);
+  app.use('/api/sites',   exportSites);
 
   // Error handler
   app.use((err, _req, res, _next) => {

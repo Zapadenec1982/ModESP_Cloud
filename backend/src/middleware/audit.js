@@ -19,7 +19,9 @@ const SKIP_PATHS = new Set([
  */
 function createAuditMiddleware(logger) {
   return function auditMiddleware(req, res, next) {
-    if (SKIP_METHODS.has(req.method)) return next();
+    // Reads are not audited — except exports: a HACCP PDF or a CSV leaving the
+    // system is a compliance event (plan epic 1.9).
+    if (SKIP_METHODS.has(req.method) && !isExportPath(req)) return next();
 
     // Skip noisy auth paths but audit login/logout
     const fullPath = (req.baseUrl || '') + (req.path || '');
@@ -64,6 +66,12 @@ function createAuditMiddleware(logger) {
 
     next();
   };
+}
+
+const EXPORT_PATH_RE = /\/export(\.(pdf|csv)|\/)/;
+function isExportPath(req) {
+  const fullPath = (req.baseUrl || '') + (req.path || '');
+  return req.method === 'GET' && EXPORT_PATH_RE.test(fullPath);
 }
 
 function deriveAction(req) {

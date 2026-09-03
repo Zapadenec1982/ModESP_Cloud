@@ -133,11 +133,22 @@ async function request(path, options = {}) {
     const err = new Error(body.message || `HTTP ${res.status}`);
     err.status = res.status;
     err.body = body;
+    if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
     throw err;
   }
 
   const json = await res.json();
   return json.data;
+}
+
+/**
+ * 402 plan_limit / plan_feature: one warning toast with the upgrade contact so
+ * every page gets the same message without handling it itself.
+ */
+function notifyPlanLimit(body) {
+  const contact = import.meta.env.VITE_SALES_EMAIL || 'sales@modesp.com.ua';
+  const what = body.resource ? `${body.resource} ${body.current}/${body.limit}` : (body.feature || '');
+  toast.warning(`${body.message || 'Plan limit reached'} (${what}) → ${contact}`, 8000);
 }
 
 /**
@@ -325,6 +336,40 @@ export async function resetPassword(email, resetCode, newPassword) {
   return json.data;
 }
 
+/** POST /auth/forgot-password — always resolves; the server never reveals whether the email exists. */
+export async function forgotPassword(email, lang) {
+  return requestRaw('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, lang }),
+  });
+}
+
+// ── Invitation acceptance (public, #/invite/<token>) ─────
+
+/** GET /auth/invite/:token → { email, role, tenant: {name, slug}, existing_user, expires_at } */
+export function getInvite(token) {
+  return requestRaw(`/auth/invite/${encodeURIComponent(token)}`);
+}
+
+/**
+ * POST /auth/invite/:token/accept — sets the password (new account) or proves
+ * the existing one, then signs the user in exactly like login().
+ */
+export async function acceptInvite(token, password, acceptTerms) {
+  const data = await requestRaw(`/auth/invite/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
+    body: JSON.stringify({ password, accept_terms: acceptTerms === true }),
+  });
+  setTokens(data.access_token, data.refresh_token);
+  authUser.set(data.user);
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return data;
+}
+
 function clearAuth() {
   clearTimeout(refreshTimer);
   setTokens(null, null);
@@ -348,7 +393,7 @@ export async function restoreSession() {
 
   // Fetch user profile
   try {
-    const user = await request('/users/me');
+    const user = await request('/profile');
     authUser.set({ id: user.id, email: user.email, role: user.role });
 
     // Decode tenantId from JWT to set currentTenant
@@ -466,10 +511,35 @@ export function updateDevice(id, data) {
   });
 }
 
-export function sendCommand(deviceId, key, value) {
+/**
+ * POST /devices/:id/command. Keys flagged `dangerous` in /api/meta are accepted
+ * by the backend only with `confirm: true` — the caller shows a dialog first.
+ */
+export function sendCommand(deviceId, key, value, { confirm = false } = {}) {
   return request(`/devices/${deviceId}/command`, {
     method: 'POST',
-    body: JSON.stringify({ key, value }),
+    body: JSON.stringify(confirm ? { key, value, confirm: true } : { key, value }),
+  });
+}
+
+/** GET /devices/:id/commands (admin) — audit rows of commands sent to the device. */
+export function getDeviceCommands(deviceId, limit = 50) {
+  return request(`/devices/${deviceId}/commands?limit=${limit}`);
+}
+
+/** POST /devices/claim (admin) — add a pending controller to this organisation by its printed code. */
+export function claimDevice(claimCode) {
+  return request('/devices/claim', {
+    method: 'POST',
+    body: JSON.stringify({ claim_code: claimCode }),
+  });
+}
+
+/** POST /devices/recover (admin) — reset a stuck controller to pending with bootstrap credentials. */
+export function recoverDevice(mqttDeviceId) {
+  return request('/devices/recover', {
+    method: 'POST',
+    body: JSON.stringify({ mqtt_device_id: mqttDeviceId }),
   });
 }
 
@@ -554,6 +624,32 @@ export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
   if (severity) params.set('severity', severity);
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);
+}
+
+/** POST /alarms/:id/ack — take the alarm into work (admin, technician). */
+export function ackAlarm(alarmId, note) {
+  return request(`/alarms/${alarmId}/ack`, {
+    method: 'POST',
+    body: JSON.stringify({ note: note || null }),
+  });
+}
+
+/** GET /alarms/:id/deliveries (admin) — who was notified about the alarm and how. */
+export function getAlarmDeliveries(alarmId) {
+  return request(`/alarms/${alarmId}/deliveries`);
+}
+
+/** GET /profile/notifications — own notification preferences. */
+export function getMyNotificationPrefs() {
+  return request('/profile/notifications');
+}
+
+/** PUT /profile/notifications — partial update of own notification preferences. */
+export function updateMyNotificationPrefs(data) {
+  return request('/profile/notifications', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
 }
 
 export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
@@ -643,10 +739,28 @@ export function updateUser(id, data) {
 }
 
 export function changePassword(oldPassword, newPassword) {
-  return request('/users/me', {
+  return request('/profile/password', {
     method: 'PUT',
-    body: JSON.stringify({ old_password: oldPassword, password: newPassword }),
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
   });
+}
+
+// ── Invitations (admin) ─────────────────────────────────
+
+/** POST /users/invite → { id, email, role, tenant_id, existing_user, invite_url, email_sent, expires_at } */
+export function inviteUser({ email, role, tenant_id, lang }) {
+  return request('/users/invite', {
+    method: 'POST',
+    body: JSON.stringify({ email, role, tenant_id: tenant_id || undefined, lang }),
+  });
+}
+
+export function getInvitations() {
+  return request('/users/invitations');
+}
+
+export function revokeInvitation(id) {
+  return request(`/users/invitations/${id}`, { method: 'DELETE' });
 }
 
 export function deleteUser(id) {
@@ -692,11 +806,11 @@ export function generateTelegramLink(userId) {
 }
 
 export function generateMyTelegramLink() {
-  return request('/users/me/telegram-link', { method: 'POST' });
+  return request('/profile/telegram-link', { method: 'POST' });
 }
 
 export function unlinkMyTelegram() {
-  return request('/users/me/telegram-link', { method: 'DELETE' });
+  return request('/profile/telegram-link', { method: 'DELETE' });
 }
 
 // ── Password reset (admin) ──────────────────────────────
@@ -727,6 +841,24 @@ export function updateTenant(id, data) {
 
 export function deleteTenant(id) {
   return request(`/tenants/${id}`, { method: 'DELETE' });
+}
+
+/** GET /tenants/plans — the plan catalogue with limits. */
+export function getPlans() {
+  return request('/tenants/plans');
+}
+
+/** GET /tenants/:id/settings — organisation settings (admin of the organisation). */
+export function getTenantSettings(id) {
+  return request(`/tenants/${id}/settings`);
+}
+
+/** PATCH /tenants/:id/settings — partial update; null clears an override. */
+export function updateTenantSettings(id, data) {
+  return request(`/tenants/${id}/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }
 
 export function deleteTenantsBulk(ids) {
@@ -838,13 +970,22 @@ export async function getAuditLog(params = {}) {
 
 // ── Data Export (CSV / PDF) ──────────────────────────────
 
+/**
+ * Fetch a file with the bearer token and trigger a browser download.
+ * Resolves with the response headers so callers can surface report metadata
+ * (`X-Report-Code`, `X-Report-Source`) that the server exposes on HACCP PDFs.
+ */
 async function downloadFile(path, filename) {
   const headers = {};
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
   const res = await fetch(`${BASE}${path}`, { headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `Export failed: ${res.status}`);
+    const err = new Error(body.message || `Export failed: ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
+    throw err;
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -855,6 +996,11 @@ async function downloadFile(path, filename) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+  return {
+    code: res.headers.get('x-report-code') || null,
+    source: res.headers.get('x-report-source') || null,
+    sha256: res.headers.get('x-report-sha256') || null,
+  };
 }
 
 export function exportTelemetryCsv(deviceId, from, to) {
@@ -863,10 +1009,21 @@ export function exportTelemetryCsv(deviceId, from, to) {
   return downloadFile(`/devices/${deviceId}/telemetry/export.csv?${qs}`, fname);
 }
 
-export function exportTelemetryPdf(deviceId, from, to, bucket = '1h') {
-  const qs = new URLSearchParams({ from, to, bucket }).toString();
+export function exportTelemetryPdf(deviceId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
   const fname = `haccp_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
   return downloadFile(`/devices/${deviceId}/telemetry/export.pdf?${qs}`, fname);
+}
+
+/** One HACCP document for every active device of a site (admins, or a granted technician). */
+export function exportSitePdf(siteId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
+  const fname = `haccp_site_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/sites/${siteId}/export.pdf?${qs}`, fname);
 }
 
 export function exportAlarmsCsv(from, to, severity) {
@@ -881,7 +1038,7 @@ export function exportAlarmsCsv(from, to, severity) {
 
 export function exportDevicesCsv() {
   const fname = `devices_${new Date().toISOString().slice(0, 10)}.csv`;
-  return downloadFile('/devices/export.csv', fname);
+  return downloadFile('/devices/export/inventory.csv', fname);
 }
 
 // ── Device Models ────────────────────────────────────────
@@ -1023,7 +1180,8 @@ export function geocodePendingSites({ retryFailed = false } = {}) {
  * 'unavailable') tells those three apart.
  */
 export function getSiteWeather(id, { hours } = {}) {
-  return requestFull(`/sites/${id}/weather${geoQuery({ hours })}`);
+  // quiet: weather is a plan feature — a 402 hides the widget, it is not a warning
+  return requestFull(`/sites/${id}/weather${geoQuery({ hours })}`, { quiet: true });
 }
 
 /**
@@ -1032,7 +1190,7 @@ export function getSiteWeather(id, { hours } = {}) {
  * a partial period instead of drawing it as complete.
  */
 export function getSiteWeatherHistory(id, { from, to } = {}) {
-  return requestFull(`/sites/${id}/weather/history${geoQuery({ from, to })}`);
+  return requestFull(`/sites/${id}/weather/history${geoQuery({ from, to })}`, { quiet: true });
 }
 
 // ── Nearest technicians (Part 2 §7.4) ────────────────────

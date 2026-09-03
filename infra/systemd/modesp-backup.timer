@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily PostgreSQL backup at 02:00
+Description=Daily ModESP Cloud backup at 02:00
 
 [Timer]
 OnCalendar=*-*-* 02:00:00

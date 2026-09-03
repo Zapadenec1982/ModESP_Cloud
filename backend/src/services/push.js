@@ -23,8 +23,30 @@ const OFFLINE_NOTIFY_DELAY_MS = 120000; // 2 min delay before notifying offline
  * @param {string} name    e.g. 'telegram', 'fcm'
  * @param {{ send: (address: string, payload: object) => Promise<void> }} handler
  */
+/** name → { sent, failed, last_ok_at, last_error_at, last_error } for /api/health/details */
+const channelStats = new Map();
+
 function registerChannel(name, handler) {
-  channels.set(name, handler);
+  const stats = { sent: 0, failed: 0, last_ok_at: null, last_error_at: null, last_error: null };
+  channelStats.set(name, stats);
+  // Wrap send() so every delivery, whatever path dispatches it, feeds the health
+  // counters. The original handler keeps `this` — some channels are objects.
+  channels.set(name, {
+    ...handler,
+    async send(...args) {
+      try {
+        const r = await handler.send.apply(handler, args);
+        stats.sent++;
+        stats.last_ok_at = new Date().toISOString();
+        return r;
+      } catch (err) {
+        stats.failed++;
+        stats.last_error_at = new Date().toISOString();
+        stats.last_error = String(err && err.message || err).slice(0, 200);
+        throw err;
+      }
+    },
+  });
 }
 
 /**
@@ -45,16 +67,19 @@ function start(log) {
   );
 
   mqttSvc.on('alarm', handleAlarm);
-  mqttSvc.on('device_status', handleDeviceStatus);
+  // Offline is an alarm since plan epic 1.6 (mqtt.js raises device_offline), so
+  // the delayed device_status path is gone; what remains is the escalation sweep.
+  escalationTimer = setInterval(() => {
+    runEscalations().catch(err => logger.error({ err }, 'Escalation sweep failed'));
+  }, ESCALATION_SWEEP_MS);
+  if (escalationTimer.unref) escalationTimer.unref();
 }
 
 /** Cleanup */
 function shutdown() {
   mqttSvc.off('alarm', handleAlarm);
-  mqttSvc.off('device_status', handleDeviceStatus);
   debounceMap.clear();
-  for (const timer of offlineTimers.values()) clearTimeout(timer);
-  offlineTimers.clear();
+  if (escalationTimer) { clearInterval(escalationTimer); escalationTimer = null; }
 }
 
 // ── Alarm handling ────────────────────────────────────────
@@ -84,6 +109,13 @@ async function handleAlarm(evt) {
 
     // Build notification payload
     const payload = buildPayload(evt);
+    payload.alarmId = evt.alarmId || null;
+    if (evt.alarmCode === 'device_offline') {
+      // Rendered by the channels' offline templates when raised; the generic
+      // "alarm cleared" template names it when the device is back.
+      if (evt.active) payload.type = 'device_offline';
+      payload.lastSeen = evt.lastSeen || payload.timestamp;
+    }
 
     // For alarm clears: compute duration from alarm record
     if (!evt.active) {
@@ -146,58 +178,53 @@ async function handleAlarm(evt) {
   }
 }
 
-// ── Device offline handling ───────────────────────────────
+// ── Escalation of unacknowledged critical alarms ───────────
+//
+// A critical alarm that nobody acknowledged within ALARM_ACK_ESCALATION_MIN is
+// re-sent once to the organisation's admins. State lives in alarms.escalated_at,
+// so a restart neither loses nor duplicates an escalation. (Per-tenant override
+// arrives with tenant_settings in plan epic 1.8.)
 
-/**
- * Handle device_status event — schedule offline notification with delay.
- * @param {{ tenantSlug: string, deviceId: string, online: boolean, lastSeen: string }} evt
- */
-function handleDeviceStatus(evt) {
-  if (evt.online) {
-    // Device came back online: cancel pending offline notification
-    const timer = offlineTimers.get(evt.deviceId);
-    if (timer) {
-      clearTimeout(timer);
-      offlineTimers.delete(evt.deviceId);
-      logger.debug({ deviceId: evt.deviceId }, 'Cancelled pending offline notification');
-    }
-    return;
+const ESCALATION_MIN      = parseInt(process.env.ALARM_ACK_ESCALATION_MIN, 10) || 15;
+const ESCALATION_SWEEP_MS = parseInt(process.env.ALARM_ESCALATION_SWEEP_MS, 10) || 60_000;
+let escalationTimer = null;
+
+async function runEscalations(now = new Date()) {
+  const { rows } = await db.query(
+    `SELECT a.id, a.tenant_id, a.device_id, a.alarm_code, a.severity, a.triggered_at,
+            COALESCE(s.ack_escalation_min, $2::int) AS escalation_min
+       FROM alarms a
+       LEFT JOIN tenant_settings s ON s.tenant_id = a.tenant_id
+      WHERE a.active = true AND a.severity = 'critical'
+        AND a.acknowledged_at IS NULL AND a.escalated_at IS NULL
+        AND a.triggered_at <= $1::timestamptz - make_interval(mins => COALESCE(s.ack_escalation_min, $2::int))`,
+    [now, ESCALATION_MIN]
+  );
+
+  let escalated = 0;
+  for (const a of rows) {
+    // Claim the row first so two sweeps can never both notify.
+    const { rowCount } = await db.query(
+      'UPDATE alarms SET escalated_at = now() WHERE id = $1 AND escalated_at IS NULL', [a.id]);
+    if (rowCount === 0) continue;
+
+    const { rows: devRows } = await db.query(
+      'SELECT id, name, location FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
+      [a.tenant_id, a.device_id]
+    );
+    const payload = buildPayload({ deviceId: a.device_id, alarmCode: a.alarm_code, severity: a.severity, active: true });
+    payload.alarmId    = a.id;
+    payload.type       = 'alarm_escalation';
+    payload.escalation = { minutes: a.escalation_min, triggeredAt: a.triggered_at };
+    payload.deviceName = devRows.length ? devRows[0].name : null;
+    payload.location   = devRows.length ? devRows[0].location : null;
+
+    await dispatchToLinkedUsers(a.tenant_id, a.device_id, devRows.length ? devRows[0].id : null, payload,
+      { roleFilter: ['admin', 'superadmin'], ignoreQuietHours: true });
+    escalated++;
+    logger.warn({ alarmId: a.id, deviceId: a.device_id, alarmCode: a.alarm_code }, 'Critical alarm escalated to admins');
   }
-
-  // Device went offline: schedule delayed notification
-  if (offlineTimers.has(evt.deviceId)) return; // already scheduled
-
-  const timer = setTimeout(async () => {
-    offlineTimers.delete(evt.deviceId);
-    try {
-      const tenantId = await resolveTenantId(evt.tenantSlug);
-      if (!tenantId) return;
-
-      // Resolve device info
-      const { rows } = await db.query(
-        'SELECT id, name, location FROM devices WHERE tenant_id = $1 AND mqtt_device_id = $2',
-        [tenantId, evt.deviceId]
-      );
-      const deviceUuid = rows.length ? rows[0].id : null;
-
-      const payload = {
-        type:       'device_offline',
-        deviceId:   evt.deviceId,
-        deviceName: rows.length ? rows[0].name : null,
-        location:   rows.length ? rows[0].location : null,
-        lastSeen:   evt.lastSeen,
-        timestamp:  new Date().toISOString(),
-      };
-
-      await dispatchToLinkedUsers(tenantId, evt.deviceId, deviceUuid, payload);
-      logger.info({ deviceId: evt.deviceId }, 'Offline notification sent');
-    } catch (err) {
-      logger.error({ err, deviceId: evt.deviceId }, 'Offline notification failed');
-    }
-  }, OFFLINE_NOTIFY_DELAY_MS);
-
-  offlineTimers.set(evt.deviceId, timer);
-  logger.debug({ deviceId: evt.deviceId }, 'Scheduled offline notification (2 min delay)');
+  return escalated;
 }
 
 // ── User-based dispatch ───────────────────────────────────
@@ -207,31 +234,104 @@ function handleDeviceStatus(evt) {
  * and have access to this device (admin=all, others=user_devices).
  * Also dispatches to Web Push subscriptions.
  */
-async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { roleFilter } = {}) {
+const SEVERITY_RANK = { info: 0, warning: 1, critical: 2 };
+
+/**
+ * Local HH:MM in an IANA time zone → minutes since midnight.
+ */
+function localMinutes(date, tz) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
+      .formatToParts(date);
+    const h = parseInt(parts.find(p => p.type === 'hour').value, 10) % 24;
+    const m = parseInt(parts.find(p => p.type === 'minute').value, 10);
+    return h * 60 + m;
+  } catch {
+    return date.getUTCHours() * 60 + date.getUTCMinutes();
+  }
+}
+
+function parseHHMM(v) {
+  if (!v || typeof v !== 'string') return null;
+  const m = v.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/** True when `date` falls inside [from, to) local time; ranges may cross midnight. */
+function inQuietHours(pref, date = new Date()) {
+  const from = parseHHMM(pref.quiet_from);
+  const to   = parseHHMM(pref.quiet_to);
+  if (from === null || to === null || from === to) return false;
+  const now = localMinutes(date, pref.quiet_tz || 'Europe/Kyiv');
+  return from < to ? (now >= from && now < to) : (now >= from || now < to);
+}
+
+/**
+ * Decide whether one user gets one payload. Exported for tests.
+ * @returns {{ deliver: boolean, reason?: string, channels: {telegram:boolean, webpush:boolean, email:boolean} }}
+ */
+function evaluatePrefs(user, payload, { ignoreQuietHours = false, now = new Date() } = {}) {
+  const off = { telegram: false, webpush: false, email: false };
+  if (user.pref_enabled === false) return { deliver: false, reason: 'disabled', channels: off };
+
+  const severity = payload.severity || 'warning';
+  const minSev   = user.min_severity || 'info';
+  if ((SEVERITY_RANK[severity] ?? 1) < (SEVERITY_RANK[minSev] ?? 0)) {
+    return { deliver: false, reason: 'below_min_severity', channels: off };
+  }
+  // Quiet hours never hold back a critical alarm or an escalation.
+  if (!ignoreQuietHours && severity !== 'critical' && inQuietHours(user, now)) {
+    return { deliver: false, reason: 'quiet_hours', channels: off };
+  }
+  return {
+    deliver: true,
+    channels: {
+      telegram: user.pref_telegram !== false,
+      webpush:  user.pref_webpush  !== false,
+      email:    user.pref_email    !== false,
+    },
+  };
+}
+
+/**
+ * Send a notification to every user who may see this device (admins of the
+ * organisation; technicians/viewers through user_devices ∪ user_sites — the
+ * same rule middleware/device-access.js applies), honouring each user's
+ * notification preferences. Superadmins are included only when they opted in
+ * (users.receive_all_tenant_alerts). Every attempt is written to
+ * notification_log with user_id and alarm_id.
+ */
+async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { roleFilter, ignoreQuietHours = false } = {}) {
   // Enrich payload with device UUID for deep links
   payload.deviceUuid = deviceUuid;
 
-  // Get all users who have access to this tenant
   const { rows: users } = await db.query(
-    `SELECT DISTINCT u.id, u.role, u.telegram_id, u.email
-     FROM users u
-     LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
-     WHERE u.active = true
-       AND (u.tenant_id = $1 OR ut.tenant_id IS NOT NULL OR u.role = 'superadmin')`,
+    `SELECT DISTINCT u.id, u.role, u.telegram_id, u.email, u.receive_all_tenant_alerts,
+            p.enabled AS pref_enabled, p.min_severity,
+            p.telegram AS pref_telegram, p.webpush AS pref_webpush, p.email AS pref_email,
+            p.quiet_from, p.quiet_to, p.quiet_tz
+       FROM users u
+       LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
+       LEFT JOIN user_notification_prefs p ON p.user_id = u.id
+      WHERE u.active = true
+        AND (u.tenant_id = $1 OR ut.tenant_id IS NOT NULL OR u.role = 'superadmin')`,
     [tenantId]
   );
+  if (!users.length) return [];
 
-  if (!users.length) return;
-
-  // Batch: fetch device access for non-admin users (avoids N+1)
-  const nonAdminIds = users
-    .filter(u => u.role !== 'admin' && u.role !== 'superadmin')
-    .map(u => u.id);
+  // Access set for non-admins: user_devices ∪ user_sites (one query, no N+1)
+  const nonAdminIds = users.filter(u => u.role !== 'admin' && u.role !== 'superadmin').map(u => u.id);
   const accessSet = new Set();
   if (nonAdminIds.length > 0 && deviceUuid) {
     const { rows: accessRows } = await db.query(
-      `SELECT user_id FROM user_devices WHERE user_id = ANY($1) AND device_id = $2`,
-      [nonAdminIds, deviceUuid]
+      `SELECT ud.user_id FROM user_devices ud
+        WHERE ud.device_id = $2 AND ud.user_id = ANY($1)
+       UNION
+       SELECT us.user_id FROM user_sites us
+         JOIN devices d ON d.site_id = us.site_id AND d.tenant_id = us.tenant_id
+        WHERE d.id = $2 AND us.tenant_id = $3 AND us.user_id = ANY($1)`,
+      [nonAdminIds, deviceUuid, tenantId]
     );
     for (const r of accessRows) accessSet.add(r.user_id);
   }
@@ -240,16 +340,19 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
   const wpHandler    = channels.get('webpush');
   const emailHandler = channels.get('email');
 
-  // Batch: fetch all push subscriptions for eligible users (avoids N+1)
-  const eligibleUserIds = users
-    .filter(u => u.role === 'admin' || u.role === 'superadmin' || accessSet.has(u.id))
-    .map(u => u.id);
+  const recipients = users.filter(u => {
+    if (roleFilter && !roleFilter.includes(u.role)) return false;
+    if (u.role === 'superadmin') return u.receive_all_tenant_alerts === true;
+    if (u.role === 'admin') return true;
+    return !!deviceUuid && accessSet.has(u.id);
+  });
+
   let subsByUser = new Map();
-  if (wpHandler && eligibleUserIds.length > 0) {
+  if (wpHandler && recipients.length > 0) {
     const { rows: allSubs } = await db.query(
       `SELECT user_id, endpoint, key_p256dh, key_auth FROM push_subscriptions
-       WHERE user_id = ANY($1) AND active = true`,
-      [eligibleUserIds]
+        WHERE user_id = ANY($1) AND active = true`,
+      [recipients.map(u => u.id)]
     );
     for (const sub of allSubs) {
       if (!subsByUser.has(sub.user_id)) subsByUser.set(sub.user_id, []);
@@ -257,56 +360,59 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
     }
   }
 
-  for (const user of users) {
-    // Role filter: e.g. info alarms → admin/superadmin only
-    if (roleFilter && !roleFilter.includes(user.role)) continue;
+  const delivered = [];
+  const alarmCode = payload.alarmCode || null;
+  const logCtx = { userId: null, alarmId: payload.alarmId || null };
 
-    // RBAC: admin/superadmin see all; others need user_devices entry
-    if (user.role !== 'admin' && user.role !== 'superadmin') {
-      if (!deviceUuid || !accessSet.has(user.id)) continue;
+  for (const user of recipients) {
+    const verdict = evaluatePrefs(user, payload, { ignoreQuietHours });
+    if (!verdict.deliver) {
+      logger.debug({ userId: user.id, reason: verdict.reason }, 'Notification skipped by preferences');
+      continue;
     }
+    logCtx.userId = user.id;
 
-    // Telegram
-    if (tgHandler && user.telegram_id) {
+    if (tgHandler && verdict.channels.telegram && user.telegram_id) {
       try {
         await tgHandler.send(String(user.telegram_id), payload);
-        logger.info({
-          channel: 'telegram', userId: user.id,
-          deviceId, active: payload.active,
-          type: payload.type || 'alarm',
-        }, 'User push sent');
+        await logDelivery(tenantId, null, 'telegram', deviceId, alarmCode, 'sent', null, logCtx);
+        delivered.push({ userId: user.id, channel: 'telegram' });
+        logger.info({ channel: 'telegram', userId: user.id, deviceId, type: payload.type || 'alarm' }, 'User push sent');
       } catch (err) {
+        await logDelivery(tenantId, null, 'telegram', deviceId, alarmCode, 'failed', err.message, logCtx);
         logger.error({ err, userId: user.id, telegram_id: user.telegram_id }, 'Telegram push send failed');
       }
     }
 
-    // Web Push — send to all active subscriptions for this user
     const userSubs = subsByUser.get(user.id);
-    if (wpHandler && userSubs) {
+    if (wpHandler && verdict.channels.webpush && userSubs) {
       for (const sub of userSubs) {
-        const subscription = {
-          endpoint: sub.endpoint,
-          keys: { p256dh: sub.key_p256dh, auth: sub.key_auth }
-        };
+        const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.key_p256dh, auth: sub.key_auth } };
         try {
           await wpHandler.send(subscription, payload);
+          await logDelivery(tenantId, null, 'webpush', deviceId, alarmCode, 'sent', null, logCtx);
+          delivered.push({ userId: user.id, channel: 'webpush' });
           logger.info({ channel: 'webpush', userId: user.id, deviceId }, 'WebPush sent');
         } catch (err) {
+          await logDelivery(tenantId, null, 'webpush', deviceId, alarmCode, 'failed', String(err.statusCode || err.message), logCtx);
           logger.debug({ err: err.statusCode || err.message, userId: user.id }, 'WebPush send failed');
         }
       }
     }
 
-    // Email — send to user's email address
-    if (emailHandler && user.email) {
+    if (emailHandler && verdict.channels.email && user.email) {
       try {
         await emailHandler.send(user.email, payload);
+        await logDelivery(tenantId, null, 'email', deviceId, alarmCode, 'sent', null, logCtx);
+        delivered.push({ userId: user.id, channel: 'email' });
         logger.info({ channel: 'email', userId: user.id, deviceId }, 'Email sent');
       } catch (err) {
+        await logDelivery(tenantId, null, 'email', deviceId, alarmCode, 'failed', err.message, logCtx);
         logger.error({ err: err.message, userId: user.id }, 'Email send failed');
       }
     }
   }
+  return delivered;
 }
 
 /**
@@ -365,12 +471,12 @@ function buildPayload(evt) {
   };
 }
 
-async function logDelivery(tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage) {
+async function logDelivery(tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage, ctx = {}) {
   try {
     await db.query(
-      `INSERT INTO notification_log (tenant_id, subscriber_id, channel, device_id, alarm_code, status, error_message)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage || null]
+      `INSERT INTO notification_log (tenant_id, subscriber_id, channel, device_id, alarm_code, status, error_message, user_id, alarm_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [tenantId, subscriberId, channel, deviceId, alarmCode, status, errorMessage || null, ctx.userId || null, ctx.alarmId || null]
     );
   } catch (err) {
     if (logger) logger.error({ err }, 'Failed to log notification delivery');
@@ -413,4 +519,20 @@ async function testSend(tenantId, subscriberId) {
   }
 }
 
-module.exports = { registerChannel, start, shutdown, testSend };
+/** Delivery health per registered channel (empty when nothing is configured). */
+function channelHealth() {
+  const out = {};
+  for (const [name, stats] of channelStats) out[name] = { configured: true, ...stats };
+  return out;
+}
+
+module.exports = {
+  registerChannel, start, shutdown, testSend, channelHealth,
+  // test/notifications-dispatch.test.js drives the dispatch without a broker
+  __test: {
+    handleAlarm, dispatchToLinkedUsers, runEscalations, evaluatePrefs, inQuietHours,
+    setLogger(l) { logger = l; },
+    reset() { debounceMap.clear(); channels.clear(); channelStats.clear(); },
+    ESCALATION_MIN,
+  },
+};

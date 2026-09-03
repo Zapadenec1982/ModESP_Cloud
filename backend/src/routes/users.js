@@ -5,7 +5,10 @@ const { z }       = require('zod');
 const crypto      = require('crypto');
 const db          = require('../services/db');
 const authSvc     = require('../services/auth');
+const emailSvc    = require('../services/email');
 const { isUuidFormat } = require('../lib/ids');
+const { passwordSchema } = require('../lib/password-policy');
+const planMw = require('../middleware/plan');
 
 const router = Router();
 
@@ -13,7 +16,7 @@ const router = Router();
 
 const createUserSchema = z.object({
   email:     z.string().email(),
-  password:  z.string().min(15),
+  password:  passwordSchema,
   role:      z.enum(['admin', 'technician', 'viewer']).default('viewer'),
   tenant_id: z.string().uuid().optional(),   // superadmin only — create in another tenant
 });
@@ -42,12 +45,6 @@ const updateUserSchema = z.object({
   base_longitude: z.number().min(-180).max(180).nullable().optional(),
   base_address:   z.string().max(256).nullable().optional(),
 }).refine(baseLocationPaired, { message: BASE_LOCATION_PAIR_MSG });
-
-const updateProfileSchema = z.object({
-  email:        z.string().email().optional(),
-  password:     z.string().min(15).optional(),
-  old_password: z.string().optional(),
-});
 
 const deviceAccessSchema = z.object({
   device_id: z.string().uuid(),
@@ -103,140 +100,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ── GET /users/me — self profile ────────────────────────
-
-router.get('/me', async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      `SELECT id, email, role, active, created_at, last_login, push_token, telegram_id,
-              base_latitude, base_longitude, base_address
-       FROM users WHERE id = $1 AND tenant_id = $2`,
-      [req.user.id, req.tenantId]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
-    }
-    res.json({ data: rows[0] });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Get profile failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to get profile', status: 500 });
-  }
-});
-
-// ── PUT /users/me — update own profile ──────────────────
-
-router.put('/me', async (req, res) => {
-  const parsed = updateProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'validation_failed',
-      message: parsed.error.issues[0].message,
-      status: 400,
-    });
-  }
-
-  const { email, password, old_password } = parsed.data;
-
-  try {
-    // If changing password, verify old password
-    if (password) {
-      if (!old_password) {
-        return res.status(400).json({
-          error: 'validation_failed',
-          message: 'old_password is required to change password',
-          status: 400,
-        });
-      }
-
-      const { rows } = await db.query(
-        'SELECT password_hash FROM users WHERE id = $1 AND tenant_id = $2',
-        [req.user.id, req.tenantId]
-      );
-      if (rows.length === 0) {
-        return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
-      }
-
-      const valid = await authSvc.comparePassword(old_password, rows[0].password_hash);
-      if (!valid) {
-        return res.status(400).json({
-          error: 'invalid_password',
-          message: 'Current password is incorrect',
-          status: 400,
-        });
-      }
-    }
-
-    const sets = [];
-    const params = [];
-    let idx = 1;
-
-    if (email) {
-      sets.push(`email = $${idx++}`);
-      params.push(email);
-    }
-    if (password) {
-      const hash = await authSvc.hashPassword(password);
-      sets.push(`password_hash = $${idx++}`);
-      params.push(hash);
-    }
-
-    if (sets.length === 0) {
-      return res.status(400).json({
-        error: 'validation_failed',
-        message: 'Nothing to update',
-        status: 400,
-      });
-    }
-
-    params.push(req.user.id, req.tenantId);
-    const { rows } = await db.query(
-      `UPDATE users SET ${sets.join(', ')} WHERE id = $${idx++} AND tenant_id = $${idx}
-       RETURNING id, email, role, active`,
-      params
-    );
-
-    res.json({ data: rows[0] });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Update profile failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to update profile', status: 500 });
-  }
-});
-
-// ── POST /users/me/telegram-link — generate link code ────
-
-router.post('/me/telegram-link', async (req, res) => {
-  try {
-    const code = crypto.randomBytes(8).toString('hex');  // 16 hex chars
-    const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 min TTL
-
-    await db.query(
-      `UPDATE users SET telegram_link_code = $1, telegram_link_expires = $2
-       WHERE id = $3 AND tenant_id = $4`,
-      [code, expires, req.user.id, req.tenantId]
-    );
-
-    res.json({ data: { link_code: code, expires_at: expires.toISOString() } });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Generate telegram link failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to generate link', status: 500 });
-  }
-});
-
-// ── DELETE /users/me/telegram-link — unlink Telegram ─────
-
-router.delete('/me/telegram-link', async (req, res) => {
-  try {
-    await db.query(
-      `UPDATE users SET telegram_id = NULL, telegram_link_code = NULL, telegram_link_expires = NULL
-       WHERE id = $1 AND tenant_id = $2`,
-      [req.user.id, req.tenantId]
-    );
-    res.json({ data: { message: 'Telegram unlinked' } });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Unlink telegram failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to unlink', status: 500 });
-  }
-});
+// The former /users/me, /users/me/telegram-link and /users/me/push-subscription
+// routes live in routes/profile.js (mounted at /api/profile for every role).
 
 // ── POST /users — create (admin / superadmin) ───────────
 
@@ -257,6 +122,9 @@ router.post('/', async (req, res) => {
   const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
 
   try {
+    const cap = await planMw.checkCapacity(targetTenantId, 'users');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
+
     const hash = await authSvc.hashPassword(password);
     const { rows } = await db.query(
       `INSERT INTO users (tenant_id, email, password_hash, role)
@@ -285,6 +153,154 @@ router.post('/', async (req, res) => {
     }
     req.log?.error?.({ err }, 'Create user failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to create user', status: 500 });
+  }
+});
+
+// ── Invitations (plan epic 1.5) ──────────────────────────
+//
+// POST /users/invite creates a one-time link; the invitee sets a password on
+// #/invite/<token> (routes/auth.js) and is logged straight in. When the email
+// already belongs to an account, acceptance links that account to this
+// organisation instead of creating a second one. The link is always returned to
+// the admin as well, so onboarding works before Resend is configured.
+
+const INVITE_TTL_HOURS = 72;
+
+const inviteSchema = z.object({
+  email:     z.string().email().max(256),
+  role:      z.enum(['admin', 'technician', 'viewer']).default('viewer'),
+  tenant_id: z.string().uuid().optional(),   // superadmin only
+  lang:      z.enum(['uk', 'en', 'pl', 'de']).optional(),
+});
+
+function appBaseUrl() {
+  return (process.env.EMAIL_APP_URL || process.env.CORS_ORIGIN || 'https://modesp.com.ua').replace(/\/+$/, '');
+}
+
+router.post('/invite', async (req, res) => {
+  const parsed = inviteSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  const email = parsed.data.email.trim().toLowerCase();
+  const { role, tenant_id, lang } = parsed.data;
+  const isSuperAdmin = req.user.role === 'superadmin';
+  const targetTenantId = (isSuperAdmin && tenant_id) ? tenant_id : req.tenantId;
+
+  try {
+    const { rows: tRows } = await db.query('SELECT id, name, slug, active FROM tenants WHERE id = $1', [targetTenantId]);
+    if (tRows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    }
+    const tenant = tRows[0];
+
+    const { rows: uRows } = await db.query('SELECT id FROM users WHERE lower(email) = $1 LIMIT 1', [email]);
+    const existing = uRows[0] || null;
+    if (existing) {
+      const { rows: member } = await db.query(
+        'SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2', [existing.id, targetTenantId]);
+      if (member.length) {
+        return res.status(409).json({ error: 'conflict', message: 'User is already a member of this organization', status: 409 });
+      }
+    } else {
+      // A new account will count against max_users of the organisation
+      const cap = await planMw.checkCapacity(targetTenantId, 'users');
+      if (!cap.ok) return planMw.planLimitResponse(res, cap);
+    }
+
+    // One open invitation per email and organisation: a re-invite supersedes the old link.
+    await db.query(
+      `UPDATE invitations SET revoked_at = now()
+        WHERE tenant_id = $1 AND lower(email) = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+      [targetTenantId, email]
+    );
+
+    const token     = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3600 * 1000);
+    const { rows } = await db.query(
+      `INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, email, role, created_at, expires_at`,
+      [targetTenantId, email, role, tokenHash, req.user.id, expiresAt]
+    );
+    const inviteUrl = `${appBaseUrl()}/#/invite/${token}`;
+
+    let emailSent = false;
+    try {
+      emailSent = await emailSvc.sendInvitation({
+        to: email, link: inviteUrl, tenantName: tenant.name, role,
+        invitedBy: req.user.email, lang, expiresHours: INVITE_TTL_HOURS,
+      });
+    } catch (err) {
+      req.log?.error?.({ err, email }, 'Invitation email failed — link returned to the admin instead');
+    }
+
+    req.auditContext = {
+      entityId: rows[0].id, action: 'user.invite',
+      changes: { email, role, tenant_id: targetTenantId, existing_user: !!existing, email_sent: emailSent },
+    };
+    res.status(201).json({
+      data: { ...rows[0], tenant_id: targetTenantId, existing_user: !!existing, invite_url: inviteUrl, email_sent: emailSent },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Invite failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to create invitation', status: 500 });
+  }
+});
+
+// GET /users/invitations — open invitations (admin: own tenant; superadmin: all or ?tenant_id=)
+router.get('/invitations', async (req, res) => {
+  const isSuperAdmin = req.user.role === 'superadmin';
+  const filterTenant = isSuperAdmin ? (req.query.tenant_id || null) : req.tenantId;
+  if (filterTenant && !isUuidFormat(filterTenant)) {
+    return res.status(400).json({ error: 'validation_failed', message: 'tenant_id must be a UUID', status: 400 });
+  }
+  try {
+    const params = [];
+    let where = 'i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > now()';
+    if (filterTenant) { params.push(filterTenant); where += ` AND i.tenant_id = $${params.length}`; }
+    const { rows } = await db.query(
+      `SELECT i.id, i.tenant_id, t.name AS tenant_name, i.email, i.role, i.created_at, i.expires_at,
+              u.email AS invited_by_email
+         FROM invitations i
+         JOIN tenants t ON t.id = i.tenant_id
+         LEFT JOIN users u ON u.id = i.invited_by
+        WHERE ${where}
+        ORDER BY i.created_at DESC`,
+      params
+    );
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'List invitations failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to list invitations', status: 500 });
+  }
+});
+
+// DELETE /users/invitations/:id — revoke an open invitation
+router.delete('/invitations/:id', async (req, res) => {
+  if (!isUuidFormat(req.params.id)) {
+    return res.status(404).json({ error: 'not_found', message: 'Invitation not found', status: 404 });
+  }
+  const isSuperAdmin = req.user.role === 'superadmin';
+  try {
+    const params = [req.params.id];
+    let scope = '';
+    if (!isSuperAdmin) { params.push(req.tenantId); scope = ' AND tenant_id = $2'; }
+    const { rows } = await db.query(
+      `UPDATE invitations SET revoked_at = now()
+        WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL${scope}
+        RETURNING id, email`,
+      params
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Invitation not found', status: 404 });
+    }
+    req.auditContext = { entityId: rows[0].id, action: 'user.invite_revoke', changes: { email: rows[0].email } };
+    res.json({ data: { message: 'Invitation revoked' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Revoke invitation failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to revoke invitation', status: 500 });
   }
 });
 
@@ -944,78 +960,6 @@ router.delete('/:id/sites/:siteId', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════
-// ── Push Subscriptions (Web Push API) ────────────────────
-// ══════════════════════════════════════════════════════════
-
-const pushSubSchema = z.object({
-  endpoint:   z.string().url(),
-  keys: z.object({
-    p256dh: z.string().min(1),
-    auth:   z.string().min(1),
-  }),
-});
-
-// POST /users/me/push-subscription — save Web Push subscription
-router.post('/me/push-subscription', async (req, res) => {
-  const parsed = pushSubSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: 'validation_failed',
-      message: parsed.error.issues[0].message,
-      status: 400,
-    });
-  }
-
-  const { endpoint, keys } = parsed.data;
-  const userId   = req.user.id || req.user.sub;
-  const tenantId = req.tenantId;
-
-  try {
-    const { rows } = await db.query(
-      `INSERT INTO push_subscriptions (user_id, tenant_id, endpoint, key_p256dh, key_auth, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (endpoint) DO UPDATE SET
-         key_p256dh = EXCLUDED.key_p256dh,
-         key_auth   = EXCLUDED.key_auth,
-         user_id    = EXCLUDED.user_id,
-         tenant_id  = EXCLUDED.tenant_id,
-         active     = true,
-         user_agent = EXCLUDED.user_agent
-       RETURNING id`,
-      [userId, tenantId, endpoint, keys.p256dh, keys.auth, req.headers['user-agent'] || null]
-    );
-    res.json({ data: { id: rows[0].id, message: 'Subscription saved' } });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Save push subscription failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to save subscription', status: 500 });
-  }
-});
-
-// DELETE /users/me/push-subscription — remove Web Push subscription by endpoint
-router.delete('/me/push-subscription', async (req, res) => {
-  const { endpoint } = req.body || {};
-  if (!endpoint) {
-    return res.status(400).json({
-      error: 'validation_failed',
-      message: 'endpoint is required',
-      status: 400,
-    });
-  }
-
-  const userId = req.user.id || req.user.sub;
-
-  try {
-    await db.query(
-      `DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2`,
-      [userId, endpoint]
-    );
-    res.json({ data: { message: 'Subscription removed' } });
-  } catch (err) {
-    req.log?.error?.({ err }, 'Delete push subscription failed');
-    res.status(500).json({ error: 'internal_error', message: 'Failed to remove subscription', status: 500 });
-  }
-});
 
 // ── Password reset (admin generates code for user) ────────
 

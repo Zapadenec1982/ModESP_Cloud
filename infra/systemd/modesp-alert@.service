@@ -1,0 +1,13 @@
+[Unit]
+Description=Telegram platform alert for failed unit %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Root: reads TELEGRAM_BOT_TOKEN / PLATFORM_ALERT_CHAT_ID from backend/.env and
+# the failed unit's journal. Triggered via OnFailure=modesp-alert@%n.service.
+ExecStart=/opt/modesp-cloud/infra/scripts/alert-telegram.sh %i
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

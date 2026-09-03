@@ -53,6 +53,7 @@
           <th>{$t('alarm.col_severity')}</th>
           <th>{$t('alarm.col_duration')}</th>
           <th>{$t('alarm.col_status')}</th>
+          <th>{$t('alarm.col_ack')}</th>
         </tr>
       </thead>
       <tbody>
@@ -72,6 +73,13 @@
                 <span class="status-active">{$t('common.active')}</span>
               {:else}
                 <span class="status-cleared">{$t('alarm.cleared')}</span>
+              {/if}
+            </td>
+            <td class="muted">
+              {#if alarm.acknowledged_at}
+                ✓ {formatDate(alarm.acknowledged_at)}{alarm.acknowledged_by_email ? ' · ' + alarm.acknowledged_by_email : ''}
+              {:else}
+                —
               {/if}
             </td>
           </tr>

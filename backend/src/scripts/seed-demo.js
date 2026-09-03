@@ -35,6 +35,7 @@ require('dotenv').config();
 
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const crypto   = require('crypto');
 const { hashPassword } = require('../services/auth');
 
 // Loaded through a helper so a missing/edited data file reports the path and the
@@ -274,6 +275,58 @@ async function seedTechnicians(pool, tenants, dryRun) {
   return { created, updated };
 }
 
+// ── Showcase (plan epic 1.10) ─────────────────────────────
+// One read-only login the landing page can hand out, plus a public status link
+// of the first site flagged rate_limit_exempt so the demo page never 429s.
+const DEMO_VIEWER_EMAIL = process.env.DEMO_VIEWER_EMAIL || 'demo@modesp.com.ua';
+const DEMO_APP_URL = (process.env.EMAIL_APP_URL || 'https://modesp.com.ua').replace(/\/$/, '');
+
+async function seedShowcase(pool, tenant, dryRun) {
+  if (dryRun) {
+    console.log(`  [${tenant.slug}] ${DEMO_VIEWER_EMAIL} (viewer, every site) + showcase link on the first site`);
+    return null;
+  }
+  const hash = await hashPassword(DEMO_PASSWORD);
+  const { rows: u } = await pool.query(
+    `INSERT INTO users (tenant_id, email, password_hash, role) VALUES ($1,$2,$3,'viewer')
+     ON CONFLICT (tenant_id, email) DO UPDATE SET
+       password_hash = EXCLUDED.password_hash, role = 'viewer', active = true
+     RETURNING id`,
+    [tenant.id, DEMO_VIEWER_EMAIL, hash]
+  );
+  const viewerId = u[0].id;
+  await pool.query(
+    `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+    [viewerId, tenant.id]
+  );
+  await pool.query(
+    `INSERT INTO user_sites (user_id, site_id, tenant_id, granted_by)
+     SELECT $1, s.id, s.tenant_id, $1 FROM sites s WHERE s.tenant_id = $2
+     ON CONFLICT DO NOTHING`,
+    [viewerId, tenant.id]
+  );
+
+  const { rows: sites } = await pool.query(
+    `SELECT id, name FROM sites WHERE tenant_id = $1 ORDER BY name LIMIT 1`, [tenant.id]);
+  if (sites.length === 0) return { viewerId, token: null, site: null };
+  const { rows: existing } = await pool.query(
+    `SELECT id FROM site_public_links
+      WHERE site_id = $1 AND tenant_id = $2 AND rate_limit_exempt = true
+        AND revoked_at IS NULL AND expires_at > NOW()`,
+    [sites[0].id, tenant.id]
+  );
+  if (existing.length) return { viewerId, token: null, site: sites[0].name, existed: true };
+
+  const raw  = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+  await pool.query(
+    `INSERT INTO site_public_links (tenant_id, site_id, token_hash, label, expires_at, created_by, rate_limit_exempt)
+     VALUES ($1,$2,$3,'showcase', NOW() + INTERVAL '3650 days', $4, true)`,
+    [tenant.id, sites[0].id, tokenHash, viewerId]
+  );
+  return { viewerId, token: raw, site: sites[0].name };
+}
+
 async function main() {
   let args;
   try {
@@ -346,6 +399,20 @@ async function main() {
         console.log(`  password: ${DEMO_PASSWORD}`);
         console.log('  ^ generated for this run only and shown once. Set DEMO_PASSWORD');
         console.log('    to choose your own; re-running mints a NEW password.');
+      }
+    }
+
+    console.log(`\nShowcase (${tenants[0].slug}):`);
+    const show = await seedShowcase(pool, tenants[0], dryRun);
+    if (show) {
+      console.log(`  viewer login: ${DEMO_VIEWER_EMAIL} (same password as the technicians)`);
+      if (show.token) {
+        console.log(`  status page:  ${DEMO_APP_URL}/#/public/site/${show.token}`);
+        console.log('  ^ shown once — the token is stored hashed. Put it on the landing page.');
+      } else if (show.existed) {
+        console.log(`  status page:  showcase link for "${show.site}" already exists (revoke it to mint a new one)`);
+      } else {
+        console.log('  status page:  no site to link yet');
       }
     }
 

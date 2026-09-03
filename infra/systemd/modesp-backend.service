@@ -2,7 +2,12 @@
 Description=ModESP Cloud Backend
 Documentation=https://github.com/Zapadenec1982/ModESP_Cloud
 After=network.target postgresql.service mosquitto.service
-Requires=postgresql.service mosquitto.service
+# Wants, not Requires: a broker or database restart (package upgrade, certbot
+# hook) must not stop the backend — its MQTT client and pg pool reconnect on
+# their own, and with Requires= systemd would stop the backend and never start
+# it again.
+Wants=postgresql.service mosquitto.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=simple
@@ -25,7 +30,10 @@ MemoryMax=512M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/modesp-cloud/backend
+# The release layout (infra/deploy.sh) keeps .env and firmware/ under
+# /opt/modesp-releases/shared and symlinks them into the release; the second
+# path (ignored while absent) keeps OTA uploads writable there.
+ReadWritePaths=/opt/modesp-cloud/backend -/opt/modesp-releases/shared
 PrivateTmp=true
 
 # Logging (journald)

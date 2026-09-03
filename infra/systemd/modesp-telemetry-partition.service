@@ -1,16 +1,24 @@
 [Unit]
-Description=Create next month telemetry partition
+Description=Ensure telemetry partitions for the next 6 months
 After=postgresql.service
+Wants=postgresql.service
+OnFailure=modesp-alert@%n.service
 
 [Service]
 Type=oneshot
-# Run as the postgres OS user so peer auth over the local socket succeeds.
-# (OS user "modesp" != DB role "modesp_cloud", so -U modesp_cloud over the
-#  socket was rejected by peer auth and the partition was never created —
-#  telemetry INSERTs would start failing on the 1st of an uncovered month.)
-User=postgres
+# Runs as the app user with the DB_USER credentials from backend/.env:
+# create_telemetry_partition() is SECURITY DEFINER since migration 023, so the
+# schema owner is no longer needed here.
+User=modesp
+Group=modesp
+WorkingDirectory=/opt/modesp-cloud/backend
+ExecStart=/usr/bin/node src/scripts/ensure-partitions.js
+
 NoNewPrivileges=true
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ExecStart=/usr/bin/psql -d modesp_cloud -c "SELECT create_telemetry_partition(EXTRACT(YEAR FROM NOW() + INTERVAL '2 months')::INT, EXTRACT(MONTH FROM NOW() + INTERVAL '2 months')::INT)"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=modesp-telemetry-partition

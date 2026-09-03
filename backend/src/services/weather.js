@@ -22,6 +22,9 @@ const db = require('./db');
 // ── Config ────────────────────────────────────────────────
 
 const DEFAULT_URL = 'https://api.open-meteo.com/v1';
+// Paid plans use the customer host with an API key (plan epic 1.2)
+const CUSTOMER_URL = 'https://customer-api.open-meteo.com/v1';
+const apiKey = () => (process.env.WEATHER_API_KEY || '').trim();
 
 const ROUND_DP            = 2;      // ~1.1 km — cache key and poll granularity
 const MAX_CACHE_ENTRIES   = 5000;   // hard ceiling; oldest entries are evicted first
@@ -72,7 +75,7 @@ function log() {
 
 /** Base URL with a guaranteed trailing slash so `new URL(path, base)` keeps the /v1 prefix. */
 function baseUrl() {
-  const raw = (process.env.WEATHER_URL || '').trim() || DEFAULT_URL;
+  const raw = (process.env.WEATHER_URL || '').trim() || (apiKey() ? CUSTOMER_URL : DEFAULT_URL);
   return raw.replace(/\/+$/, '') + '/';
 }
 
@@ -233,6 +236,7 @@ function buildUrl(lats, lons, opts) {
   url.searchParams.set('wind_speed_unit', 'ms');
   url.searchParams.set('timezone', 'auto');
   url.searchParams.set('timeformat', 'unixtime');
+  if (apiKey()) url.searchParams.set('apikey', apiKey());
   return url;
 }
 

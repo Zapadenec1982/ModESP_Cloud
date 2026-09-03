@@ -18,6 +18,7 @@ const { Router } = require('express');
 const crypto     = require('crypto');
 const { z }      = require('zod');
 const db         = require('../services/db');
+const planMw = require('../middleware/plan');
 const mqttSvc    = require('../services/mqtt');
 const geocodeSvc = require('../services/geocode');
 const weatherSvc = require('../services/weather');
@@ -647,6 +648,10 @@ router.post('/', maybeAuthorize('admin'), async (req, res, next) => {
     const isSuperadmin   = req.user && req.user.role === 'superadmin';
     const targetTenantId = (isSuperadmin && parsed.data.tenant_id) ? parsed.data.tenant_id : req.tenantId;
 
+    // Plan capacity (plan epic 1.8): sites against max_sites
+    const cap = await planMw.checkCapacity(targetTenantId, 'sites');
+    if (!cap.ok) return planMw.planLimitResponse(res, cap);
+
     const site = {
       tenant_id:     targetTenantId,
       name:          trimOrNull(parsed.data.name, MAX_LEN.name),
@@ -1022,7 +1027,7 @@ router.post('/:id/geocode', maybeAuthorize('admin'), async (req, res, next) => {
 // Registered before /:id/weather for clarity — Express matches exact paths.
 // Any role that may READ THE SITE: outdoor weather is public data, but "which
 // site ids exist in this tenant" is not — hence the same gate as GET /:id.
-router.get('/:id/weather/history', filterDeviceAccess(), async (req, res, next) => {
+router.get('/:id/weather/history', planMw.requireFeature('weather'), filterDeviceAccess(), async (req, res, next) => {
   try {
     if (!isUuidFormat(req.params.id)) return siteNotFound(res);
 
@@ -1065,7 +1070,7 @@ router.get('/:id/weather/history', filterDeviceAccess(), async (req, res, next) 
 // the endpoint degrades to { data: null } with a reason — never a 500.
 // Any role that may READ THE SITE — same gate as GET /:id, so an unentitled
 // caller cannot use this endpoint to enumerate the tenant's site ids.
-router.get('/:id/weather', filterDeviceAccess(), async (req, res, next) => {
+router.get('/:id/weather', planMw.requireFeature('weather'), filterDeviceAccess(), async (req, res, next) => {
   try {
     if (!isUuidFormat(req.params.id)) return siteNotFound(res);
 

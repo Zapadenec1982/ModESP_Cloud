@@ -31,6 +31,7 @@ const crypto     = require('crypto');
 const rateLimit  = require('express-rate-limit');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
+const emailSvc   = require('../services/email');
 
 const router = Router();
 
@@ -49,12 +50,47 @@ const MAX_PUBLIC_DEVICES = 200;
 // (a supertest run comes from a single IP and would otherwise trip the limit
 // while asserting the 404 paths).
 const limiterStore = new rateLimit.MemoryStore();
+
+// ── Showcase links skip the limiter (plan epic 1.10) ──────
+// site_public_links.rate_limit_exempt marks the demo site linked from the
+// landing page. Its token hashes are cached here and refreshed every minute,
+// so the check per request is one sha256 and a Set lookup — no query, and an
+// unknown token is still limited exactly as before (the 404 path never skips).
+const EXEMPT_REFRESH_MS = 60 * 1000;
+let exemptHashes = new Set();
+let exemptTimer = null;
+
+async function refreshExempt() {
+  try {
+    const { rows } = await db.query(
+      `SELECT token_hash FROM site_public_links
+        WHERE rate_limit_exempt = true AND revoked_at IS NULL AND expires_at > NOW()`);
+    exemptHashes = new Set(rows.map(r => r.token_hash));
+  } catch (err) {
+    // keep the previous set; a database hiccup must not open or close the gate
+  }
+  return exemptHashes.size;
+}
+
+function isExempt(req) {
+  if (!exemptTimer) {
+    exemptTimer = setInterval(refreshExempt, EXEMPT_REFRESH_MS);
+    if (typeof exemptTimer.unref === 'function') exemptTimer.unref();
+    refreshExempt();
+  }
+  if (exemptHashes.size === 0) return false;
+  const token = readToken(req);
+  if (!token) return false;
+  return exemptHashes.has(crypto.createHash('sha256').update(token).digest('hex'));
+}
+
 const publicLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,  // 5 min
   max: 30,                    // 30 views per IP per 5 min
   standardHeaders: true,
   legacyHeaders: false,
   store: limiterStore,
+  skip: isExempt,
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
@@ -114,7 +150,7 @@ router.get('/site', async (req, res) => {
         WHERE token_hash = $1
           AND revoked_at IS NULL
           AND expires_at > NOW()
-        RETURNING id, tenant_id, site_id`,
+        RETURNING id, tenant_id, site_id, expires_at`,
       [tokenHash]
     );
 
@@ -127,9 +163,9 @@ router.get('/site', async (req, res) => {
     // is belt-and-braces — but it is also what keeps an explicit tenant predicate
     // on every statement in this file, as the codebase requires.
     const { rows: siteRows } = await db.query(
-      `SELECT name, city, region, country
-         FROM sites
-        WHERE id = $1 AND tenant_id = $2`,
+      `SELECT s.name, s.city, s.region, s.country, t.name AS organisation
+         FROM sites s JOIN tenants t ON t.id = s.tenant_id
+        WHERE s.id = $1 AND s.tenant_id = $2`,
       [link.site_id, link.tenant_id]
     );
 
@@ -182,9 +218,11 @@ router.get('/site', async (req, res) => {
     res.json({
       data: {
         name:         site.name,
+        organisation: site.organisation,       // whose page this is (plan epic 1.11)
         city:         site.city,
         region:       site.region,
         country:      site.country,
+        link_expires_at: link.expires_at,      // lets the page warn a week ahead
         devices,
         device_count: devices.length,
         online_count: devices.filter(d => d.online).length,
@@ -198,6 +236,128 @@ router.get('/site', async (req, res) => {
   }
 });
 
+// ── GET /api/public/plans — pricing for the landing page (plan epic 1.11) ──
+// The landing renders what the catalogue says, so the price list and the
+// limits the platform enforces come from the same rows. Only public plans.
+router.get('/plans', async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  try {
+    const { rows } = await db.query(
+      `SELECT plan, name, tagline, max_devices, max_sites, max_users, retention_days, sampling_sec, features,
+              price_controller_uah, price_site_uah, price_base_uah, price_note
+         FROM plan_limits WHERE public = true ORDER BY sort_order`);
+    res.json({ data: rows });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Public plans failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to load plans', status: 500 });
+  }
+});
+
+// ── POST /api/public/pilot-request — the landing form (plan epic 1.11) ──
+// Stored first (no lead is lost when e-mail is not configured), then mailed
+// to PILOT_REQUEST_EMAIL. `website` is a honeypot: bots fill it, people never
+// see it; a filled honeypot answers 200 and stores nothing.
+const SEGMENTS = new Set(['service', 'retail', 'horeca', 'pharma', 'other']);
+
+function clean(v, max) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+}
+
+router.post('/pilot-request', async (req, res) => {
+  publicHeaders(res);
+  const body = req.body || {};
+  if (clean(body.website, 10)) return res.status(200).json({ data: { received: true } });
+
+  const name  = clean(body.name, 120);
+  const email = clean(body.email, 254);
+  if (!name || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'validation_failed', message: 'name and a valid email are required', status: 400 });
+  }
+  const segment = clean(body.segment, 32);
+  const sites = Number.isInteger(body.sites) ? body.sites : parseInt(body.sites, 10);
+  const lang = ['uk', 'en', 'pl', 'de'].includes(body.lang) ? body.lang : 'uk';
+  const row = {
+    name, email,
+    company: clean(body.company, 160),
+    phone:   clean(body.phone, 40),
+    segment: segment && SEGMENTS.has(segment) ? segment : (segment ? 'other' : null),
+    sites:   Number.isFinite(sites) && sites >= 0 && sites <= 100000 ? sites : null,
+    message: clean(body.message, 4000),
+    source:  clean(body.source, 64),
+    lang,
+  };
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO pilot_requests (name, company, email, phone, segment, sites, message, source, lang, ip)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, created_at`,
+      [row.name, row.company, row.email, row.phone, row.segment, row.sites, row.message, row.source, row.lang, req.ip || null]);
+    const id = rows[0].id;
+    let emailed = false;
+    try {
+      emailed = await emailSvc.sendPilotRequest({ to: process.env.PILOT_REQUEST_EMAIL, request: { id, ...row, created_at: rows[0].created_at } });
+      if (emailed) await db.query('UPDATE pilot_requests SET emailed_at = NOW() WHERE id = $1', [id]);
+    } catch (err) {
+      req.log?.warn?.({ err }, 'Pilot request stored but not e-mailed');
+    }
+    req.log?.info?.({ id, segment: row.segment, emailed }, 'Pilot request received');
+    res.status(201).json({ data: { received: true, emailed } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Pilot request failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to store the request', status: 500 });
+  }
+});
+
+// ── GET /api/public/report/:code — HACCP report verification (plan epic 1.9) ──
+// An inspector holding a printed report checks that the platform generated it:
+// the code is on the footer, the SHA-256 covers the report data. Nothing
+// beyond what the report itself already shows is returned — no ids, no
+// telemetry, no user data — and an unknown code is the same 404 as a revoked one.
+router.get('/report/:code', async (req, res) => {
+  const code = String(req.params.code || '').replace(/[\s-]/g, '').toUpperCase();
+  if (!/^[A-Z0-9]{12}$/.test(code)) {
+    return res.status(404).json({ error: 'not_found', message: 'Report not found', status: 404 });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT r.code, r.kind, r.period_from, r.period_to, r.bucket, r.source, r.lang, r.sha256, r.generated_at,
+              COALESCE(t.legal_name, t.name) AS organisation,
+              s.name AS site_name, d.name AS device_name
+         FROM report_exports r
+         JOIN tenants t ON t.id = r.tenant_id
+         LEFT JOIN sites s ON s.id = r.site_id
+         LEFT JOIN devices d ON d.mqtt_device_id = r.device_id AND d.tenant_id = r.tenant_id
+        WHERE r.code = $1`,
+      [code]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Report not found', status: 404 });
+    }
+    const r = rows[0];
+    res.json({
+      data: {
+        code:         r.code.replace(/(.{4})(?=.)/g, '$1-'),
+        kind:         r.kind,
+        organisation: r.organisation,
+        site:         r.site_name || null,
+        device:       r.device_name || null,
+        period_from:  r.period_from,
+        period_to:    r.period_to,
+        bucket:       r.bucket,
+        source:       r.source,
+        lang:         r.lang,
+        sha256:       r.sha256,
+        generated_at: r.generated_at,
+        valid:        true,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Report verification failed');
+    res.status(500).json({ error: 'internal_error', message: 'Verification failed', status: 500 });
+  }
+});
+
 module.exports = router;
 
 // Test hook: the limiter above lives for the lifetime of the router and a
@@ -205,3 +365,5 @@ module.exports = router;
 // exercise both the limiter and the 404 paths without one starving the other.
 // Not referenced by any production code path.
 module.exports.resetRateLimit = () => limiterStore.resetAll();
+module.exports.refreshExempt = refreshExempt;
+module.exports.isExempt = isExempt;

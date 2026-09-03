@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ModESP Cloud — хмарний моніторинг і керування холодильним обладнанням</title>
+  <meta name="description" content="Контролер ModESP_v4 у слоті Carel/Eliwell/Dixell і хмара: температура, аварії в Telegram за хвилину, HACCP-журнал інспекційного рівня, дистанційне налаштування, енергія. Для сервісних компаній, мереж, HoReCa і аптек.">
+  <link rel="canonical" href="https://modesp.com.ua/">
+  <meta property="og:title" content="ModESP Cloud — холодильне обладнання під контролем">
+  <meta property="og:description" content="Контролер, який сам розповідає про себе: аварії, HACCP-журнал, дистанційні налаштування, енергія.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://modesp.com.ua/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><span class="brand-mark">M</span> ModESP Cloud</a>
+    <nav class="nav" aria-label="Розділи">
+      <a href="#controller">Контролер</a>
+      <a href="#segments">Для кого</a>
+      <a href="#pricing">Ціни</a>
+      <a href="/partners.html">Партнерам</a>
+      <a href="#pilot">Пілот</a>
+      <a class="btn btn-ghost" href="/cloud/">Увійти</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <h1>Холодильна вітрина, яка сама розповідає про себе</h1>
+      <p class="lead">ModESP_v4 стає в той самий слот, що Carel, Eliwell чи Dixell, і надсилає в хмару температуру, аварії, стан компресора та енергію. Ви бачите кожну камеру мережі на одному екрані, отримуєте аварію в Telegram за хвилину і показуєте інспектору HACCP-журнал, а не зошит.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#pilot">Попросити пілот</a>
+        <a class="btn btn-ghost" href="#" data-cfg="demoStatusUrl" target="_blank" rel="noopener">Подивитись живу демо-точку</a>
+        <a class="btn btn-ghost" href="#" data-cfg="demoAppUrl" target="_blank" rel="noopener">Демо-кабінет</a>
+      </div>
+      <div class="hero-facts">
+        <div class="fact"><strong>≤ 60 с</strong><span>від події до сповіщення</span></div>
+        <div class="fact"><strong>3 роки</strong><span>погодинного архіву температур</span></div>
+        <div class="fact"><strong>4 мови</strong><span>інтерфейсу і HACCP-звіту</span></div>
+        <div class="fact"><strong>0 змін</strong><span>у холодильному агрегаті</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="controller">
+    <div class="wrap">
+      <h2>Що робить контролер, а не лише вимірює температуру</h2>
+      <p class="muted">Накладний датчик бачить лише температуру. ModESP_v4 керує агрегатом і тому знає, чому вона така.</p>
+      <div class="grid">
+        <article class="card"><h3>Керування</h3><ul><li>Уставка, гістерезис, відтайка за розкладом або за датчиком випарника</li><li>Вентилятори, підсвітка, нагрівач дверей</li><li>Зміна параметрів із хмари з підтвердженням і журналом команд</li></ul></article>
+        <article class="card"><h3>Захисти та аварії</h3><ul><li>Висока/низька температура з затримкою і ескалацією</li><li>Відкриті двері, обрив датчика, часті пуски компресора</li><li>Втрата зв'язку стає аварією, а не тишею</li></ul></article>
+        <article class="card"><h3>HACCP і звіти</h3><ul><li>Журнал температур по точці або по вітрині, PDF українською</li><li>Код перевірки і відбиток SHA-256 у футері кожного звіту</li><li>Публічна перевірка справжності для інспектора</li></ul></article>
+        <article class="card"><h3>Енергія та прошивки</h3><ul><li>Оцінка споживання за моделлю компресора і тарифом</li><li>Оновлення прошивки хвилями з автопаузою</li><li>Заміна контролера без втрати історії точки</li></ul></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="segments">
+    <div class="wrap">
+      <h2>Для кого</h2>
+      <div class="grid">
+        <article class="card"><span class="tag">Сервісна компанія</span><h3>Обслуговуєте холод десятків клієнтів</h3><ul><li>Усі клієнти на одній карті, найближчий технік до аварії</li><li>Партнерський рахунок і брендовані статус-сторінки</li><li>Історія обслуговування і команд по кожній вітрині</li></ul></article>
+        <article class="card"><span class="tag">Мережа або HoReCa</span><h3>Від 5 до 150 точок</h3><ul><li>Публічна статус-сторінка на екрані бек-офісу</li><li>Права доступу по точках: керівник бачить своє, техслужба — усе</li><li>Планові звіти за точку, енергія в гривнях</li></ul></article>
+        <article class="card"><span class="tag">Аптека</span><h3>Холодовий ланцюг ліків і вакцин</h3><ul><li>Електронний реєстратор з хмарним резервуванням</li><li>Сповіщення в Telegram і на пошту, тихі години для некритичних</li><li>Журнал для перевірки з підписом відповідальної особи</li></ul></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="chart-section">
+    <div class="wrap">
+      <h2>30 днів однієї вітрини</h2>
+      <p class="muted">Так виглядає місяць у кабінеті: температура повітря, уставка, відтайки, дві події — залишені відкритими двері та перезапуск компресора. Дані з демонстраційного стенду.</p>
+      <div class="chart">
+        <div id="chart" aria-live="polite"></div>
+        <div class="chart-legend"><span><i class="lg-air"></i>повітря</span><span><i class="lg-set"></i>уставка −18 °C</span><span><i class="lg-alarm"></i>аварія</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="calc-section">
+    <div class="wrap">
+      <h2>Штраф проти підписки</h2>
+      <p class="muted">У 2026 році штраф за відсутність HACCP для юридичної особи — 259 410 грн. Порахуйте, скільки років підписки він коштує.</p>
+      <form id="calc" class="calc">
+        <div>
+          <label><span>Контролерів (вітрин, камер)</span><input type="number" name="controllers" min="1" max="5000" value="6"></label>
+          <label><span>Тариф</span><select name="plan"><option value="basic">Об'єкт — 150 грн за контролер</option><option value="pro">Мережа — 250 грн за точку + за контролер</option></select></label>
+          <label><span>Точок (для тарифу «Мережа»)</span><input type="number" name="sites" min="1" max="1000" value="1"></label>
+        </div>
+        <div id="calc-out" class="calc-out"></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="wrap">
+      <h2>Ціни</h2>
+      <p class="muted">Без ПДВ. Ліміти й ціни беруться з того самого каталогу, за яким працює платформа.</p>
+      <div id="plans" class="plans">
+        <article class="card plan"><span class="tag">Пілот, один об'єкт</span><h3>Старт</h3><div class="price">0 грн</div><div class="note">1 точка, до 3 контролерів, 30 днів історії</div><ul><li>Панель, Telegram і push, CSV</li></ul><a class="btn btn-ghost" href="#pilot">Почати безкоштовно</a></article>
+        <article class="card plan plan-featured"><span class="tag">Аптека, кафе, магазин</span><h3>Об'єкт</h3><div class="price">150 грн<small>/контролер/міс</small></div><div class="note">річна передоплата −15 %</div><ul><li>До 20 контролерів, 3 точки, 10 користувачів</li><li>400 днів первинних даних, 3 роки архіву</li><li>HACCP PDF, енергія, точки і карта</li></ul><a class="btn btn-primary" href="#pilot">Попросити пілот</a></article>
+        <article class="card plan"><span class="tag">Від 5 до 150 точок</span><h3>Мережа</h3><div class="price">250 грн<small>/точка</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 контролерів — 80 грн, від 500 — 60 грн</div><ul><li>До 500 контролерів, 100 точок</li><li>800 днів первинних даних</li><li>+ OTA-ролаути, API-ключі</li></ul><a class="btn btn-ghost" href="#pilot">Попросити пілот</a></article>
+        <article class="card plan"><span class="tag">Великі мережі, держустанови</span><h3>Enterprise</h3><div class="price">за запитом</div><div class="note">окрема інсталяція, SLA, API — від 200 000 грн на рік</div><ul><li>Без обмежень</li><li>Брендовані сторінки і PDF</li></ul><a class="btn btn-ghost" href="#pilot">Обговорити</a></article>
+        <article class="card plan"><span class="tag">Сервісна компанія</span><h3>Партнер</h3><div class="price">2 000 грн<small>/міс</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 — 80 грн, від 300 — 70 грн</div><ul><li>Будь-яка кількість клієнтських організацій</li><li>Партнерський рахунок, крос-тенантна карта</li></ul><a class="btn btn-ghost" href="/partners.html">Партнерська програма</a></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="pilot">
+    <div class="wrap">
+      <h2>Запит на пілот</h2>
+      <p class="muted">Один об'єкт, два-три контролери, 30 днів. Ми встановимо контролери, підключимо сповіщення і покажемо перший HACCP-звіт. Відповідаємо протягом одного робочого дня.</p>
+      <form id="pilot-form" class="form" data-source="landing" novalidate>
+        <label><span>Ім'я *</span><input name="name" required maxlength="120" autocomplete="name"></label>
+        <label><span>Компанія</span><input name="company" maxlength="160" autocomplete="organization"></label>
+        <label><span>E-mail *</span><input name="email" type="email" required maxlength="254" autocomplete="email"></label>
+        <label><span>Телефон</span><input name="phone" maxlength="40" autocomplete="tel"></label>
+        <label><span>Хто ви</span><select name="segment"><option value="service">Сервісна компанія</option><option value="retail">Мережа магазинів</option><option value="horeca">Кафе, ресторан, готель</option><option value="pharma">Аптека, медзаклад</option><option value="other">Інше</option></select></label>
+        <label><span>Скільки точок</span><input name="sites" type="number" min="0" max="100000" placeholder="1"></label>
+        <label class="full"><span>Тариф, що цікавить</span><select name="plan"><option value="">Ще не знаю</option><option value="free">Старт</option><option value="basic">Об'єкт</option><option value="pro">Мережа</option><option value="partner">Партнер</option><option value="enterprise">Enterprise</option></select></label>
+        <label class="full"><span>Що у вас стоїть зараз і що болить</span><textarea name="message" rows="4" maxlength="4000"></textarea></label>
+        <label class="hp" aria-hidden="true">Не заповнюйте<input name="website" tabindex="-1" autocomplete="off"></label>
+        <label class="full consent"><input type="checkbox" name="consent" required> <span>Погоджуюся з <a href="/legal/privacy" target="_blank" rel="noopener">політикою конфіденційності</a>; дані використовуються лише для відповіді на цей запит.</span></label>
+        <div class="full"><button class="btn btn-primary" type="submit">Надіслати запит</button><div id="pilot-msg" class="form-msg" role="status"></div></div>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a href="/legal/offer">Публічна оферта</a>
+      <a href="/legal/privacy">Конфіденційність</a>
+      <a href="/legal/service">Рівень сервісу</a>
+      <a href="/partners.html">Партнерам</a>
+      <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Статус платформи</a>
+      <a href="#" data-cfg="github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <div>
+      <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>
+      <span>© <span data-year>2026</span> ModESP</span>
+    </div>
+  </div>
+</footer>
+<script src="/config.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ const mqtt = require('mqtt');
 const { EventEmitter } = require('events');
 const db       = require('./db');
 const mqttAuth = require('./mqtt-auth');
+const { generateClaimCode } = require('../lib/claim-code');
 
 const emitter = new EventEmitter();
 
@@ -54,8 +55,16 @@ const EVENT_KEYS = {
 };
 
 // ── In-memory registries ──────────────────────────────────
-/** @type {Map<string, {id: string, active: boolean}>}  slug → tenant */
+/** @type {Map<string, {id: string, active: boolean, status: string}>}  slug → tenant */
 const tenantRegistry = new Map();
+/** Sessions/traffic are served for these organisation statuses (plan epic 1.8) */
+const OPEN_TENANT_STATUSES = new Set(['trial', 'active', 'past_due']);
+/** @type {Map<string, object>}  tenantId → tenant_settings row (per-organisation delays) */
+const tenantSettings = new Map();
+const settingFor = (tenantId, key) => {
+  const v = tenantSettings.get(tenantId)?.[key];
+  return v === null || v === undefined ? undefined : v;
+};
 /** @type {Map<string, {id: string, tenantId: string, status: string}>}  mqttDeviceId → device */
 const deviceRegistry = new Map();
 /**
@@ -79,6 +88,10 @@ let timers = [];
 let connected = false;
 let startupTime = 0;
 const STARTUP_GRACE_MS = 120_000; // 2 min — ignore stuck detection while receiving retained messages
+
+// $SYS/broker/* figures published by the local listener (mosquitto sys_interval,
+// 10 s by default). Surfaced by GET /api/health/details.
+const brokerStats = { clients_connected: null, updated_at: null };
 
 // ── Public API ────────────────────────────────────────────
 
@@ -117,6 +130,7 @@ async function start(log) {
 
   await loadRegistries();
   await bootstrapStateMap();
+  await rearmPendingAlarms();
 
   const url  = process.env.MQTT_URL  || 'mqtt://localhost:1883';
   const user = process.env.MQTT_USER || '';
@@ -158,7 +172,12 @@ async function shutdown() {
   for (const t of timers) clearInterval(t);
   timers = [];
 
-  // Clear pending nuisance alarm timers
+  // Persist every dirty device state, debounce or not: the next start rehydrates
+  // stateMap from devices.last_state, and rearmPendingAlarms() needs it to carry
+  // the alarm keys exactly as they were when this process stopped.
+  await stateWriter(true).catch(err => logger.error({ err }, 'Failed to flush device state on shutdown'));
+
+  // Clear pending nuisance alarm timers — rearmPendingAlarms() restarts them on boot
   for (const timer of pendingAlarms.values()) clearTimeout(timer);
   pendingAlarms.clear();
 
@@ -194,12 +213,16 @@ function onConnect() {
   client.subscribe('modesp/+/state/+');
   client.subscribe('modesp/+/status');
 
+  // Broker self-reporting (localhost listener, no ACL) — for /api/health/details
+  client.subscribe('$SYS/broker/clients/connected');
+
   logger.info('Subscribed to MQTT topics');
 }
 
 function onMessage(topic, payload, packet) {
   try {
     const msg = payload.toString().trim();
+    if (topic.startsWith('$SYS/')) { handleSysMessage(topic, msg); return; }
     const parsed = parseTopic(topic);
     if (!parsed) return;
 
@@ -229,6 +252,19 @@ function onMessage(topic, payload, packet) {
     logger.error({ err, topic: topic.toString() }, 'Failed to process MQTT message');
   }
 }
+
+function handleSysMessage(topic, msg) {
+  if (topic === '$SYS/broker/clients/connected') {
+    const n = parseInt(msg, 10);
+    if (Number.isFinite(n)) {
+      brokerStats.clients_connected = n;
+      brokerStats.updated_at = new Date().toISOString();
+    }
+  }
+}
+
+/** Last $SYS figures seen from the broker (nulls until the first publish). */
+function getBrokerStats() { return { ...brokerStats }; }
 
 // ── Topic parsing ─────────────────────────────────────────
 
@@ -331,7 +367,7 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
       ).catch(err => { logger.error({ err, deviceId, alarmCode }, 'Failed to reconcile alarm'); return { rowCount: 0 }; });
       if (rowCount > 0) {
         logger.info({ deviceId, alarmCode }, 'Reconciled stale alarm after restart');
-        emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
+        emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmCode, active: false, severity: alarmSeverity(alarmCode) });
       }
     }
   }
@@ -351,6 +387,7 @@ async function handleStateKey(tenantSlug, deviceId, key, rawPayload, isRetained)
   }
 
   // Update state
+  if (!state._online || state._offlineSince) clearOfflineAlarm(state, deviceId);
   state[key]       = value;
   state._lastSeen  = now;
   state._online    = true;
@@ -417,6 +454,7 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
   // Log event
   if (online) {
     insertEvent(tenantInfo.id, deviceId, 'device_online');
+    clearOfflineAlarm(state, deviceId);
   } else {
     insertEvent(tenantInfo.id, deviceId, 'device_offline');
   }
@@ -461,6 +499,7 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
     };
     stateMap.set(deviceId, state);
   }
+  if (!state._online || state._offlineSince) clearOfflineAlarm(state, deviceId);
   state._lastSeen = now;
   state._online   = true;
 
@@ -562,7 +601,7 @@ function handleBackfill(tenantSlug, deviceId, rawPayload) {
     values
   ).catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
 
-  logger.info({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
+  logger.debug({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
 }
 
 const BACKFILL_EVENT_NAMES = {
@@ -655,12 +694,58 @@ const NUISANCE_DELAY = {
   pulldown_alarm: parseInt(process.env.PULLDOWN_ALARM_DELAY_MS, 10) || 300000,  // 5 min
 };
 
+/**
+ * After a restart, re-arm the nuisance timers for alarm keys that were already
+ * TRUE when the previous process stopped and still have no active alarm row.
+ *
+ * Without this a door left open across a restart never alarms: the rehydrated
+ * state already says door_alarm=true, so the device's next report of true is not
+ * a transition, detectAlarm() is never reached, and the alarm would only fire
+ * after the door closed and opened again. Keys without a nuisance delay are left
+ * alone — for those a true→true report carries nothing new (the raise happened
+ * before the restart, or the row was reconciled away on purpose).
+ *
+ * @returns {Promise<number>} timers armed
+ */
+async function rearmPendingAlarms() {
+  const codes = Object.keys(NUISANCE_DELAY);
+  let active;
+  try {
+    ({ rows: active } = await db.query(
+      `SELECT device_id, alarm_code FROM alarms
+        WHERE active = true AND alarm_code = ANY($1::text[])`,
+      [codes]
+    ));
+  } catch (err) {
+    logger.error({ err }, 'Failed to load active nuisance alarms — timers not re-armed');
+    return 0;
+  }
+  const activeSet = new Set(active.map(r => `${r.device_id}:${r.alarm_code}`));
+
+  let armed = 0;
+  for (const [deviceId, state] of stateMap) {
+    if (!state._tenantId || !state._tenantSlug || state._tenantSlug === 'pending') continue;
+    for (const code of codes) {
+      if (state[`protection.${code}`] !== true) continue;
+      if (activeSet.has(`${deviceId}:${code}`)) continue;
+      await detectAlarm(state._tenantSlug, deviceId, `protection.${code}`, true, state);
+      armed++;
+    }
+  }
+  if (armed) logger.info({ armed }, 'Re-armed nuisance alarm timers after restart');
+  return armed;
+}
+
 async function detectAlarm(tenantSlug, deviceId, key, value, state) {
   const tenantInfo = resolveTenant(tenantSlug);
   const alarmCode  = key.replace('protection.', '');
   const severity   = alarmSeverity(alarmCode);
   const pendingKey = `${deviceId}:${alarmCode}`;
-  const delay      = NUISANCE_DELAY[alarmCode];
+  // Organisation override (tenant_settings) wins over the platform default
+  const override   = alarmCode === 'door_alarm'     ? settingFor(tenantInfo.id, 'door_alarm_delay_ms')
+                   : alarmCode === 'pulldown_alarm' ? settingFor(tenantInfo.id, 'pulldown_alarm_delay_ms')
+                   : undefined;
+  const delay      = override !== undefined ? override : NUISANCE_DELAY[alarmCode];
 
   if (value === true) {
     if (delay) {
@@ -685,12 +770,16 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
     }
     // Alarm cleared — await DB before emitting to avoid race condition
     let cleared;
+    let clearedId = null;
     try {
-      ({ rowCount: cleared } = await db.query(
+      const res = await db.query(
         `UPDATE alarms SET active = false, cleared_at = NOW()
-         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true`,
+         WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = $3 AND active = true
+         RETURNING id`,
         [tenantInfo.id, deviceId, alarmCode]
-      ));
+      );
+      cleared = res.rowCount;
+      clearedId = res.rows[0]?.id ?? null;
     } catch (err) {
       // Never announce a clear we failed to persist — the alarm row is still
       // active = true, so the UI reading it would contradict the broadcast.
@@ -703,22 +792,24 @@ async function detectAlarm(tenantSlug, deviceId, key, value, state) {
     // (429) and drowned out the clears that carried real information.
     if (cleared === 0) return;
     logger.info({ tenantSlug, deviceId, alarmCode }, 'Alarm cleared');
-    emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: false, severity });
+    emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmId: clearedId, alarmCode, active: false, severity });
   }
 }
 
 async function raiseAlarm(tenantInfo, tenantSlug, deviceId, alarmCode, severity) {
   logger.warn({ tenantSlug, deviceId, alarmCode }, 'Alarm raised');
+  let alarmId = null;
   try {
-    await db.query(
+    const { rows } = await db.query(
       `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
-       VALUES ($1, $2, $3, $4, true, NOW())`,
+       VALUES ($1, $2, $3, $4, true, NOW()) RETURNING id`,
       [tenantInfo.id, deviceId, alarmCode, severity]
     );
+    alarmId = rows[0].id;
   } catch (err) {
     logger.error({ err, deviceId, alarmCode }, 'Failed to insert alarm');
   }
-  emitter.emit('alarm', { tenantSlug, deviceId, alarmCode, active: true, severity });
+  emitter.emit('alarm', { tenantSlug, tenantId: tenantInfo.id, deviceId, alarmId, alarmCode, active: true, severity });
 }
 
 function alarmSeverity(code) {
@@ -856,13 +947,14 @@ function ensureDevice(tenantSlug, deviceId) {
     // assigned_at = NULL keeps the column's invariant ("NULL while pending or deleted",
     // migration 022) locally true here rather than relying on the delete handlers having
     // nulled it on the way in.
-    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen)
-     VALUES ($1, $2, 'pending', true, NOW())
+    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, last_seen, claim_code)
+     VALUES ($1, $2, 'pending', true, NOW(), $3)
      ON CONFLICT (mqtt_device_id) DO UPDATE
        SET status = 'pending', deleted_at = NULL, tenant_id = EXCLUDED.tenant_id,
-           online = true, last_seen = NOW(), assigned_at = NULL
+           online = true, last_seen = NOW(), assigned_at = NULL,
+           claim_code = COALESCE(devices.claim_code, EXCLUDED.claim_code)
        WHERE devices.status = 'deleted'`,
-    [tenantInfo.id, deviceId]
+    [tenantInfo.id, deviceId, generateClaimCode()]
   ).then((res) => {
     if (res.rowCount > 0) {
       // New device: set bootstrap credentials (setBootstrapCredentials is a no-op if hash exists)
@@ -1059,6 +1151,12 @@ function isTopicTenantAuthorized(deviceId, tenantSlug) {
     logger.warn({ deviceId, tenantSlug }, 'Unknown tenant slug on topic — dropping message');
     return false;
   }
+  // Suspended / closed organisation: the broker ACL already denies its devices;
+  // anything that still arrives (cached ACL, direct localhost publish) is dropped.
+  if (!OPEN_TENANT_STATUSES.has(expected.status || 'active')) {
+    logger.debug({ deviceId, tenantSlug, status: expected.status }, 'Tenant not open — dropping message');
+    return false;
+  }
 
   const reg = deviceRegistry.get(deviceId);
   // Unknown device under a real tenant — don't attribute; ensureDevice resets it to pending
@@ -1149,7 +1247,7 @@ async function telemetrySampler() {
        ON CONFLICT DO NOTHING`,
       values
     );
-    logger.info({ count: rows.length }, 'Telemetry sampled');
+    logger.debug({ count: rows.length }, 'Telemetry sampled');
   } catch (err) {
     logger.error({ err }, 'Failed to sample telemetry');
   }
@@ -1157,14 +1255,18 @@ async function telemetrySampler() {
 
 // ── Periodic: State writer (debounced, every 5s check) ────
 
-async function stateWriter() {
+/**
+ * @param {boolean} [force=false] write every dirty state now, ignoring the
+ *   debounce window (used by shutdown())
+ */
+async function stateWriter(force = false) {
   const now = Date.now();
 
   // Collect all dirty devices that passed debounce threshold
   const batch = [];
   for (const [deviceId, state] of stateMap) {
     if (!state._dirty) continue;
-    if (now - state._lastDbWrite < STATE_DEBOUNCE) continue;
+    if (!force && now - state._lastDbWrite < STATE_DEBOUNCE) continue;
 
     // Build last_state JSONB (only real state keys, no _ prefixed)
     const lastState = {};
@@ -1232,7 +1334,7 @@ async function stateWriter() {
       }
 
       if (chunk.length >= 10) {
-        logger.info({ count: chunk.length }, 'Batch state write');
+        logger.debug({ count: chunk.length }, 'Batch state write');
       }
     } catch (err) {
       // On failure, leave all dirty — retry on next cycle
@@ -1289,7 +1391,62 @@ function stateSweeper() {
   for (const [id, e]   of backfillCounters) if (e.reset && now > e.reset)    backfillCounters.delete(id);
   for (const [id, ts]  of deletedDevices)  if (now - ts > DELETED_BLOCK_MS)  deletedDevices.delete(id);
 
-  if (evicted) logger.info({ evicted, remaining: stateMap.size }, 'StateMap sweep');
+  if (evicted) logger.debug({ evicted, remaining: stateMap.size }, 'StateMap sweep');
+}
+
+// ── Offline as an alarm (plan epic 1.6) ───────────────────
+//
+// A device that stays offline for OFFLINE_ALARM_DELAY after the detector marked
+// it offline gets a `device_offline` alarm row (severity warning); it is closed
+// the moment the device is heard from again. The row makes an outage visible in
+// the alarm list, acknowledgeable and part of the HACCP history, and the push
+// service notifies through the ordinary alarm path.
+
+const OFFLINE_ALARM_DELAY = parseInt(process.env.OFFLINE_ALARM_DELAY_MS, 10) || 120_000;
+
+async function raiseOfflineAlarm(state, deviceId) {
+  if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
+  try {
+    const { rows: existing } = await db.query(
+      `SELECT id FROM alarms
+        WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = 'device_offline' AND active = true LIMIT 1`,
+      [state._tenantId, deviceId]
+    );
+    if (existing.length) return;
+    const { rows } = await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+       VALUES ($1, $2, 'device_offline', 'warning', true, NOW()) RETURNING id`,
+      [state._tenantId, deviceId]
+    );
+    logger.warn({ tenantSlug: state._tenantSlug, deviceId }, 'Device offline alarm raised');
+    emitter.emit('alarm', {
+      tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId,
+      alarmId: rows[0].id, alarmCode: 'device_offline', active: true, severity: 'warning',
+      lastSeen: state._lastSeen ? new Date(state._lastSeen).toISOString() : null,
+    });
+  } catch (err) {
+    logger.error({ err, deviceId }, 'Failed to raise offline alarm');
+  }
+}
+
+function clearOfflineAlarm(state, deviceId) {
+  state._offlineSince = 0;
+  state._offlineAlarmed = false;
+  if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
+  db.query(
+    `UPDATE alarms SET active = false, cleared_at = NOW()
+      WHERE tenant_id = $1 AND device_id = $2 AND alarm_code = 'device_offline' AND active = true
+      RETURNING id`,
+    [state._tenantId, deviceId]
+  ).then(({ rows }) => {
+    for (const r of rows) {
+      logger.info({ tenantSlug: state._tenantSlug, deviceId }, 'Device offline alarm cleared');
+      emitter.emit('alarm', {
+        tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId,
+        alarmId: r.id, alarmCode: 'device_offline', active: false, severity: 'warning',
+      });
+    }
+  }).catch(err => logger.error({ err, deviceId }, 'Failed to clear offline alarm'));
 }
 
 // ── Periodic: Offline detector (every 30s) ────────────────
@@ -1299,7 +1456,7 @@ async function offlineDetector() {
 
   for (const [deviceId, state] of stateMap) {
     if (!state._online) continue;
-    if (now - state._lastSeen < OFFLINE_THRESHOLD) continue;
+    if (now - state._lastSeen < (settingFor(state._tenantId, 'offline_threshold_ms') ?? OFFLINE_THRESHOLD)) continue;
 
     // Mark offline
     state._online = false;
@@ -1313,11 +1470,21 @@ async function offlineDetector() {
     ).catch(err => logger.error({ err, deviceId }, 'Failed to mark device offline'));
 
     insertEvent(state._tenantId, deviceId, 'device_offline');
+    state._offlineSince = now;
+    state._offlineAlarmed = false;
 
     emitter.emit('device_status', {
       tenantSlug: state._tenantSlug, deviceId, online: false,
       lastSeen: new Date(state._lastSeen).toISOString(),
     });
+  }
+
+  // Second pass: devices offline for longer than OFFLINE_ALARM_DELAY get an alarm.
+  for (const [deviceId, state] of stateMap) {
+    if (state._online || !state._offlineSince || state._offlineAlarmed) continue;
+    if (now - state._offlineSince < (settingFor(state._tenantId, 'offline_alarm_delay_ms') ?? OFFLINE_ALARM_DELAY)) continue;
+    state._offlineAlarmed = true;
+    await raiseOfflineAlarm(state, deviceId);
   }
 }
 
@@ -1506,11 +1673,18 @@ async function bootstrapStateMap() {
 async function loadRegistries() {
   try {
     // Load tenants
-    const tenants = await db.query('SELECT id, slug, active FROM tenants');
+    const tenants = await db.query('SELECT id, slug, active, status FROM tenants');
     tenantRegistry.clear();
     for (const row of tenants.rows) {
-      tenantRegistry.set(row.slug, { id: row.id, active: row.active });
+      tenantRegistry.set(row.slug, { id: row.id, active: row.active, status: row.status || 'active' });
     }
+
+    // Per-organisation alarm delays / offline thresholds (tenant_settings)
+    const settings = await db.query(
+      `SELECT tenant_id, door_alarm_delay_ms, pulldown_alarm_delay_ms, offline_threshold_ms, offline_alarm_delay_ms
+         FROM tenant_settings`);
+    tenantSettings.clear();
+    for (const row of settings.rows) tenantSettings.set(row.tenant_id, row);
 
     // Load devices
     const devices = await db.query('SELECT id, tenant_id, mqtt_device_id, status FROM devices');
@@ -1794,13 +1968,26 @@ function clearRetainedForTenant(tenantSlug, deviceId) {
 function getBootstrapHash() { return BOOTSTRAP_HASH; }
 
 module.exports = {
-  start, setLogger, shutdown, isConnected,
+  start, setLogger, shutdown, isConnected, getBrokerStats,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
   getBootstrapHash, recordAssign, clearPendingRetained, setPendingTenantHint,
   // Event-buffer internals — exported for test/mqtt-events.test.js
   insertEvent, flushEvents,
+  // Internals for test/alarm-restart.test.js — drive the message handlers and the
+  // restart path without a broker. Not part of the service API.
+  __test: {
+    setLogger,
+    handleStateKey, handleStatus, bootstrapStateMap, rearmPendingAlarms, stateWriter,
+    offlineDetector, OFFLINE_ALARM_DELAY,
+    stateMap, pendingAlarms, NUISANCE_DELAY, tenantRegistry, tenantSettings, loadRegistries,
+    reset() {
+      stateMap.clear();
+      for (const t of pendingAlarms.values()) clearTimeout(t);
+      pendingAlarms.clear();
+    },
+  },
   on:   emitter.on.bind(emitter),
   off:  emitter.off.bind(emitter),
   once: emitter.once.bind(emitter),

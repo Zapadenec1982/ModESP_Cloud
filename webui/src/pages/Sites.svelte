@@ -21,9 +21,10 @@
     getSites, createSite, updateSite, deleteSite, geocodeSite,
     getGeocodeStatus, geocodePendingSites,
     getSitePublicLinks, createSitePublicLink, revokeSitePublicLink,
+    exportSitePdf,
   } from '../lib/api.js'
-  import { isAdmin } from '../lib/stores.js'
-  import { t } from '../lib/i18n.js'
+  import { isAdmin, canWrite } from '../lib/stores.js'
+  import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import { emptyAddress, formatCoords, precisionKey } from '../lib/geo.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -252,6 +253,40 @@
     }
   }
 
+  // ── HACCP report (one PDF for every device of the site) ──
+
+  let reportSite = null
+  let reportFrom = ''
+  let reportTo = ''
+  let reportBusy = false
+
+  function isoDay(d) { return d.toISOString().slice(0, 10) }
+
+  function openReport(site) {
+    reportSite = site
+    reportTo = isoDay(new Date())
+    reportFrom = isoDay(new Date(Date.now() - 30 * 86400 * 1000))
+  }
+
+  async function runReport() {
+    if (!reportSite || !reportFrom || !reportTo) return
+    reportBusy = true
+    try {
+      const from = new Date(reportFrom + 'T00:00:00').toISOString()
+      const to = new Date(reportTo + 'T23:59:59').toISOString()
+      const meta = await exportSitePdf(reportSite.id, from, to, '1h', $locale)
+      if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000)
+      else toast.success($t('export.export_success'))
+      if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000)
+      reportSite = null
+    } catch (e) {
+      if (e.status === 404) toast.warning($t('export.no_data'))
+      else if (e.status !== 402) toast.error(e.message || $t('export.export_error'))
+    } finally {
+      reportBusy = false
+    }
+  }
+
   // ── Public links ───────────────────────────────────────
 
   async function openLinks(site) {
@@ -417,7 +452,7 @@
             <th class="num">{$t('site.online_count')}</th>
             <th class="num">{$t('site.alarm_count')}</th>
             <th>{$t('site.geo_source')}</th>
-            {#if $isAdmin}<th class="actions-col"></th>{/if}
+            {#if $canWrite}<th class="actions-col"></th>{/if}
           </tr>
         </thead>
         <tbody>
@@ -443,8 +478,13 @@
                   <span class="muted">{$t(precisionKey(site.geo_precision))}</span>
                 {/if}
               </td>
-              {#if $isAdmin}
+              {#if $canWrite}
                 <td class="actions-col">
+                  <button class="tbl-btn" on:click={() => openReport(site)} title={$t('export.haccp_report')}
+                    aria-label="{$t('export.haccp_report')} {site.name}" disabled={site.device_count === 0}>
+                    <Icon name="download" size={14} />
+                  </button>
+                  {#if $isAdmin}
                   <button class="tbl-btn" on:click={() => openEdit(site)} title={$t('site.edit_site')}
                     aria-label="{$t('site.edit_site')} {site.name}">
                     <Icon name="edit" size={14} />
@@ -461,6 +501,7 @@
                     aria-label="{$t('common.delete')} {site.name}">
                     <Icon name="trash" size={14} />
                   </button>
+                  {/if}
                 </td>
               {/if}
             </tr>
@@ -547,6 +588,44 @@
             {$t('common.delete')}
           </button>
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ── HACCP site report ─────────────────────────────────── -->
+{#if reportSite}
+  <div class="modal-backdrop" role="presentation"
+    on:click={(e) => { if (e.target === e.currentTarget && !reportBusy) reportSite = null }}
+    on:keydown={(e) => { if (e.key === 'Escape' && !reportBusy) reportSite = null }}>
+    <div class="modal" role="dialog" aria-modal="true" aria-label={$t('export.haccp_report')}>
+      <div class="modal-header">
+        <h2>{$t('export.haccp_report')} — {reportSite.name}</h2>
+        <button class="modal-close" on:click={() => (reportSite = null)} aria-label={$t('common.close')} disabled={reportBusy}>
+          <Icon name="x" size={18} />
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">{$t('export.site_report_hint', reportSite.device_count)}</p>
+        <div class="form-row">
+          <div class="form-group grow">
+            <label for="report-from">{$t('export.period_from')}</label>
+            <input id="report-from" type="date" bind:value={reportFrom} max={reportTo} disabled={reportBusy} />
+          </div>
+          <div class="form-group grow">
+            <label for="report-to">{$t('export.period_to')}</label>
+            <input id="report-to" type="date" bind:value={reportTo} min={reportFrom} disabled={reportBusy} />
+          </div>
+        </div>
+        <p class="hint">{$t('export.verify_hint')}</p>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" on:click={() => (reportSite = null)} disabled={reportBusy}>
+          {$t('common.cancel')}
+        </button>
+        <button class="btn btn-primary" on:click={runReport} disabled={reportBusy || !reportFrom || !reportTo}>
+          {reportBusy ? $t('export.exporting') : $t('export.export_pdf')}
+        </button>
       </div>
     </div>
   </div>
@@ -936,6 +1015,11 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
+  }
+
+  .form-row {
+    display: flex;
+    gap: var(--space-3);
   }
 
   .form-group.grow {
