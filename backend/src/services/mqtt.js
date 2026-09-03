@@ -96,11 +96,18 @@ const brokerStats = { clients_connected: null, updated_at: null };
 // ── Public API ────────────────────────────────────────────
 
 /**
+ * Inject the logger. start() calls this; tests call it directly so the module
+ * can be driven without opening an MQTT connection.
+ * @param {import('pino').Logger} log
+ */
+function setLogger(log) { logger = log; }
+
+/**
  * Start the MQTT service.
  * @param {import('pino').Logger} log
  */
 async function start(log) {
-  logger = log;
+  setLogger(log);
   startupTime = Date.now();
 
   // Pre-hash bootstrap password at startup (one-time cost)
@@ -1961,15 +1968,17 @@ function clearRetainedForTenant(tenantSlug, deviceId) {
 function getBootstrapHash() { return BOOTSTRAP_HASH; }
 
 module.exports = {
-  start, shutdown, isConnected, getBrokerStats,
+  start, setLogger, shutdown, isConnected, getBrokerStats,
   parseTopic, parseScalar,
   getDeviceState, getDeviceMeta, getDeviceRoutingSlug, sendCommand, sendJsonCommand,
   requestFullState, refreshRegistries, updateDeviceStateMap, removeDeviceState,
   getBootstrapHash, recordAssign, clearPendingRetained, setPendingTenantHint,
+  // Event-buffer internals — exported for test/mqtt-events.test.js
+  insertEvent, flushEvents,
   // Internals for test/alarm-restart.test.js — drive the message handlers and the
   // restart path without a broker. Not part of the service API.
   __test: {
-    setLogger(l) { logger = l; },
+    setLogger,
     handleStateKey, handleStatus, bootstrapStateMap, rearmPendingAlarms, stateWriter,
     offlineDetector, OFFLINE_ALARM_DELAY,
     stateMap, pendingAlarms, NUISANCE_DELAY, tenantRegistry, tenantSettings, loadRegistries,
