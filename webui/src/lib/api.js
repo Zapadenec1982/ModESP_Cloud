@@ -680,11 +680,11 @@ export function getDeviceHints(deviceId, { limit } = {}) {
 }
 
 export function ackHint(hintId, note) {
-  return request(`/maintenance/hints/${hintId}/ack`, { method: 'POST', body: { note: note || null } });
+  return request(`/maintenance/hints/${hintId}/ack`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
 }
 
 export function dismissHint(hintId, note) {
-  return request(`/maintenance/hints/${hintId}/dismiss`, { method: 'POST', body: { note: note || null } });
+  return request(`/maintenance/hints/${hintId}/dismiss`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
 }
 
 export function getMaintenanceRules() {
@@ -692,7 +692,7 @@ export function getMaintenanceRules() {
 }
 
 export function putMaintenanceRule(ruleKey, body) {
-  return request(`/maintenance/rules/${ruleKey}`, { method: 'PUT', body });
+  return request(`/maintenance/rules/${ruleKey}`, { method: 'PUT', body: JSON.stringify(body) });
 }
 
 export function resetMaintenanceRule(ruleKey) {
