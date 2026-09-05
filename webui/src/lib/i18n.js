@@ -15,7 +15,7 @@ import pl from './locales/pl.js';
 import de from './locales/de.js';
 
 const STORAGE_KEY = 'modesp-locale';
-const SUPPORTED = ['uk', 'en', 'pl', 'de'];
+export const SUPPORTED = ['uk', 'en', 'pl', 'de'];
 const dictionaries = { uk, en, pl, de };
 
 function detectLocale() {
@@ -35,9 +35,11 @@ function detectLocale() {
 /** Current locale ('uk' | 'en' | 'pl' | 'de') */
 export const locale = writable(detectLocale());
 
-// Persist on change
+// Persist on change; the document language follows so screen readers,
+// hyphenation and browser translation prompts see the right one (plan epic 2.11).
 locale.subscribe(val => {
   try { localStorage.setItem(STORAGE_KEY, val); } catch {}
+  try { if (typeof document !== 'undefined') document.documentElement.lang = val; } catch {}
 });
 
 /**

@@ -8,10 +8,12 @@
     getNotificationLog,
     getMyNotificationPrefs,
     updateMyNotificationPrefs,
+    getProfile,
+    updateProfile,
   } from '../lib/api.js'
-  import { isAdmin } from '../lib/stores.js'
+  import { isAdmin, authUser } from '../lib/stores.js'
   import { timeAgo } from '../lib/format.js'
-  import { t } from '../lib/i18n.js'
+  import { t, setLocale, supportedLocales } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
   import Badge from '../components/ui/Badge.svelte'
@@ -36,11 +38,20 @@
 
   // ── My notifications (every role) ──
   let prefs = null
+  // Own language and time zone (users.locale / users.timezone, plan epic 2.11); '' = as the organisation
+  let profile = null
+  let savedProfile = { locale: null, timezone: null }
   let savingPrefs = false
 
   async function savePrefs() {
     savingPrefs = true
     try {
+      if (profile && ((profile.locale || null) !== savedProfile.locale || (profile.timezone.trim() || null) !== savedProfile.timezone)) {
+        const p = await updateProfile({ locale: profile.locale || null, timezone: profile.timezone.trim() || null })
+        savedProfile = { locale: p.locale, timezone: p.timezone }
+        authUser.update(u => u ? { ...u, locale: p.locale, timezone: p.timezone } : u)
+        if (p.locale) setLocale(p.locale)
+      }
       prefs = await updateMyNotificationPrefs({
         enabled: prefs.enabled,
         min_severity: prefs.min_severity,
@@ -62,6 +73,11 @@
   async function load() {
     try {
       prefs = await getMyNotificationPrefs()
+      try {
+        const p = await getProfile()
+        profile = { locale: p.locale || '', timezone: p.timezone || '' }
+        savedProfile = { locale: p.locale || null, timezone: p.timezone || null }
+      } catch { profile = null }
       if ($isAdmin) {
         const [subs, entries] = await Promise.all([
           getSubscribers(),
@@ -191,8 +207,21 @@
             <label class="field-label" for="pref-tz">{$t('notifications.quiet_tz')}</label>
             <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz} placeholder="Europe/Kyiv" />
           </div>
+          {#if profile}
+            <div class="form-field">
+              <label class="field-label" for="pref-locale">{$t('notifications.pref_locale')}</label>
+              <select id="pref-locale" class="input" bind:value={profile.locale}>
+                <option value="">{$t('notifications.pref_locale_org')}</option>
+                {#each supportedLocales as l}<option value={l.code}>{l.label}</option>{/each}
+              </select>
+            </div>
+            <div class="form-field">
+              <label class="field-label" for="pref-user-tz">{$t('notifications.pref_timezone')}</label>
+              <input id="pref-user-tz" type="text" class="input" bind:value={profile.timezone} placeholder={$t('notifications.pref_locale_org')} />
+            </div>
+          {/if}
         </div>
-        <p class="field-hint">{$t('notifications.quiet_hint')}</p>
+        <p class="field-hint">{$t('notifications.quiet_hint')} {$t('notifications.pref_timezone_hint')}</p>
         <div class="prefs-actions">
           <Button variant="primary" type="submit" loading={savingPrefs} icon="check">{$t('notifications.save')}</Button>
         </div>

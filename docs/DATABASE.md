@@ -110,6 +110,8 @@ CREATE TABLE users (
   base_latitude  DOUBLE PRECISION,          -- домашня база техніка (migration 021)
   base_longitude DOUBLE PRECISION,          -- домашня база техніка (migration 021)
   base_address   VARCHAR(256),              -- текстова адреса бази (migration 021)
+  locale         VARCHAR(5),                -- uk|en|pl|de, NULL = як в організації (migration 035)
+  timezone       VARCHAR(64),               -- IANA, NULL = як в організації (migration 035)
 
   UNIQUE (tenant_id, email)
 );

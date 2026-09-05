@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
   try {
     // Find user by email
     const { rows } = await db.query(
-      `SELECT id, tenant_id, email, password_hash, role, active
+      `SELECT id, tenant_id, email, password_hash, role, active, locale, timezone
        FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -168,7 +168,7 @@ router.post('/login', async (req, res) => {
         data: {
           access_token:  accessToken,
           refresh_token: refreshToken,
-          user: { id: user.id, email: user.email, role: user.role },
+          user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
           tenant: loginTenant,
           tenants,
         },
@@ -184,7 +184,7 @@ router.post('/login', async (req, res) => {
       data: {
         require_tenant_select: true,
         pending_token: pendingToken,
-        user: { id: user.id, email: user.email, role: user.role },
+        user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
         tenants,
       },
     });
@@ -214,7 +214,7 @@ router.post('/select-tenant', async (req, res) => {
 
     // Verify user still active
     const { rows: uRows } = await db.query(
-      'SELECT id, email, role, active FROM users WHERE id = $1',
+      'SELECT id, email, role, active, locale, timezone FROM users WHERE id = $1',
       [payload.sub]
     );
     if (uRows.length === 0 || !uRows[0].active) {
@@ -248,7 +248,7 @@ router.post('/select-tenant', async (req, res) => {
       data: {
         access_token:  accessToken,
         refresh_token: refreshToken,
-        user: { id: user.id, email: user.email, role: user.role },
+        user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
         tenant: tRows[0] || null,
         tenants,
       },

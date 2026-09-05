@@ -4,7 +4,19 @@
  */
 
 import { authUser, authEnabled, currentTenant, availableTenants, navigate } from './stores.js';
+import { setLocale } from './i18n.js';
 import { toast } from './toast.js';
+
+/**
+ * Remember who is logged in and switch the interface to their own language
+ * when they chose one (users.locale, plan epic 2.11); otherwise the browser's
+ * or the last switcher choice stays.
+ */
+function applyUser(user) {
+  if (!user) return;
+  authUser.set({ id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null });
+  if (user.locale) setLocale(user.locale);
+}
 
 const BASE = '/api';
 
@@ -239,7 +251,7 @@ export async function login(email, password) {
 
   // Single tenant → direct login
   setTokens(data.access_token, data.refresh_token);
-  authUser.set(data.user);
+  applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
     localStorage.setItem('modesp_last_tenant', data.tenant.id);
@@ -258,7 +270,7 @@ export async function selectTenant(pendingToken, tenantId) {
   });
 
   setTokens(data.access_token, data.refresh_token);
-  authUser.set(data.user);
+  applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
     localStorage.setItem('modesp_last_tenant', data.tenant.id);
@@ -361,7 +373,7 @@ export async function acceptInvite(token, password, acceptTerms) {
     body: JSON.stringify({ password, accept_terms: acceptTerms === true }),
   });
   setTokens(data.access_token, data.refresh_token);
-  authUser.set(data.user);
+  applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
     localStorage.setItem('modesp_last_tenant', data.tenant.id);
@@ -394,7 +406,7 @@ export async function restoreSession() {
   // Fetch user profile
   try {
     const user = await request('/profile');
-    authUser.set({ id: user.id, email: user.email, role: user.role });
+    applyUser(user);
 
     // Decode tenantId from JWT to set currentTenant
     if (accessToken) {

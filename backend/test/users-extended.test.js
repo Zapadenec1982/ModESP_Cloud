@@ -2,7 +2,7 @@
 
 const request = require('supertest');
 const { createTestApp } = require('./helpers/app');
-const { cleanDatabase, shutdownDb } = require('./helpers/setup');
+const { cleanDatabase, shutdownDb, db } = require('./helpers/setup');
 const { createTenant, createUser, createDevice, grantDeviceAccess, authHeader } = require('./helpers/factories');
 
 const app = createTestApp();
@@ -67,6 +67,29 @@ describe('Users Extended', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');
+  });
+
+  it('a user sets their own language and time zone; NULL means "as the organisation" (plan epic 2.11)', async () => {
+    const tech = await createUser(tenant.id, { role: 'technician', email: 'tz@usersext.test' });
+    const before = await request(app).get('/api/profile').set(authHeader(tech, tenant.id));
+    expect(before.body.data).toMatchObject({ locale: null, timezone: null });
+
+    const set = await request(app).patch('/api/profile').set(authHeader(tech, tenant.id)).send({ locale: 'pl', timezone: 'Europe/Warsaw' });
+    expect(set.status).toBe(200);
+    expect(set.body.data).toMatchObject({ locale: 'pl', timezone: 'Europe/Warsaw' });
+    expect((await request(app).get('/api/profile').set(authHeader(tech, tenant.id))).body.data).toMatchObject({ locale: 'pl', timezone: 'Europe/Warsaw' });
+
+    expect((await request(app).patch('/api/profile').set(authHeader(tech, tenant.id)).send({ locale: 'fr' })).status).toBe(400);
+    expect((await request(app).patch('/api/profile').set(authHeader(tech, tenant.id)).send({ timezone: 'Mars/Olympus' })).status).toBe(400);
+
+    const cleared = await request(app).patch('/api/profile').set(authHeader(tech, tenant.id)).send({ locale: null, timezone: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.data).toMatchObject({ locale: null, timezone: null });
+
+    // login answers with them too, so the WebUI can switch language at once
+    await db.query(`UPDATE users SET locale = 'de' WHERE id = $1`, [tech.id]);
+    const login = await request(app).post('/api/auth/login').send({ email: 'tz@usersext.test', password: 'Test1234!Secure' });
+    if (login.status === 200) expect(login.body.data.user).toMatchObject({ locale: 'de', timezone: null });
   });
 
   it('viewer cannot access /users routes (403) but can read their own profile', async () => {

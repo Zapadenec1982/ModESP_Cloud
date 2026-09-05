@@ -24,6 +24,7 @@ const crypto     = require('crypto');
 const db         = require('../services/db');
 const authSvc    = require('../services/auth');
 const { passwordSchema } = require('../lib/password-policy');
+const { SUPPORTED_LOCALES, isValidTimezone } = require('../lib/locale');
 
 const router = Router();
 
@@ -32,7 +33,7 @@ const router = Router();
 // (account update, password, Telegram link, Web Push subscription): mounting
 // them under the admin-only /users prefix logged every technician out on reload.
 const PROFILE_COLUMNS = 'id, email, role, active, created_at, last_login, telegram_id, ' +
-                        'base_latitude, base_longitude, base_address';
+                        'base_latitude, base_longitude, base_address, locale, timezone';
 
 // A half-set home base is worse than none: "nearest technician" would place the
 // user on the prime meridian. The pair must be written or cleared together.
@@ -46,14 +47,19 @@ const baseLocationPaired = (d) => {
 };
 
 // Deliberately NOT email / password / role / active / tenant_id: those stay on
-// PUT /api/users/me and PUT /api/users/:id. This endpoint can only move a pin.
+// PUT /api/users/me and PUT /api/users/:id. This endpoint moves a pin and, since
+// plan epic 2.11, sets the user's own language and time zone (NULL = as the
+// organisation; every notification channel and the WebUI follow them).
 const updateProfileSchema = z.object({
   base_latitude:  z.number().min(-90).max(90).nullable().optional(),
   base_longitude: z.number().min(-180).max(180).nullable().optional(),
   base_address:   z.string().max(256).nullable().optional(),
+  locale:         z.enum(SUPPORTED_LOCALES).nullable().optional(),
+  timezone:       z.string().min(1).max(64).nullable().optional()
+                    .refine(v => v === null || v === undefined || isValidTimezone(v), { message: 'timezone must be an IANA time zone' }),
 })
   .refine(d => Object.keys(d).length > 0, {
-    message: 'At least one of base_latitude, base_longitude, base_address is required',
+    message: 'At least one of base_latitude, base_longitude, base_address, locale, timezone is required',
   })
   .refine(baseLocationPaired, {
     message: 'base_latitude and base_longitude must be provided (or cleared) together',
@@ -110,6 +116,8 @@ router.patch('/', async (req, res) => {
     if (data.base_latitude !== undefined)  { sets.push(`base_latitude = $${idx++}`);  params.push(data.base_latitude); }
     if (data.base_longitude !== undefined) { sets.push(`base_longitude = $${idx++}`); params.push(data.base_longitude); }
     if (data.base_address !== undefined)   { sets.push(`base_address = $${idx++}`);   params.push(data.base_address); }
+    if (data.locale !== undefined)         { sets.push(`locale = $${idx++}`);         params.push(data.locale); }
+    if (data.timezone !== undefined)       { sets.push(`timezone = $${idx++}`);       params.push(data.timezone); }
 
     params.push(req.user.id);
     const idPlaceholder = idx++;
@@ -134,6 +142,8 @@ router.patch('/', async (req, res) => {
         base_latitude:  data.base_latitude,
         base_longitude: data.base_longitude,
         base_address:   data.base_address,
+        locale:         data.locale,
+        timezone:       data.timezone,
       },
     };
 

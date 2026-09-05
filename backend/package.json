@@ -11,7 +11,8 @@
     "test:coverage": "vitest run --coverage",
     "test:legacy": "node test/test_mqtt_logic.js",
     "test:all": "npm run test:legacy && npm run test",
-    "migrate": "node src/scripts/migrate.js"
+    "migrate": "node src/scripts/migrate.js",
+    "check:locales": "node scripts/check-locales.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
