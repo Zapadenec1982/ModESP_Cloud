@@ -139,12 +139,25 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 
     const { rows } = await db.query(sql, params);
 
+    // Open maintenance hints per device (plan epic 2.4) — one grouped query,
+    // mqtt_device_id is unique platform-wide so no tenant key is needed here.
+    const hintsOpen = new Map();
+    if (rows.length > 0) {
+      const { rows: hintRows } = await db.query(
+        `SELECT device_id, count(*)::int AS n FROM maintenance_hints
+          WHERE closed_at IS NULL AND device_id = ANY($1) GROUP BY device_id`,
+        [rows.map(r => r.mqtt_device_id)]
+      );
+      for (const h of hintRows) hintsOpen.set(h.device_id, h.n);
+    }
+
     // Augment with live alarm_active from stateMap
     const devices = rows.map(row => {
       const live = mqttSvc.getDeviceState(row.mqtt_device_id);
       const meta = mqttSvc.getDeviceMeta(row.mqtt_device_id);
       return {
         ...row,
+        hints_open:   hintsOpen.get(row.mqtt_device_id) || 0,
         // Override online status with live data if available
         online:       meta ? meta.online : row.online,
         last_seen:    meta ? new Date(meta.lastSeen).toISOString() : row.last_seen,

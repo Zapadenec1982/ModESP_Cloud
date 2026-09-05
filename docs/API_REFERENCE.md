@@ -607,6 +607,63 @@ user_sites`; superadmin — лише з `users.receive_all_tenant_alerts`; на�
 
 ---
 
+## Maintenance hints (plan epic 2.4)
+
+Правила «попередження ремонту» (`services/maintenance.js`) раз на годину (`MAINTENANCE_EVAL_INTERVAL_MIN`,
+0 вимикає) оцінюють кожну організацію з функцією плану `maintenance` (тариф «Обʼєкт» і вище).
+Без функції — `402 plan_feature` на всьому, крім `GET /devices/:id/hints`, який тоді віддає
+`{ data: [], feature_enabled: false }`.
+
+| `rule_key` | Показник | Дефолт | Вікно |
+|---|---|---|---|
+| `compressor_starts` | пусків компресора за годину (середнє по вікну) | 8 | 24 год |
+| `compressor_duty` | частка часу з увімкненим компресором, % | 85 | 24 год |
+| `defrost_timeouts` | `defrost.consecutive_timeouts` з живого стану | 3 | — |
+| `door_openings` | відкривань дверей за вікно | 80 | 24 год |
+| `cond_temp` | середня температура конденсатора (канал `cond`, ≥ 12 зразків), °C | 55 | 24 год |
+
+Підказка відкривається один раз на (пристрій, правило), оновлює `last_seen_at`, поки показник за межею,
+і закривається з `closed_reason = 'resolved'`, щойно показник повертається. Офлайн-пристрій або пристрій
+без даних не оцінюється — відкриту підказку ніколи не закриває тиша. Відхилена підказка може відкритись
+знову наступної години, якщо ознака нікуди не зникла. Відкриття розсилає WebSocket-подію `hint`
+(`{ hint_id, device_id, rule_key, severity, value, threshold, active }`) і сповіщення адміністраторам
+організації (`info`, або `warning` за правилом) у Telegram / пошту / web push з порадою, що перевірити;
+запис у `notification_log` з `alarm_code = hint:<rule_key>`.
+
+### `GET /maintenance/hints`
+Підказки організації (superadmin — усіх). Query: `active=true|false|all` (default `true`),
+`limit` (≤ 200), `offset`. Техніки й глядачі бачать лише свої пристрої (`user_devices ∪ user_sites`).
+Кожен рядок: `id, device_id, device_uuid, device_name, device_model, rule_key, severity, value, threshold,
+window_hours, opened_at, last_seen_at, closed_at, closed_reason, acknowledged_at, acknowledged_by_email, ack_note`.
+
+### `GET /devices/:id/hints`
+Те саме для одного пристрою (uuid або mqtt id), плюс `feature_enabled`.
+
+### `POST /maintenance/hints/:id/ack`
+Взяти в роботу (admin, technician з доступом до пристрою). `{ "note": "..." }` необовʼязково.
+Повторно — `409 already_acknowledged`; закрита — `409 closed`. Підказка лишається відкритою.
+
+### `POST /maintenance/hints/:id/dismiss`
+Закрити як `dismissed` (admin). Розсилає `hint` з `active: false`.
+
+### `GET /maintenance/rules`
+Ефективні правила організації (admin): для кожного `rule_key` — `threshold, window_hours, severity, enabled,
+unit, overridden, default { … }, model_overrides [ … ]`.
+
+### `PUT /maintenance/rules/:key`
+Перевизначення організації (admin): `{ threshold, window_hours?, severity?, enabled?, model? }`;
+`model` — рядок з `devices.model` для правила лише на цю модель. `?global=1` — платформне значення
+(лише superadmin). Невідомий ключ — `404`.
+
+### `DELETE /maintenance/rules/:key[?model=…]`
+Прибрати перевизначення (повернутись до платформного). Немає перевизначення — `404`.
+
+### `POST /maintenance/evaluate`
+Запустити оцінку зараз (superadmin); відповідь — звіт по організаціях
+`{ "<slug>": { opened, refreshed, closed, devices } }`.
+
+---
+
 ## Data Export
 
 Усі export-ендпоінти захищені rate limiter (10 req/min/user). Кожне завантаження (і GET також)

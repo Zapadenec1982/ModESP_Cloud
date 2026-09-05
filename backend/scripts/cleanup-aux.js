@@ -13,6 +13,7 @@
  *   notification_log created_at  NOTIFICATION_LOG_RETENTION_DAYS   90
  *   alarms           cleared_at  ALARM_RETENTION_DAYS              365 (only active = false)
  *   refresh_tokens   expires_at  —                                 expired rows only
+ *   maintenance_hints closed_at  MAINTENANCE_HINT_RETENTION_DAYS   365 (closed hints only)
  *
  * A retention value of 0 (or anything that is not a positive integer) disables
  * that sweep — nothing is ever deleted by accident because of a typo in .env.
@@ -38,6 +39,8 @@ const SWEEPS = [
   // Expired refresh tokens carry no security value: reuse detection only needs a
   // revoked token until it would have expired anyway.
   { table: 'refresh_tokens',   column: 'expires_at', envKey: null,                              defaultDays: 0 },
+  // Closed maintenance hints (plan epic 2.4); open ones have closed_at NULL and never match.
+  { table: 'maintenance_hints', column: 'closed_at', envKey: 'MAINTENANCE_HINT_RETENTION_DAYS', defaultDays: 365 },
 ];
 
 function retentionFor(sweep, env) {

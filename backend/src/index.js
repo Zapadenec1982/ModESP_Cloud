@@ -20,6 +20,7 @@ const emailSvc    = require('./services/email');
 const otaSvc      = require('./services/ota');
 const geocodeSvc  = require('./services/geocode');
 const weatherSvc  = require('./services/weather');
+const maintenanceSvc = require('./services/maintenance');
 const routingSvc  = require('./services/routing');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize, requireSuperadmin } = require('./middleware/auth');
@@ -449,6 +450,9 @@ app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
 app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
 app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
 app.use('/api/devices',  require('./routes/events'));     // /:id/events
+const maintenanceRoutes = require('./routes/maintenance');
+app.use('/api/maintenance', maintenanceRoutes.router);         // hints, rules (plan epic 2.4)
+app.use('/api/devices',     maintenanceRoutes.deviceRouter);   // /:id/hints
 const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('./routes/export');
 app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
 app.use('/api/alarms',   exportAlarms);                   // /export.csv
@@ -527,6 +531,9 @@ async function main() {
   routingSvc.init(logger);
   weatherSvc.start(logger);
 
+  // 6b. Maintenance hints — hourly repair-prevention rules (plan epic 2.4)
+  maintenanceSvc.start(logger);
+
   // 7. HTTP
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
@@ -540,6 +547,7 @@ async function shutdown(signal) {
   await Promise.allSettled([
     otaSvc.shutdown(),
     weatherSvc.shutdown(),
+    maintenanceSvc.shutdown(),
     geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),

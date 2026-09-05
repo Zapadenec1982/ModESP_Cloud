@@ -73,6 +73,22 @@ const STRINGS = {
     alarm_device_offline: 'Пристрій офлайн',
     test_notification: '\u{1F514} Тестове сповіщення ModESP Cloud\n\nЯкщо ви бачите це повідомлення \u{2014} сповіщення працюють коректно!',
     device_label: '\u{1F4CD} Пристрій',
+    // Maintenance hints (plan epic 2.4)
+    hint_title:              '\u{1F527} Рекомендація з обслуговування',
+    hint_value_label:        'Показник',
+    hint_line_label:         'Межа',
+    hint_window_label:       'за',
+    hint_hours:              'год',
+    hint_compressor_starts:  'Часті пуски компресора',
+    hint_compressor_duty:    'Компресор працює майже безперервно',
+    hint_defrost_timeouts:   'Відтайки завершуються по таймауту',
+    hint_door_openings:      'Забагато відкривань дверей',
+    hint_cond_temp:          'Гарячий конденсатор',
+    advice_compressor_starts: 'Перевірте реле, уставку й гістерезис, витік холодоагенту',
+    advice_compressor_duty:   'Перевірте заправку, ущільнення дверей і чистоту конденсатора',
+    advice_defrost_timeouts:  'Перевірте ТЕН відтайки і датчик випарника',
+    advice_door_openings:     'Перевірте ущільнення дверей і дисципліну персоналу',
+    advice_cond_temp:         'Очистіть конденсатор, перевірте його вентилятор і вентиляцію',
     // Alarm names
     alarm_high_temp:       'Висока температура',
     alarm_low_temp:        'Низька температура',
@@ -146,6 +162,21 @@ const STRINGS = {
     alarm_device_offline: 'Device offline',
     test_notification: '\u{1F514} ModESP Cloud test notification\n\nIf you see this message \u{2014} notifications are working correctly!',
     device_label: '\u{1F4CD} Device',
+    hint_title:              '\u{1F527} Maintenance hint',
+    hint_value_label:        'Reading',
+    hint_line_label:         'Limit',
+    hint_window_label:       'over',
+    hint_hours:              'h',
+    hint_compressor_starts:  'Compressor short-cycling',
+    hint_compressor_duty:    'Compressor running almost continuously',
+    hint_defrost_timeouts:   'Defrosts ending on timeout',
+    hint_door_openings:      'Too many door openings',
+    hint_cond_temp:          'Hot condenser',
+    advice_compressor_starts: 'Check the relay, setpoint and differential, look for a refrigerant leak',
+    advice_compressor_duty:   'Check the charge, door gaskets and condenser cleanliness',
+    advice_defrost_timeouts:  'Check the defrost heater and the evaporator sensor',
+    advice_door_openings:     'Check the door gaskets and staff routine',
+    advice_cond_temp:         'Clean the condenser, check its fan and the ventilation',
     alarm_high_temp:       'High temperature',
     alarm_low_temp:        'Low temperature',
     alarm_sensor1:         'Sensor 1 fault',
@@ -873,6 +904,8 @@ async function send(chatId, payload) {
   let message;
   if (payload.isTest) {
     message = buildTestMessage(chatId, payload);
+  } else if (payload.type === 'hint') {
+    message = buildHintMessage(chatId, payload);
   } else if (payload.type === 'device_offline') {
     message = buildOfflineMessage(chatId, payload);
   } else if (payload.active === false) {
@@ -882,6 +915,23 @@ async function send(chatId, payload) {
   }
 
   await bot.sendMessage(chatId, message);
+}
+
+function buildHintMessage(chatId, payload) {
+  const deviceLabel = payload.deviceName ? `${payload.deviceName} (${payload.deviceId})` : payload.deviceId;
+  const unit = { compressor_starts: '/год', compressor_duty: ' %', cond_temp: ' \u{00B0}C' }[payload.ruleKey] || '';
+  const lines = [
+    `${t(chatId, 'hint_title')}: ${t(chatId, 'hint_' + payload.ruleKey)}`,
+    `${t(chatId, 'device_label')}: ${deviceLabel}`,
+  ];
+  if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
+  if (payload.value != null && payload.threshold != null) {
+    const win = payload.windowHours ? ` ${t(chatId, 'hint_window_label')} ${payload.windowHours} ${t(chatId, 'hint_hours')}` : '';
+    lines.push(`${t(chatId, 'hint_value_label')}: ${payload.value}${unit}${win} (${t(chatId, 'hint_line_label')}: ${payload.threshold}${unit})`);
+  }
+  lines.push(`\u{1F4A1} ${t(chatId, 'advice_' + payload.ruleKey)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  return lines.join('\n');
 }
 
 function buildTestMessage(chatId, payload) {

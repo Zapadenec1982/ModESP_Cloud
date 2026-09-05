@@ -662,6 +662,43 @@ export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
 }
 
+// ── Maintenance hints (plan epic 2.4) ───────────────────
+
+export function getHints({ active, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (active !== undefined) params.set('active', active);
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  const qs = params.toString();
+  return request(`/maintenance/hints${qs ? '?' + qs : ''}`, { quiet: true });
+}
+
+export function getDeviceHints(deviceId, { limit } = {}) {
+  const qs = limit ? `?limit=${limit}` : '';
+  // whole body: { data, feature_enabled } — the tab hides the rules note on plans without the feature
+  return requestFull(`/devices/${deviceId}/hints${qs}`, { quiet: true });
+}
+
+export function ackHint(hintId, note) {
+  return request(`/maintenance/hints/${hintId}/ack`, { method: 'POST', body: { note: note || null } });
+}
+
+export function dismissHint(hintId, note) {
+  return request(`/maintenance/hints/${hintId}/dismiss`, { method: 'POST', body: { note: note || null } });
+}
+
+export function getMaintenanceRules() {
+  return request('/maintenance/rules');
+}
+
+export function putMaintenanceRule(ruleKey, body) {
+  return request(`/maintenance/rules/${ruleKey}`, { method: 'PUT', body });
+}
+
+export function resetMaintenanceRule(ruleKey) {
+  return request(`/maintenance/rules/${ruleKey}`, { method: 'DELETE' });
+}
+
 // ── Events ──────────────────────────────────────────────
 
 export function getDeviceEvents(deviceId, { event_type, from, to, limit } = {}) {

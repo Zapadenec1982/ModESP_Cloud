@@ -108,6 +108,7 @@
   $: onlineCount = $devices.filter(d => d.online).length
   $: totalCount = $devices.length
   $: alarmCount = $devices.filter(d => d.alarm_active).length
+  $: hintCount = $devices.filter(d => (d.hints_open || 0) > 0).length
 
   async function load() {
     try {
@@ -187,6 +188,15 @@
           : d
       ))
     }))
+
+    // Maintenance hint opened/closed (plan epic 2.4) — keep the per-card count live
+    wsUnsubs.push(on('hint', (msg) => {
+      devices.update(list => list.map(d =>
+        d.mqtt_device_id === msg.device_id
+          ? { ...d, hints_open: Math.max(0, (d.hints_open || 0) + (msg.active ? 1 : -1)) }
+          : d
+      ))
+    }))
   }
 
   onMount(() => {
@@ -231,6 +241,7 @@
     online={onlineCount}
     total={totalCount}
     alarms={alarmCount}
+    hints={hintCount}
   />
 
   <DeviceFilter bind:search bind:filter bind:view />

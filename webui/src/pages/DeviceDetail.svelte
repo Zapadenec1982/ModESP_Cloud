@@ -19,6 +19,7 @@
   import ParameterEditor from '../components/device/ParameterEditor.svelte'
   import TelemetryChart from '../components/TelemetryChart.svelte'
   import AlarmHistory from '../components/AlarmHistory.svelte'
+  import MaintenanceHints from '../components/MaintenanceHints.svelte'
 
   import EnergyTab from '../components/device/EnergyTab.svelte'
 
@@ -38,6 +39,7 @@
     { id: 'energy',  label: $t('device.tab_energy') },
     { id: 'params',  label: $t('device.tab_params') },
     { id: 'alarms',  label: $t('device.tab_alarms') },
+    { id: 'hints',   label: $t('device.tab_hints') },
     { id: 'service', label: $t('device.tab_service') },
     // The map comes AFTER service on purpose — the user asked for it "після сервісу".
     { id: 'location', label: $t('device.tab_location') },
@@ -792,6 +794,8 @@
         <ParameterEditor deviceId={resolvedId} state={$liveState} readonly={!$canWrite} />
       {:else if activeTab === 'alarms'}
         <AlarmHistory deviceId={resolvedId} />
+      {:else if activeTab === 'hints'}
+        <MaintenanceHints deviceId={resolvedId} />
       {:else if activeTab === 'service'}
         <div class="service-section">
           <div class="service-header">
