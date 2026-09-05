@@ -215,12 +215,12 @@ Trade points as first-class objects — and everything a service organisation ac
 **Goal:** Automatic maintenance recommendations based on data.
 **Timeline:** 1.5-2 weeks
 
-- [ ] Rules engine: defrost timeouts → "check heater", duty deviation → "check door seal", compressor hours → "scheduled maintenance"
-- [ ] REST API: recommendations per device, dismiss action
-- [ ] Push + Webhook events for critical recommendations
-- [ ] WebUI: Recommendations tab, dashboard badge
+- [x] Rules engine (`services/maintenance.js`, plan epic 2.4): the controller decides what is a fault; the cloud notices the same alarm coming back — N of the same alarm code on a device within a window → "plan a visit, assign a work order". Compressor hours → "scheduled maintenance" — next step
+- [x] REST API: hints per device and organisation, acknowledge / dismiss, organisation thresholds
+- [x] Push to administrators (Telegram, email, web push); webhook event `hint.opened` — epic 2.6
+- [x] WebUI: hints tab, dashboard tile, card badge, thresholds in settings
 
-**Outcome:** Platform says: "Refrigerator #3 — clean condenser, efficiency dropped 25%."
+**Outcome:** Platform says: "Refrigerator #3 — the controller raised 'rapid cycling' three times this week. Assign a work order."
 
 ---
 

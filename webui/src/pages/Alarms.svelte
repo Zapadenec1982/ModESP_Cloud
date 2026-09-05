@@ -1,8 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getAlarms, exportAlarmsCsv, ackAlarm, createWorkOrder } from '../lib/api.js'
+  import { getAlarms, exportAlarmsCsv, ackAlarm } from '../lib/api.js'
   import { on } from '../lib/ws.js'
-  import { navigate, canWrite } from '../lib/stores.js'
+  import { navigate, canWrite, authUser } from '../lib/stores.js'
   import { timeAgo, alarmLabel } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
@@ -11,6 +11,7 @@
   import Icon from '../components/ui/Icon.svelte'
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
+  import WorkOrderModal from '../components/WorkOrderModal.svelte'
 
   let activeAlarms = []
   let historyAlarms = []
@@ -108,24 +109,24 @@
   // ── Acknowledge (plan epic 1.6) ──
   let ackingId = null
 
-  // ── Work order from an alarm (plan epic 2.3) ──
-  let orderingId = null
-  async function handleCreateOrder(alarm) {
-    orderingId = alarm.id
-    try {
-      const o = await createWorkOrder({
-        title: `${alarmLabel(alarm.alarm_code)} — ${alarm.device_name || alarm.device_id || alarm.mqtt_device_id}`,
-        device_id: alarm.device_id || alarm.mqtt_device_id,
-        alarm_id: alarm.id,
-        priority: alarm.severity === 'critical' ? 'high' : 'normal',
-      })
-      toast.success($t('wo.saved'))
-      navigate(`/work-orders?id=${o.id}`)
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      orderingId = null
-    }
+  // ── Work order from an alarm (plan epic 2.3): the dialog picks the assignee ──
+  let orderFor = null
+  function orderSource(alarm) {
+    return { kind: 'alarm', id: alarm.id, alarm_code: alarm.alarm_code, severity: alarm.severity,
+             device_id: alarm.device_id || alarm.mqtt_device_id, device_name: alarm.device_name }
+  }
+  function onOrderCreated(e) {
+    const o = e.detail
+    // The backend acknowledges the alarm when an order is made from it
+    const patch = (a) => a.id === orderFor.id
+      ? { ...a, work_order_id: o.id, work_order_status: o.status,
+          acknowledged_at: a.acknowledged_at || new Date().toISOString(),
+          acknowledged_by_email: a.acknowledged_by_email || $authUser?.email || null,
+          ack_note: a.ack_note || $t('alarm.wo_exists').replace('{0}', o.id) }
+      : a
+    activeAlarms = activeAlarms.map(patch)
+    historyAlarms = historyAlarms.map(patch)
+    orderFor = null
   }
 
   async function handleAck(alarm) {
@@ -175,6 +176,7 @@
 
   onDestroy(() => {
     wsUnsub?.()
+    wsUnsubAck?.()
     clearInterval(pollInterval)
   })
 </script>
@@ -287,7 +289,7 @@
                   <span>{$t('alarm.wo_exists').replace('{0}', alarm.work_order_id)}</span>
                 </button>
               {:else if $canWrite}
-                <button class="ack-btn" on:click={() => handleCreateOrder(alarm)} disabled={orderingId === alarm.id} title={$t('alarm.create_wo')}>
+                <button class="ack-btn" on:click={() => orderFor = orderSource(alarm)} title={$t('alarm.create_wo')}>
                   <Icon name="clipboard" size={14} />
                   <span>{$t('alarm.create_wo')}</span>
                 </button>
@@ -320,21 +322,34 @@
             <span class="th">{$t('alarm.col_resolved')}</span>
           </div>
           {#each historyAlarms as alarm}
-            <button
-              class="alarm-row history"
-              on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
-              aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
-            >
-              <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
-              <span class="td">{alarmLabel(alarm.alarm_code)}</span>
-              <span class="td">
-                <Badge variant={severityVariant(alarm.severity)} small>
-                  {alarm.severity || 'warning'}
-                </Badge>
-              </span>
-              <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
-              <span class="td text-muted">{alarm.cleared_at ? timeAgo(alarm.cleared_at) : '—'}</span>
-            </button>
+            <div class="alarm-item">
+              <button
+                class="alarm-row history"
+                on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
+                aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
+              >
+                <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                <span class="td">{alarmLabel(alarm.alarm_code)}</span>
+                <span class="td">
+                  <Badge variant={severityVariant(alarm.severity)} small>
+                    {alarm.severity || 'warning'}
+                  </Badge>
+                </span>
+                <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
+                <span class="td text-muted">{alarm.cleared_at ? timeAgo(alarm.cleared_at) : '—'}</span>
+              </button>
+              {#if alarm.work_order_id}
+                <button class="ack-btn wo-link" on:click={() => navigate(`/work-orders?id=${alarm.work_order_id}`)} title={$t('wo.status_' + alarm.work_order_status)}>
+                  <Icon name="clipboard" size={14} />
+                  <span>{$t('alarm.wo_exists').replace('{0}', alarm.work_order_id)}</span>
+                </button>
+              {:else if $canWrite}
+                <button class="ack-btn" on:click={() => orderFor = orderSource(alarm)} title={$t('alarm.create_wo')}>
+                  <Icon name="clipboard" size={14} />
+                  <span>{$t('alarm.create_wo')}</span>
+                </button>
+              {/if}
+            </div>
           {/each}
         </div>
 
@@ -355,6 +370,10 @@
     </div>
   {/if}
 </div>
+
+{#if orderFor}
+  <WorkOrderModal source={orderFor} on:created={onOrderCreated} on:close={() => orderFor = null} />
+{/if}
 
 <style>
   .alarms-page {
@@ -565,7 +584,7 @@
     align-items: stretch;
     gap: var(--space-2);
   }
-  .alarm-item .alarm-row.active { flex: 1; min-width: 0; }
+  .alarm-item .alarm-row.active, .alarm-item .alarm-row.history { flex: 1; min-width: 0; }
   .alarm-item.acked .alarm-row.active { opacity: 0.75; }
   .ack-info {
     display: block;

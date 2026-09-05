@@ -68,14 +68,10 @@ async function cleanDatabase() {
   `);
 
   // TRUNCATE tenants CASCADE reaches maintenance_rules through its FK and takes
-  // the platform defaults (tenant_id NULL) with it; put back what migration 032 seeds.
+  // the platform default (tenant_id NULL) with it; put back what migration 034 seeds.
   await db.query(`
-    INSERT INTO maintenance_rules (tenant_id, rule_key, model, threshold, window_hours, severity) VALUES
-      (NULL, 'compressor_starts', NULL, 8,  24, 'info'),
-      (NULL, 'compressor_duty',   NULL, 85, 24, 'info'),
-      (NULL, 'defrost_timeouts',  NULL, 3,  24, 'info'),
-      (NULL, 'door_openings',     NULL, 80, 24, 'info'),
-      (NULL, 'cond_temp',         NULL, 55, 24, 'info')
+    INSERT INTO maintenance_rules (tenant_id, rule_key, model, threshold, window_hours, severity)
+    VALUES (NULL, 'alarm_repeat', NULL, 3, 168, 'info')
     ON CONFLICT DO NOTHING
   `);
 }

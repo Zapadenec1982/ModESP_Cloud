@@ -188,11 +188,13 @@ router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
     const deviceTenantId = devRes.rows[0].tenant_id;
 
     let sql = `
-      SELECT id, alarm_code, severity, active, value, limit_value,
-             acknowledged_at, acknowledged_by, ack_note, escalated_at,
-             triggered_at, cleared_at
-      FROM alarms
-      WHERE tenant_id = $1 AND device_id = $2
+      SELECT a.id, a.alarm_code, a.severity, a.active, a.value, a.limit_value,
+             a.acknowledged_at, a.acknowledged_by, a.ack_note, a.escalated_at,
+             a.triggered_at, a.cleared_at,
+             wo.id AS work_order_id, wo.status AS work_order_status
+      FROM alarms a
+      LEFT JOIN LATERAL (SELECT w.id, w.status FROM work_orders w WHERE w.alarm_id = a.id ORDER BY w.created_at DESC LIMIT 1) wo ON true
+      WHERE a.tenant_id = $1 AND a.device_id = $2
     `;
     const params = [deviceTenantId, mqttId];
     let idx = 3;

@@ -92,7 +92,8 @@
     try {
       rules = await getMaintenanceRules()
       rulesAvailable = true
-      ruleForm = Object.fromEntries(rules.map(r => [r.rule_key, { threshold: r.threshold, window_hours: r.window_hours, enabled: r.enabled }]))
+      // The rule counts alarms over a window the admin thinks of in days; the API keeps hours
+      ruleForm = Object.fromEntries(rules.map(r => [r.rule_key, { threshold: r.threshold, window_days: Math.max(1, Math.round((r.window_hours || 168) / 24)), enabled: r.enabled }]))
     } catch (e) {
       // 402: plan without the feature — the section hides itself
       rulesAvailable = false
@@ -103,7 +104,8 @@
     const f = ruleForm[key]
     ruleBusy = key
     try {
-      await putMaintenanceRule(key, { threshold: Number(f.threshold), window_hours: Number(f.window_hours) || 24, enabled: !!f.enabled })
+      const days = Math.min(30, Math.max(1, Math.round(Number(f.window_days)) || 7))
+      await putMaintenanceRule(key, { threshold: Math.max(1, Math.round(Number(f.threshold)) || 1), window_hours: days * 24, enabled: !!f.enabled })
       toast.success($t('settings.maintenance_saved'))
       await loadRules()
     } catch (e) { toast.error(e.message) } finally { ruleBusy = null }
@@ -182,10 +184,10 @@
             <div class="rule-row" class:overridden={r.overridden}>
               <div class="rule-name">
                 <strong>{$t(`hint.${r.rule_key}`)}</strong>
-                <span class="muted">{$t(`hint.unit_${r.rule_key}`)}{#if r.default} · {r.default.threshold}{/if}</span>
+                {#if r.default}<span class="muted">{$t('settings.maintenance_default')}: {r.default.threshold} {$t(`hint.unit_${r.rule_key}`)} {$t('hint.window_days').replace('{0}', Math.round((r.default.window_hours || 168) / 24))}</span>{/if}
               </div>
-              <label class="field small"><span>{$t('settings.maintenance_threshold')}</span><input class="input" type="number" min="0" step="0.5" bind:value={ruleForm[r.rule_key].threshold} /></label>
-              <label class="field small"><span>{$t('settings.maintenance_window')}</span><input class="input" type="number" min="1" max="720" bind:value={ruleForm[r.rule_key].window_hours} /></label>
+              <label class="field small"><span>{$t('settings.maintenance_threshold')}</span><input class="input" type="number" min="1" step="1" bind:value={ruleForm[r.rule_key].threshold} /></label>
+              <label class="field small"><span>{$t('settings.maintenance_window')}</span><input class="input" type="number" min="1" max="30" step="1" bind:value={ruleForm[r.rule_key].window_days} /></label>
               <label class="check"><input type="checkbox" bind:checked={ruleForm[r.rule_key].enabled} /> {$t('settings.maintenance_enabled')}</label>
               <div class="rule-actions">
                 <Button size="sm" variant="secondary" disabled={ruleBusy === r.rule_key} on:click={() => saveRule(r.rule_key)}>{$t('settings.maintenance_save')}</Button>

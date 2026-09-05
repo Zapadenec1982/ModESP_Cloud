@@ -577,7 +577,7 @@ CREATE TABLE report_exports (
 emailed_at, created_at)` — форма з лендінгу; зберігається завжди, `emailed_at` ставиться після
 листа на `PILOT_REQUEST_EMAIL`. Роль застосунку: SELECT, INSERT, UPDATE (без DELETE).
 
-## Рекомендації з обслуговування (migration 032)
+## Рекомендації з обслуговування (migrations 032, 034)
 
 ### `maintenance_rules` — правила «попередження ремонту»
 
@@ -585,7 +585,7 @@ emailed_at, created_at)` — форма з лендінгу; зберігаєт�
 CREATE TABLE maintenance_rules (
   id           UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id    UUID          REFERENCES tenants(id) ON DELETE CASCADE,  -- NULL = платформне значення
-  rule_key     VARCHAR(48)   NOT NULL,   -- compressor_starts | compressor_duty | defrost_timeouts | door_openings | cond_temp
+  rule_key     VARCHAR(48)   NOT NULL,   -- alarm_repeat (032 сіяла пʼять метричних ключів, 034 їх прибрала)
   model        VARCHAR(64),              -- NULL = будь-яка модель (devices.model)
   threshold    NUMERIC(10,2) NOT NULL,
   window_hours SMALLINT      NOT NULL DEFAULT 24,
@@ -600,8 +600,9 @@ CREATE UNIQUE INDEX idx_maintenance_rules_scope
 ```
 
 Порядок вибору для пристрою: організація+модель → організація → платформа+модель → платформа.
-Вимкнений рядок на будь-якому рівні вимикає правило для цієї області. Міграція сіє пʼять
-платформних рядків; тестовий `cleanDatabase()` відновлює їх після `TRUNCATE tenants CASCADE`.
+Вимкнений рядок на будь-якому рівні вимикає правило для цієї області. Міграція 034 сіє один
+платформний рядок (`alarm_repeat`, 3 за 168 год); тестовий `cleanDatabase()` відновлює його після
+`TRUNCATE tenants CASCADE`.
 
 ### `maintenance_hints` — підказки
 
@@ -611,6 +612,7 @@ CREATE TABLE maintenance_hints (
   tenant_id       UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   device_id       VARCHAR(16)  NOT NULL,          -- mqtt_device_id
   rule_key        VARCHAR(48)  NOT NULL,
+  alarm_code      VARCHAR(32),                    -- 034: код аварії контролера, що повторюється
   rule_id         UUID         REFERENCES maintenance_rules(id) ON DELETE SET NULL,
   severity        VARCHAR(8)   NOT NULL DEFAULT 'info',
   value           NUMERIC(12,2),                  -- показник на останній оцінці
@@ -624,15 +626,20 @@ CREATE TABLE maintenance_hints (
   acknowledged_at TIMESTAMPTZ,
   ack_note        VARCHAR(512)
 );
-CREATE UNIQUE INDEX idx_maintenance_hints_one_open ON maintenance_hints (tenant_id, device_id, rule_key) WHERE closed_at IS NULL;
+CREATE UNIQUE INDEX idx_maintenance_hints_one_open ON maintenance_hints (tenant_id, device_id, rule_key, COALESCE(alarm_code, '')) WHERE closed_at IS NULL;   -- 034
 CREATE INDEX idx_maintenance_hints_open   ON maintenance_hints (tenant_id, device_id) WHERE closed_at IS NULL;
 CREATE INDEX idx_maintenance_hints_time   ON maintenance_hints (tenant_id, opened_at DESC);
 CREATE INDEX idx_maintenance_hints_closed ON maintenance_hints (closed_at) WHERE closed_at IS NOT NULL;
 ```
 
-> Одна відкрита підказка на (пристрій, правило). `services/maintenance.js` відкриває, оновлює
+> Одна відкрита підказка на (пристрій, правило, код аварії). `services/maintenance.js` відкриває, оновлює
 > `last_seen_at`, закриває як `resolved`; `POST /maintenance/hints/:id/dismiss` — як `dismissed`.
 > Відкрита підказка не має `closed_at` і ніколи не потрапляє під ретенцію.
+>
+> **Міграція 034** («аварії визначає контролер»): додає `alarm_code`, перебудовує унікальний індекс,
+> закриває як `dismissed` відкриті підказки пʼяти старих ключів (`compressor_starts`, `compressor_duty`,
+> `defrost_timeouts`, `door_openings`, `cond_temp`), видаляє їхні правила (платформні й організацій;
+> `rule_id` у підказках стає NULL) і сіє `alarm_repeat`. Нових GRANT не потребує.
 
 ```sql
 GRANT SELECT, INSERT, UPDATE, DELETE ON maintenance_rules TO modesp_cloud;
