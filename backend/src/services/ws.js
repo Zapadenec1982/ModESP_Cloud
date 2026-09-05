@@ -380,7 +380,9 @@ function broadcast(deviceId, payload) {
  * Superadmins receive all events; others only receive events matching their tenantId.
  */
 function broadcastGlobal(payload) {
-  logger.info({ type: payload.type, globalCount: globalListeners.size }, 'broadcastGlobal');
+  // debug, not info: the hourly maintenance sweep emits one of these per hint
+  // (a hundred lines per cycle on a demo fleet), and alarms already log themselves.
+  logger.debug({ type: payload.type, globalCount: globalListeners.size }, 'broadcastGlobal');
   if (globalListeners.size === 0) return;
 
   const data = JSON.stringify(payload);
@@ -398,7 +400,7 @@ function broadcastGlobal(payload) {
     ws.send(data);
     sent++;
   }
-  logger.info({ type: payload.type, sent }, 'broadcastGlobal sent');
+  logger.debug({ type: payload.type, sent }, 'broadcastGlobal sent');
 }
 
 function sendJSON(ws, obj) {
