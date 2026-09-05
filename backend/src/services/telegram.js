@@ -13,6 +13,11 @@ const tenantContext = new Map();
 const lastBotMsg = new Map();
 
 /** @type {Map<string, string>}  chatId_str → 'uk' | 'en' */
+const { SUPPORTED_LOCALES, pickLocale, formatDateTime, formatDuration: fmtDuration } = require('../lib/locale');
+
+// Chat → language. Seeded from users.locale (plan epic 2.11) whenever the
+// user is resolved, and written back there by the language button, so a
+// restart does not forget it. Notifications carry payload.lang themselves.
 const langContext = new Map();
 
 // ── i18n ──────────────────────────────────────────────────
@@ -112,7 +117,7 @@ const STRINGS = {
     btn_devices: '\u{1F4E6} Devices',
     btn_alarms:  '\u{1F6A8} Alarms',
     btn_tenant:  '\u{1F504} Tenant',
-    btn_lang:    '\u{1F310} UA',
+    btn_lang:    '\u{1F310} PL',
     devices_title: '\u{1F4E6} Devices',
     devices_empty: 'No active devices.',
     devices_no_access: 'You have no assigned devices.',
@@ -193,6 +198,176 @@ const STRINGS = {
     btn_refresh: '\u{1F504}',
     btn_back_devices: '\u{1F4E6} Devices',
   },
+  pl: {
+    btn_devices: '\u{1F4E6} Urządzenia',
+    btn_alarms:  '\u{1F6A8} Alarmy',
+    btn_tenant:  '\u{1F504} Organizacja',
+    btn_lang:    '\u{1F310} DE',
+    devices_title: '\u{1F4E6} Urządzenia',
+    devices_empty: 'Brak aktywnych urządzeń.',
+    devices_no_access: 'Nie masz przypisanych urządzeń.',
+    alarms_title: '\u{1F6A8} Aktywne alarmy',
+    alarms_empty: '\u{2705} Brak aktywnych alarmów.',
+    alarms_no_access: 'Nie masz przypisanych urządzeń.',
+    status_online: '\u{1F7E2} Online',
+    status_offline: '\u{26AA} Offline',
+    status_not_found: 'Nie znaleziono urządzenia.',
+    status_no_access: '\u{1F6AB} Nie masz dostępu do tego urządzenia.',
+    status_usage: 'Użycie: /status ID\nPrzykład: /status F27FCD',
+    status_label: 'Status',
+    last_seen: 'Ostatnio',
+    air_temp: '\u{1F321}\u{FE0F} Powietrze',
+    evap_temp: '\u{2744}\u{FE0F} Parownik',
+    setpoint: '\u{1F3AF} Nastawa',
+    compressor: '\u{2699}\u{FE0F} Sprężarka',
+    compressor_on: 'Wł.',
+    compressor_off: 'Wył.',
+    defrost_active: '\u{1F525} Odszranianie: aktywne',
+    active_alarms: '\u{1F6A8} Aktywne alarmy',
+    current_tenant: 'Bieżąca organizacja',
+    available_tenants: 'Dostępne',
+    tenant_not_found: 'Nie znaleziono organizacji wśród dostępnych.',
+    tenant_switched: '\u{2705} Przełączono na',
+    tenant_current: 'bieżąca',
+    account_linked_msg: '\u{2705} Konto powiązane.',
+    use_buttons: 'Użyj przycisków poniżej \u{2B07}\u{FE0F}',
+    link_prompt: 'ModESP Cloud Bot\n\nAby powiązać konto, pobierz kod w WebUI i wyślij:\n/start KOD',
+    link_success: '\u{2705} Konto powiązane pomyślnie!\nBędziesz otrzymywać powiadomienia o alarmach.',
+    link_invalid: '\u{274C} Nieprawidłowy lub wygasły kod. Wygeneruj nowy w WebUI.',
+    link_other_user: 'Ten Telegram jest już powiązany z',
+    unlink_first: 'Najpierw odłącz go poleceniem /unlink.',
+    not_linked: 'Telegram nie jest powiązany z kontem ModESP.\nPobierz kod w interfejsie WWW i wyślij: /start KOD',
+    unlinked: '\u{2705} Konto odłączone. Powiadomienia wyłączone.\nAby powiązać ponownie, pobierz nowy kod.',
+    not_linked_any: 'Ten Telegram nie jest powiązany z żadnym kontem.',
+    lang_switched: '\u{1F310} Język: Polski',
+    error: '\u{274C} Błąd. Spróbuj później.',
+    alarm_raised: 'ALARM',
+    alarm_cleared: 'Alarm ustąpił',
+    temperature: '\u{1F321}\u{FE0F} Temperatura',
+    critical_alarm: '\u{26A0}\u{FE0F} Alarm krytyczny \u{2014} wymagana natychmiastowa reakcja!',
+    duration_label: '\u{23F1}\u{FE0F} Czas trwania',
+    device_offline_msg: '\u{26AA} Urządzenie offline',
+    device_last_seen: '\u{1F550} Ostatnio',
+    escalation_prefix: '\u{23EB} Niepotwierdzony od {0} min \u{2014} wymagana reakcja',
+    alarm_device_offline: 'Urządzenie offline',
+    test_notification: '\u{1F514} Powiadomienie testowe ModESP Cloud\n\nJeśli widzisz tę wiadomość \u{2014} powiadomienia działają poprawnie!',
+    device_label: '\u{1F4CD} Urządzenie',
+    wo_title:       '\u{1F4CB} Przydzielono Ci zlecenie',
+    wo_site:        '\u{1F3EA} Punkt',
+    wo_address:     '\u{1F4CD} Adres',
+    wo_route:       '\u{1F5FA}\u{FE0F} Trasa',
+    wo_when:        '\u{1F4C5} Zaplanowano na',
+    wo_priority:    'Priorytet',
+    prio_low:       'niski', prio_normal: 'zwykły', prio_high: 'wysoki', prio_urgent: 'pilny',
+    hint_title:              '\u{1F527} Zalecenie serwisowe',
+    hint_alarm_repeat:       'Alarm się powtarza',
+    hint_alarm_label:        'Alarm',
+    hint_times:              'razy w ciągu',
+    hint_days:               'dni',
+    hint_line_label:         'limit',
+    advice_alarm_repeat:     'Sterownik zgłasza ten alarm raz za razem. Kolejne potwierdzenie nic nie da — potrzebna wizyta: utwórz zlecenie.',
+    alarm_high_temp:       'Wysoka temperatura',
+    alarm_low_temp:        'Niska temperatura',
+    alarm_sensor1:         'Awaria czujnika 1',
+    alarm_sensor2:         'Awaria czujnika 2',
+    alarm_door:            'Drzwi otwarte',
+    alarm_short_cycle:     'Krótki cykl sprężarki',
+    alarm_rapid_cycle:     'Częste cykle sprężarki',
+    alarm_continuous_run:  'Ciągła praca sprężarki',
+    alarm_pulldown:        'Wolne schładzanie',
+    alarm_rate:            'Szybka zmiana temperatury',
+    alarm_test:            'Powiadomienie testowe',
+    duration_min: 'min',
+    duration_hour: 'godz.',
+    duration_less: '<1 min',
+    btn_refresh: '\u{1F504}',
+    btn_back_devices: '\u{1F4E6} Urządzenia',
+  },
+  de: {
+    btn_devices: '\u{1F4E6} Geräte',
+    btn_alarms:  '\u{1F6A8} Alarme',
+    btn_tenant:  '\u{1F504} Organisation',
+    btn_lang:    '\u{1F310} UA',
+    devices_title: '\u{1F4E6} Geräte',
+    devices_empty: 'Keine aktiven Geräte.',
+    devices_no_access: 'Ihnen sind keine Geräte zugewiesen.',
+    alarms_title: '\u{1F6A8} Aktive Alarme',
+    alarms_empty: '\u{2705} Keine aktiven Alarme.',
+    alarms_no_access: 'Ihnen sind keine Geräte zugewiesen.',
+    status_online: '\u{1F7E2} Online',
+    status_offline: '\u{26AA} Offline',
+    status_not_found: 'Gerät nicht gefunden.',
+    status_no_access: '\u{1F6AB} Sie haben keinen Zugriff auf dieses Gerät.',
+    status_usage: 'Verwendung: /status ID\nBeispiel: /status F27FCD',
+    status_label: 'Status',
+    last_seen: 'Zuletzt',
+    air_temp: '\u{1F321}\u{FE0F} Luft',
+    evap_temp: '\u{2744}\u{FE0F} Verdampfer',
+    setpoint: '\u{1F3AF} Sollwert',
+    compressor: '\u{2699}\u{FE0F} Verdichter',
+    compressor_on: 'Ein',
+    compressor_off: 'Aus',
+    defrost_active: '\u{1F525} Abtauung: aktiv',
+    active_alarms: '\u{1F6A8} Aktive Alarme',
+    current_tenant: 'Aktuelle Organisation',
+    available_tenants: 'Verfügbar',
+    tenant_not_found: 'Organisation nicht unter den verfügbaren gefunden.',
+    tenant_switched: '\u{2705} Gewechselt zu',
+    tenant_current: 'aktuell',
+    account_linked_msg: '\u{2705} Konto verknüpft.',
+    use_buttons: 'Verwenden Sie die Schaltflächen unten \u{2B07}\u{FE0F}',
+    link_prompt: 'ModESP Cloud Bot\n\nZum Verknüpfen des Kontos holen Sie einen Code im WebUI und senden:\n/start CODE',
+    link_success: '\u{2705} Konto erfolgreich verknüpft!\nSie erhalten Alarmbenachrichtigungen.',
+    link_invalid: '\u{274C} Ungültiger oder abgelaufener Code. Erzeugen Sie einen neuen im WebUI.',
+    link_other_user: 'Dieses Telegram ist bereits verknüpft mit',
+    unlink_first: 'Trennen Sie es zuerst mit /unlink.',
+    not_linked: 'Telegram ist mit keinem ModESP-Konto verknüpft.\nHolen Sie einen Code im Web-Interface und senden: /start CODE',
+    unlinked: '\u{2705} Konto getrennt. Benachrichtigungen deaktiviert.\nZum erneuten Verknüpfen holen Sie einen neuen Code.',
+    not_linked_any: 'Dieses Telegram ist mit keinem Konto verknüpft.',
+    lang_switched: '\u{1F310} Sprache: Deutsch',
+    error: '\u{274C} Fehler. Versuchen Sie es später erneut.',
+    alarm_raised: 'ALARM',
+    alarm_cleared: 'Alarm behoben',
+    temperature: '\u{1F321}\u{FE0F} Temperatur',
+    critical_alarm: '\u{26A0}\u{FE0F} Kritischer Alarm \u{2014} sofortiges Handeln erforderlich!',
+    duration_label: '\u{23F1}\u{FE0F} Dauer',
+    device_offline_msg: '\u{26AA} Gerät offline',
+    device_last_seen: '\u{1F550} Zuletzt',
+    escalation_prefix: '\u{23EB} Seit {0} Min. nicht quittiert \u{2014} Reaktion erforderlich',
+    alarm_device_offline: 'Gerät offline',
+    test_notification: '\u{1F514} ModESP Cloud Testbenachrichtigung\n\nWenn Sie diese Nachricht sehen \u{2014} funktionieren die Benachrichtigungen!',
+    device_label: '\u{1F4CD} Gerät',
+    wo_title:       '\u{1F4CB} Ihnen wurde ein Auftrag zugewiesen',
+    wo_site:        '\u{1F3EA} Standort',
+    wo_address:     '\u{1F4CD} Adresse',
+    wo_route:       '\u{1F5FA}\u{FE0F} Route',
+    wo_when:        '\u{1F4C5} Geplant für',
+    wo_priority:    'Priorität',
+    prio_low:       'niedrig', prio_normal: 'normal', prio_high: 'hoch', prio_urgent: 'dringend',
+    hint_title:              '\u{1F527} Wartungsempfehlung',
+    hint_alarm_repeat:       'Alarm wiederholt sich',
+    hint_alarm_label:        'Alarm',
+    hint_times:              'mal in',
+    hint_days:               'Tagen',
+    hint_line_label:         'Grenze',
+    advice_alarm_repeat:     'Der Regler löst diesen Alarm immer wieder aus. Noch eine Quittierung hilft nicht — ein Einsatz ist nötig: Auftrag anlegen.',
+    alarm_high_temp:       'Hohe Temperatur',
+    alarm_low_temp:        'Niedrige Temperatur',
+    alarm_sensor1:         'Fühler 1 defekt',
+    alarm_sensor2:         'Fühler 2 defekt',
+    alarm_door:            'Tür offen',
+    alarm_short_cycle:     'Kurzer Verdichterzyklus',
+    alarm_rapid_cycle:     'Häufige Verdichterzyklen',
+    alarm_continuous_run:  'Dauerlauf des Verdichters',
+    alarm_pulldown:        'Langsames Abkühlen',
+    alarm_rate:            'Schnelle Temperaturänderung',
+    alarm_test:            'Testbenachrichtigung',
+    duration_min: 'Min.',
+    duration_hour: 'Std.',
+    duration_less: '<1 Min.',
+    btn_refresh: '\u{1F504}',
+    btn_back_devices: '\u{1F4E6} Geräte',
+  },
 };
 
 const ALARM_KEY_MAP = {
@@ -218,7 +393,7 @@ const SEVERITY_EMOJI = {
 
 /** Get language for chat */
 function lang(chatId) {
-  return langContext.get(String(chatId)) || 'uk';
+  return pickLocale(langContext.get(String(chatId)));
 }
 
 /** Get translated string */
@@ -248,7 +423,7 @@ function persistentKeyboard(chatId) {
 
 /** Check if text matches any language variant of a button */
 function matchButton(text) {
-  for (const l of ['uk', 'en']) {
+  for (const l of Object.keys(STRINGS)) {
     if (text === STRINGS[l].btn_devices) return 'devices';
     if (text === STRINGS[l].btn_alarms)  return 'alarms';
     if (text === STRINGS[l].btn_tenant)  return 'tenant';
@@ -327,7 +502,7 @@ async function resolveUser(chatId) {
   const tgId = Number(chatId);
 
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.tenant_id, t.slug AS tenant_slug, t.name AS tenant_name
+    `SELECT u.id, u.email, u.role, u.tenant_id, u.locale, t.slug AS tenant_slug, t.name AS tenant_name
      FROM users u
      JOIN tenants t ON t.id = u.tenant_id
      WHERE u.telegram_id = $1 AND u.active = true`,
@@ -337,6 +512,7 @@ async function resolveUser(chatId) {
   if (!rows.length) return null;
 
   const user = rows[0];
+  if (user.locale) langContext.set(String(chatId), user.locale);
 
   const overrideTenant = tenantContext.get(String(chatId));
   if (overrideTenant && overrideTenant !== user.tenant_id) {
@@ -672,8 +848,12 @@ function setupCommands() {
       // Language switch
       if (handler === 'lang') {
         const current = lang(chatId);
-        const newLang = current === 'uk' ? 'en' : 'uk';
+        const newLang = SUPPORTED_LOCALES[(SUPPORTED_LOCALES.indexOf(current) + 1) % SUPPORTED_LOCALES.length];
         langContext.set(String(chatId), newLang);
+        // The choice is the user's, not the chat's: it follows them to e-mail
+        // and web push and survives a restart (users.locale, plan epic 2.11).
+        try { await db.query('UPDATE users SET locale = $1 WHERE telegram_id = $2 AND active = true', [newLang, Number(chatId)]); }
+        catch (err) { logger.warn({ err, chatId }, 'Could not persist Telegram language'); }
         await bot.sendMessage(chatId, t(chatId, 'lang_switched'), {
           reply_markup: persistentKeyboard(chatId),
         });
@@ -899,6 +1079,13 @@ function setupCommands() {
 
 async function send(chatId, payload) {
   if (!bot) throw new Error('Telegram bot not initialized');
+  const message = renderNotification(chatId, payload);
+  await bot.sendMessage(chatId, message);
+}
+
+/** The text of one notification for one chat (payload.lang wins over the chat's language). */
+function renderNotification(chatId, payload) {
+  if (payload.lang) langContext.set(String(chatId), pickLocale(payload.lang));
 
   let message;
   if (payload.isTest) {
@@ -914,8 +1101,7 @@ async function send(chatId, payload) {
   } else {
     message = buildAlarmRaisedMessage(chatId, payload);
   }
-
-  await bot.sendMessage(chatId, message);
+  return message;
 }
 
 function buildWorkOrderMessage(chatId, payload) {
@@ -927,8 +1113,8 @@ function buildWorkOrderMessage(chatId, payload) {
   if (payload.siteName)    lines.push(`${t(chatId, 'wo_site')}: ${payload.siteName}`);
   if (payload.siteAddress) lines.push(`${t(chatId, 'wo_address')}: ${payload.siteAddress}`);
   if (payload.mapsUrl)     lines.push(`${t(chatId, 'wo_route')}: ${payload.mapsUrl}`);
-  if (payload.scheduledAt) lines.push(`${t(chatId, 'wo_when')}: ${formatTime(chatId, payload.scheduledAt)}`);
-  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  if (payload.scheduledAt) lines.push(`${t(chatId, 'wo_when')}: ${formatTime(chatId, payload.scheduledAt, payload.timezone)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
   return lines.join('\n');
 }
 
@@ -949,12 +1135,12 @@ function buildHintMessage(chatId, payload) {
     lines.push(`${t(chatId, 'hint_alarm_label')}: ${getAlarmName(chatId, payload.sourceAlarmCode)}${reading}`);
   }
   lines.push(`\u{1F4A1} ${t(chatId, 'advice_' + payload.ruleKey)}`);
-  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
   return lines.join('\n');
 }
 
 function buildTestMessage(chatId, payload) {
-  return `${t(chatId, 'test_notification')}\n\u{23F0} ${formatTime(chatId, payload.timestamp)}`;
+  return `${t(chatId, 'test_notification')}\n\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`;
 }
 
 function buildAlarmRaisedMessage(chatId, payload) {
@@ -980,7 +1166,7 @@ function buildAlarmRaisedMessage(chatId, payload) {
   if (payload.severity === 'critical') {
     lines.push(`\n${t(chatId, 'critical_alarm')}`);
   }
-  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
 
   return lines.join('\n');
 }
@@ -1004,7 +1190,7 @@ function buildAlarmClearedMessage(chatId, payload) {
   if (payload.duration != null) {
     lines.push(`${t(chatId, 'duration_label')}: ${formatDuration(chatId, payload.duration)}`);
   }
-  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
 
   return lines.join('\n');
 }
@@ -1018,31 +1204,18 @@ function buildOfflineMessage(chatId, payload) {
     `${t(chatId, 'device_offline_msg')}: ${deviceLabel}`,
   ];
   if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
-  lines.push(`${t(chatId, 'device_last_seen')}: ${formatTime(chatId, payload.lastSeen)}`);
+  lines.push(`${t(chatId, 'device_last_seen')}: ${formatTime(chatId, payload.lastSeen, payload.timezone)}`);
   return lines.join('\n');
 }
 
 // ── Helpers ───────────────────────────────────────────────
 
-function formatTime(chatId, isoStr) {
-  if (!isoStr) return '\u{2014}';
-  const locale = lang(chatId) === 'en' ? 'en-GB' : 'uk-UA';
-  return new Date(isoStr).toLocaleString(locale, {
-    timeZone: 'Europe/Kyiv',
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
+function formatTime(chatId, isoStr, timezone) {
+  return formatDateTime(isoStr, { locale: lang(chatId), timezone });
 }
 
 function formatDuration(chatId, ms) {
-  const mins = Math.round(ms / 60000);
-  if (mins < 1) return t(chatId, 'duration_less');
-  if (mins < 60) return `${mins} ${t(chatId, 'duration_min')}`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  const hourLabel = t(chatId, 'duration_hour');
-  const minLabel = t(chatId, 'duration_min');
-  return m > 0 ? `${h} ${hourLabel} ${m} ${minLabel}` : `${h} ${hourLabel}`;
+  return fmtDuration(ms, lang(chatId));
 }
 
 /** Safe send — won't throw if chat is blocked/deleted */
@@ -1052,4 +1225,9 @@ async function safeSend(chatId, text) {
   } catch (_) {}
 }
 
-module.exports = { init, shutdown, health };
+module.exports = {
+  init, shutdown, health,
+  // scripts/check-locales.js and test/notification-templates.test.js
+  __strings: { STRINGS },
+  __test: { renderNotification, setLang(chatId, l) { langContext.set(String(chatId), l); } },
+};

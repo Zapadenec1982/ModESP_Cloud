@@ -1520,13 +1520,23 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
     "role": "technician",
     "base_latitude": 49.8397,
     "base_longitude": 24.0297,
-    "base_address": "Львів, вул. Городоцька 100"
+    "base_address": "Львів, вул. Городоцька 100",
+    "locale": "pl",
+    "timezone": "Europe/Warsaw"
   }
 }
 ```
 
+`locale` (`uk|en|pl|de`) і `timezone` (IANA) — власні мова й часовий пояс користувача (епік 2.11).
+`null` означає «як в організації» (`tenant_settings.locale` / `.timezone`, далі платформні `uk` /
+`Europe/Kyiv`). Саме в цій мові й поясі приходять Telegram, пошта і web push; WebUI перемикається
+на неї при вході, а перемикач мови в бічній панелі записує вибір сюди. Кнопка мови в Telegram-боті
+пише те саме поле. Відповіді `POST /auth/login` і `POST /auth/select-tenant` віддають `user.locale`
+і `user.timezone`.
+
 ### `PATCH /profile`
-Оновити домашню базу. Приймаються **тільки** три поля.
+Оновити домашню базу і/або мову та часовий пояс. Приймаються **тільки** пʼять полів:
+`base_latitude`, `base_longitude`, `base_address`, `locale`, `timezone` (невалідний пояс — `400`).
 
 **Body:**
 ```json

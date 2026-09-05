@@ -1,7 +1,21 @@
 <script>
   import { effectiveTheme, toggleTheme } from '../../lib/theme.js'
   import { locale, setLocale, supportedLocales } from '../../lib/i18n.js'
+  import { authUser } from '../../lib/stores.js'
+  import { updateProfile } from '../../lib/api.js'
   import Icon from '../ui/Icon.svelte'
+
+  // A logged-in user's choice is theirs on every device and in every
+  // notification channel (users.locale, plan epic 2.11); a failure to store it
+  // must not undo the switch on screen.
+  function choose(code) {
+    setLocale(code)
+    if ($authUser && $authUser.locale !== code) {
+      updateProfile({ locale: code })
+        .then(() => authUser.update(u => u ? { ...u, locale: code } : u))
+        .catch(() => {})
+    }
+  }
 
   export let compact = false
 
@@ -26,11 +40,11 @@
   function cycleLocale() {
     const codes = supportedLocales.map(l => l.code)
     const idx = codes.indexOf($locale)
-    setLocale(codes[(idx + 1) % codes.length])
+    choose(codes[(idx + 1) % codes.length])
   }
 
   function selectLocale(code) {
-    setLocale(code)
+    choose(code)
     dropdownOpen = false
   }
 

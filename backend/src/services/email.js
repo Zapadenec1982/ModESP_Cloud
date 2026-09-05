@@ -7,7 +7,10 @@ let logger = null;
 let fromAddress = null;
 let appUrl = null;
 
-// ── Alarm names (UA + EN) ─────────────────────────────────
+// ── Dictionaries (uk / en / pl / de — plan epic 2.11) ─────
+// scripts/check-locales.js fails CI when one language lacks a key.
+
+const { pickLocale, formatDateTime, formatDuration: fmtDuration } = require('../lib/locale');
 
 const ALARM_NAMES = {
   uk: {
@@ -34,9 +37,37 @@ const ALARM_NAMES = {
     'protection.rapid_cycle_alarm':     'Rapid Cycling',
     'protection.continuous_run_alarm':  'Continuous Run',
     'protection.pulldown_alarm':        'Slow Pulldown',
-    'protection.rate_alarm':            'Rate of Change',
-    'device_offline':                   'Device offline',
+    'protection.rate_alarm':            'Rapid Temperature Change',
+    'device_offline':                   'Device Offline',
     'test_notification':                'Test Notification',
+  },
+  pl: {
+    'protection.high_temp_alarm':       'Wysoka temperatura',
+    'protection.low_temp_alarm':        'Niska temperatura',
+    'protection.sensor1_alarm':         'Awaria czujnika 1',
+    'protection.sensor2_alarm':         'Awaria czujnika 2',
+    'protection.door_alarm':            'Drzwi otwarte',
+    'protection.short_cycle_alarm':     'Krótki cykl',
+    'protection.rapid_cycle_alarm':     'Częste cykle',
+    'protection.continuous_run_alarm':  'Praca ciągła',
+    'protection.pulldown_alarm':        'Wolne schładzanie',
+    'protection.rate_alarm':            'Szybka zmiana temperatury',
+    'device_offline':                   'Urządzenie offline',
+    'test_notification':                'Powiadomienie testowe',
+  },
+  de: {
+    'protection.high_temp_alarm':       'Hohe Temperatur',
+    'protection.low_temp_alarm':        'Niedrige Temperatur',
+    'protection.sensor1_alarm':         'Fühler 1 defekt',
+    'protection.sensor2_alarm':         'Fühler 2 defekt',
+    'protection.door_alarm':            'Tür offen',
+    'protection.short_cycle_alarm':     'Kurzer Zyklus',
+    'protection.rapid_cycle_alarm':     'Häufige Zyklen',
+    'protection.continuous_run_alarm':  'Dauerlauf',
+    'protection.pulldown_alarm':        'Langsames Abkühlen',
+    'protection.rate_alarm':            'Schnelle Temperaturänderung',
+    'device_offline':                   'Gerät offline',
+    'test_notification':                'Testbenachrichtigung',
   },
 };
 
@@ -49,7 +80,151 @@ const SEVERITY_COLORS = {
 const SEVERITY_LABELS = {
   uk: { critical: 'Критично', warning: 'Попередження', info: 'Інформація' },
   en: { critical: 'Critical', warning: 'Warning', info: 'Info' },
+  pl: { critical: 'Krytyczny', warning: 'Ostrzeżenie', info: 'Informacja' },
+  de: { critical: 'Kritisch', warning: 'Warnung', info: 'Info' },
 };
+
+// Labels of the notification e-mails. {0}, {1}, … are filled by fmt().
+const L = {
+  uk: {
+    test_subject:   'ModESP Cloud — Тестове сповіщення',
+    test_title:     'Тестове сповіщення',
+    test_body:      'Email-канал налаштовано правильно. Сповіщення будуть надходити на цю адресу.',
+    device:         'Пристрій',
+    location:       'Розташування',
+    temperature:    'Температура',
+    time:           'Час',
+    open_device:    'Відкрити пристрій',
+    escalation:     '⏫ Не підтверджено {0} хв: ',
+    cleared_subject: '✅ {0} знято — {1}',
+    cleared_title:  '{0} — знято',
+    duration:       'Тривалість',
+    offline_subject: '⚠️ {0} — пристрій офлайн',
+    offline_title:  'Пристрій офлайн',
+    last_seen:      'Востаннє в мережі',
+    wo_subject:     '📋 Наряд #{0}: {1}',
+    wo_title:       'Вам призначено наряд #{0}',
+    wo_task:        'Завдання',
+    wo_priority:    'Пріоритет',
+    wo_site:        'Точка',
+    wo_address:     'Адреса',
+    wo_scheduled:   'Заплановано на',
+    wo_route:       'Маршрут до точки',
+    hint_alarm:     'Аварія',
+    hint_count:     'Скільки разів',
+    hint_reading:   '{0} разів за {1} дн. (межа {2})',
+    hint_advice:    'Що зробити',
+  },
+  en: {
+    test_subject:   'ModESP Cloud — Test notification',
+    test_title:     'Test notification',
+    test_body:      'The e-mail channel is set up correctly. Notifications will arrive at this address.',
+    device:         'Device',
+    location:       'Location',
+    temperature:    'Temperature',
+    time:           'Time',
+    open_device:    'Open device',
+    escalation:     '⏫ Not acknowledged for {0} min: ',
+    cleared_subject: '✅ {0} cleared — {1}',
+    cleared_title:  '{0} — cleared',
+    duration:       'Duration',
+    offline_subject: '⚠️ {0} — device offline',
+    offline_title:  'Device offline',
+    last_seen:      'Last seen',
+    wo_subject:     '📋 Work order #{0}: {1}',
+    wo_title:       'Work order #{0} assigned to you',
+    wo_task:        'Task',
+    wo_priority:    'Priority',
+    wo_site:        'Site',
+    wo_address:     'Address',
+    wo_scheduled:   'Scheduled for',
+    wo_route:       'Route to the site',
+    hint_alarm:     'Alarm',
+    hint_count:     'How often',
+    hint_reading:   '{0} times in {1} days (limit {2})',
+    hint_advice:    'What to do',
+  },
+  pl: {
+    test_subject:   'ModESP Cloud — Powiadomienie testowe',
+    test_title:     'Powiadomienie testowe',
+    test_body:      'Kanał e-mail jest skonfigurowany poprawnie. Powiadomienia będą przychodzić na ten adres.',
+    device:         'Urządzenie',
+    location:       'Lokalizacja',
+    temperature:    'Temperatura',
+    time:           'Czas',
+    open_device:    'Otwórz urządzenie',
+    escalation:     '⏫ Niepotwierdzony od {0} min: ',
+    cleared_subject: '✅ {0} — ustąpił — {1}',
+    cleared_title:  '{0} — ustąpił',
+    duration:       'Czas trwania',
+    offline_subject: '⚠️ {0} — urządzenie offline',
+    offline_title:  'Urządzenie offline',
+    last_seen:      'Ostatnio online',
+    wo_subject:     '📋 Zlecenie #{0}: {1}',
+    wo_title:       'Przydzielono Ci zlecenie #{0}',
+    wo_task:        'Zadanie',
+    wo_priority:    'Priorytet',
+    wo_site:        'Punkt',
+    wo_address:     'Adres',
+    wo_scheduled:   'Zaplanowano na',
+    wo_route:       'Trasa do punktu',
+    hint_alarm:     'Alarm',
+    hint_count:     'Ile razy',
+    hint_reading:   '{0} razy w {1} dni (limit {2})',
+    hint_advice:    'Co zrobić',
+  },
+  de: {
+    test_subject:   'ModESP Cloud — Testbenachrichtigung',
+    test_title:     'Testbenachrichtigung',
+    test_body:      'Der E-Mail-Kanal ist richtig eingerichtet. Benachrichtigungen kommen an diese Adresse.',
+    device:         'Gerät',
+    location:       'Standort',
+    temperature:    'Temperatur',
+    time:           'Zeit',
+    open_device:    'Gerät öffnen',
+    escalation:     '⏫ Seit {0} Min. nicht quittiert: ',
+    cleared_subject: '✅ {0} behoben — {1}',
+    cleared_title:  '{0} — behoben',
+    duration:       'Dauer',
+    offline_subject: '⚠️ {0} — Gerät offline',
+    offline_title:  'Gerät offline',
+    last_seen:      'Zuletzt online',
+    wo_subject:     '📋 Auftrag #{0}: {1}',
+    wo_title:       'Ihnen wurde Auftrag #{0} zugewiesen',
+    wo_task:        'Aufgabe',
+    wo_priority:    'Priorität',
+    wo_site:        'Standort',
+    wo_address:     'Adresse',
+    wo_scheduled:   'Geplant für',
+    wo_route:       'Route zum Standort',
+    hint_alarm:     'Alarm',
+    hint_count:     'Wie oft',
+    hint_reading:   '{0}-mal in {1} Tagen (Grenze {2})',
+    hint_advice:    'Was zu tun ist',
+  },
+};
+
+const HINT_NAMES = {
+  uk: { alarm_repeat: 'Аварія повторюється' },
+  en: { alarm_repeat: 'Recurring alarm' },
+  pl: { alarm_repeat: 'Alarm się powtarza' },
+  de: { alarm_repeat: 'Alarm wiederholt sich' },
+};
+const HINT_ADVICE = {
+  uk: { alarm_repeat: 'Контролер піднімає цю аварію знову і знову. Ще одне підтвердження не допоможе — потрібен візит: створіть наряд.' },
+  en: { alarm_repeat: 'The controller keeps raising this alarm. Another acknowledgement will not fix it — plan a visit: create a work order.' },
+  pl: { alarm_repeat: 'Sterownik zgłasza ten alarm raz za razem. Kolejne potwierdzenie nic nie da — potrzebna wizyta: utwórz zlecenie.' },
+  de: { alarm_repeat: 'Der Regler löst diesen Alarm immer wieder aus. Noch eine Quittierung hilft nicht — ein Einsatz ist nötig: Auftrag anlegen.' },
+};
+
+const PRIORITY_LABELS = {
+  uk: { low: 'низький', normal: 'звичайний', high: 'високий', urgent: 'терміновий' },
+  en: { low: 'low', normal: 'normal', high: 'high', urgent: 'urgent' },
+  pl: { low: 'niski', normal: 'zwykły', high: 'wysoki', urgent: 'pilny' },
+  de: { low: 'niedrig', normal: 'normal', high: 'hoch', urgent: 'dringend' },
+};
+
+function fmt(str, ...args) { return String(str).replace(/\{(\d+)\}/g, (_, i) => (args[i] === undefined ? '' : String(args[i]))); }
 
 // ── Init / Shutdown ───────────────────────────────────────
 
@@ -117,41 +292,39 @@ function alarmNameFor(lang, code) {
   return names[code] || names[`protection.${code}`] || code;
 }
 
+// Every notification renders in the recipient's language and time zone
+// (payload.lang / payload.timezone, resolved by push.withUserLocale — plan epic 2.11).
 function buildEmail(payload) {
-  const lang = 'uk'; // default Ukrainian; can be extended per-user later
-
-  if (payload.isTest) {
-    return buildTestEmail(lang);
-  }
-  if (payload.type === 'work_order') {
-    return buildWorkOrderEmail(payload, lang);
-  }
-  if (payload.type === 'hint') {
-    return buildHintEmail(payload, lang);
-  }
-  if (payload.type === 'device_offline') {
-    return buildOfflineEmail(payload, lang);
-  }
-  if (payload.active === false) {
-    return buildAlarmClearedEmail(payload, lang);
-  }
+  const lang = pickLocale(payload.lang);
+  if (payload.isTest) return buildTestEmail(payload, lang);
+  if (payload.type === 'work_order') return buildWorkOrderEmail(payload, lang);
+  if (payload.type === 'hint') return buildHintEmail(payload, lang);
+  if (payload.type === 'device_offline') return buildOfflineEmail(payload, lang);
+  if (payload.active === false) return buildAlarmClearedEmail(payload, lang);
   return buildAlarmRaisedEmail(payload, lang);
 }
 
-function buildTestEmail(lang) {
-  const subject = 'ModESP Cloud — Тестове сповіщення';
+function openDeviceButton(payload, T) {
+  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
+  return deviceUrl ? `
+      <div style="margin-top:20px;">
+        <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.open_device}</a>
+      </div>` : '';
+}
+
+function buildTestEmail(payload, lang) {
+  const T = L[lang];
   const html = wrapHtml(`
     <tr><td style="padding:24px 32px;">
-      <h2 style="margin:0 0 12px;color:#10b981;font-size:20px;">&#x2705; Тестове сповіщення</h2>
-      <p style="margin:0;color:#d1d5db;font-size:15px;">
-        Email-канал налаштовано правильно. Сповіщення будуть надходити на цю адресу.
-      </p>
+      <h2 style="margin:0 0 12px;color:#10b981;font-size:20px;">&#x2705; ${T.test_title}</h2>
+      <p style="margin:0;color:#d1d5db;font-size:15px;">${T.test_body}</p>
     </td></tr>
-  `);
-  return { subject, html };
+  `, lang);
+  return { subject: T.test_subject, html };
 }
 
 function buildAlarmRaisedEmail(payload, lang) {
+  const T = L[lang];
   const alarmName = alarmNameFor(lang, payload.alarmCode);
   const severity = payload.severity || 'warning';
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
@@ -160,10 +333,9 @@ function buildAlarmRaisedEmail(payload, lang) {
   const location = payload.location || '';
   const tempStr = payload.airTemp != null && isFinite(payload.airTemp)
     ? `${Number(payload.airTemp).toFixed(1)}°C` : '—';
-  const time = formatTime(payload.timestamp);
-  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
+  const time = formatTime(payload.timestamp, payload);
 
-  const escalation = payload.escalation ? (lang === 'uk' ? `⏫ Не підтверджено ${payload.escalation.minutes} хв: ` : `⏫ Not acknowledged for ${payload.escalation.minutes} min: `) : '';
+  const escalation = payload.escalation ? fmt(T.escalation, payload.escalation.minutes) : '';
   const subject = `${escalation}🚨 ${alarmName} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
 
   const html = wrapHtml(`
@@ -177,139 +349,120 @@ function buildAlarmRaisedEmail(payload, lang) {
           </td>
         </tr>
       </table>
-      ${infoRow('Пристрій', escHtml(deviceName))}
-      ${location ? infoRow('Розташування', escHtml(location)) : ''}
-      ${infoRow('Температура', tempStr)}
-      ${infoRow('Час', time)}
-      ${deviceUrl ? `
-      <div style="margin-top:20px;">
-        <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Відкрити пристрій</a>
-      </div>` : ''}
+      ${infoRow(T.device, escHtml(deviceName))}
+      ${location ? infoRow(T.location, escHtml(location)) : ''}
+      ${infoRow(T.temperature, tempStr)}
+      ${infoRow(T.time, time)}
+      ${openDeviceButton(payload, T)}
     </td></tr>
-  `);
+  `, lang);
 
   return { subject, html };
 }
 
 function buildAlarmClearedEmail(payload, lang) {
+  const T = L[lang];
   const alarmName = alarmNameFor(lang, payload.alarmCode);
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
-  const time = formatTime(payload.timestamp);
-  const durationStr = payload.duration ? formatDuration(payload.duration) : '—';
+  const time = formatTime(payload.timestamp, payload);
+  const durationStr = payload.duration ? fmtDuration(payload.duration, lang) : '—';
 
-  const subject = `✅ ${alarmName} знято — ${deviceName}`;
-
+  const subject = fmt(T.cleared_subject, alarmName, deviceName);
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:#10b981;height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
     <tr><td style="padding:24px 32px;">
-      <h2 style="margin:0 0 12px;color:#10b981;font-size:20px;">&#x2705; ${escHtml(alarmName)} — знято</h2>
-      ${infoRow('Пристрій', escHtml(deviceName))}
-      ${location ? infoRow('Розташування', escHtml(location)) : ''}
-      ${infoRow('Тривалість', durationStr)}
-      ${infoRow('Час', time)}
+      <h2 style="margin:0 0 12px;color:#10b981;font-size:20px;">&#x2705; ${escHtml(fmt(T.cleared_title, alarmName))}</h2>
+      ${infoRow(T.device, escHtml(deviceName))}
+      ${location ? infoRow(T.location, escHtml(location)) : ''}
+      ${infoRow(T.duration, durationStr)}
+      ${infoRow(T.time, time)}
     </td></tr>
-  `);
+  `, lang);
 
   return { subject, html };
 }
 
 function buildOfflineEmail(payload, lang) {
+  const T = L[lang];
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
-  const lastSeen = payload.lastSeen ? formatTime(payload.lastSeen) : '—';
-  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
+  const lastSeen = payload.lastSeen ? formatTime(payload.lastSeen, payload) : '—';
 
-  const subject = `⚠️ ${deviceName} — пристрій офлайн`;
-
+  const subject = fmt(T.offline_subject, deviceName);
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:#f59e0b;height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
     <tr><td style="padding:24px 32px;">
-      <h2 style="margin:0 0 12px;color:#f59e0b;font-size:20px;">&#x26A0;&#xFE0F; Пристрій офлайн</h2>
-      ${infoRow('Пристрій', escHtml(deviceName))}
-      ${location ? infoRow('Розташування', escHtml(location)) : ''}
-      ${infoRow('Востаннє в мережі', lastSeen)}
-      ${deviceUrl ? `
-      <div style="margin-top:20px;">
-        <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Відкрити пристрій</a>
-      </div>` : ''}
+      <h2 style="margin:0 0 12px;color:#f59e0b;font-size:20px;">&#x26A0;&#xFE0F; ${T.offline_title}</h2>
+      ${infoRow(T.device, escHtml(deviceName))}
+      ${location ? infoRow(T.location, escHtml(location)) : ''}
+      ${infoRow(T.last_seen, lastSeen)}
+      ${openDeviceButton(payload, T)}
     </td></tr>
-  `);
+  `, lang);
 
   return { subject, html };
 }
 
-const HINT_NAMES  = { uk: { alarm_repeat: 'Аварія повторюється' }, en: { alarm_repeat: 'Recurring alarm' } };
-const HINT_ADVICE = {
-  uk: { alarm_repeat: 'Контролер піднімає цю аварію знову і знову. Ще одне підтвердження не допоможе — потрібен візит: створіть наряд.' },
-  en: { alarm_repeat: 'The controller keeps raising this alarm. Another acknowledgement will not fix it — plan a visit: create a work order.' },
-};
-
-const PRIORITY_LABELS = { uk: { low: 'низький', normal: 'звичайний', high: 'високий', urgent: 'терміновий' }, en: { low: 'low', normal: 'normal', high: 'high', urgent: 'urgent' } };
-
 // Work order assigned (plan epic 2.3) — the assignee only, see push.notifyWorkOrder()
 function buildWorkOrderEmail(payload, lang) {
+  const T = L[lang];
   const prio = (PRIORITY_LABELS[lang] || PRIORITY_LABELS.uk)[payload.priority] || payload.priority || '';
   const color = payload.priority === 'urgent' ? '#dc2626' : '#3b82f6';
-  const subject = `📋 Наряд #${payload.orderId}: ${payload.title}${payload.siteName ? ' — ' + payload.siteName : ''}`;
+  const subject = fmt(T.wo_subject, payload.orderId, `${payload.title}${payload.siteName ? ' — ' + payload.siteName : ''}`);
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:${color};height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
     <tr><td style="padding:24px 32px;">
-      <h2 style="margin:0 0 12px;color:${color};font-size:20px;">&#x1F4CB; Вам призначено наряд #${escHtml(String(payload.orderId))}</h2>
-      ${infoRow('Завдання', escHtml(payload.title || ''))}
-      ${infoRow('Пріоритет', escHtml(prio))}
-      ${payload.deviceName || payload.deviceId ? infoRow('Пристрій', escHtml(payload.deviceName || payload.deviceId)) : ''}
-      ${payload.siteName ? infoRow('Точка', escHtml(payload.siteName)) : ''}
-      ${payload.siteAddress ? infoRow('Адреса', escHtml(payload.siteAddress)) : ''}
-      ${payload.scheduledAt ? infoRow('Заплановано на', formatTime(payload.scheduledAt)) : ''}
+      <h2 style="margin:0 0 12px;color:${color};font-size:20px;">&#x1F4CB; ${escHtml(fmt(T.wo_title, String(payload.orderId)))}</h2>
+      ${infoRow(T.wo_task, escHtml(payload.title || ''))}
+      ${infoRow(T.wo_priority, escHtml(prio))}
+      ${payload.deviceName || payload.deviceId ? infoRow(T.device, escHtml(payload.deviceName || payload.deviceId)) : ''}
+      ${payload.siteName ? infoRow(T.wo_site, escHtml(payload.siteName)) : ''}
+      ${payload.siteAddress ? infoRow(T.wo_address, escHtml(payload.siteAddress)) : ''}
+      ${payload.scheduledAt ? infoRow(T.wo_scheduled, formatTime(payload.scheduledAt, payload)) : ''}
       ${payload.mapsUrl ? `
       <div style="margin-top:20px;">
-        <a href="${escHtml(payload.mapsUrl)}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Маршрут до точки</a>
+        <a href="${escHtml(payload.mapsUrl)}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.wo_route}</a>
       </div>` : ''}
     </td></tr>
-  `);
+  `, lang);
   return { subject, html };
 }
 
 // Maintenance hint (plan epic 2.4) — admins only, see push.notifyHint()
 function buildHintEmail(payload, lang) {
+  const T = L[lang];
   const names  = HINT_NAMES[lang] || HINT_NAMES.uk;
   const advice = HINT_ADVICE[lang] || HINT_ADVICE.uk;
   const title  = names[payload.ruleKey] || payload.ruleKey;
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
   const alarmName = payload.sourceAlarmCode ? alarmNameFor(lang, payload.sourceAlarmCode) : null;
-  const days = payload.windowHours ? Math.max(1, Math.round(payload.windowHours / 24)) : null;
-  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
-  const reading = payload.value != null
-    ? `${payload.value} ${lang === 'en' ? 'times in' : 'разів за'} ${days || '—'} ${lang === 'en' ? 'days' : 'дн.'}${payload.threshold != null ? ` (${lang === 'en' ? 'limit' : 'межа'} ${payload.threshold})` : ''}`
-    : null;
+  const days = payload.windowHours ? Math.max(1, Math.round(payload.windowHours / 24)) : '—';
+  const reading = payload.value != null ? fmt(T.hint_reading, payload.value, days, payload.threshold ?? '—') : null;
 
   const subject = `🔧 ${title}: ${alarmName || ''} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:#3b82f6;height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
     <tr><td style="padding:24px 32px;">
       <h2 style="margin:0 0 12px;color:#3b82f6;font-size:20px;">&#x1F527; ${escHtml(title)}</h2>
-      ${infoRow('Пристрій', escHtml(deviceName))}
-      ${location ? infoRow('Розташування', escHtml(location)) : ''}
-      ${alarmName ? infoRow('Аварія', escHtml(alarmName)) : ''}
-      ${reading ? infoRow('Скільки разів', escHtml(reading)) : ''}
-      ${infoRow('Що зробити', escHtml(advice[payload.ruleKey] || ''))}
-      ${infoRow('Час', formatTime(payload.timestamp))}
-      ${deviceUrl ? `
-      <div style="margin-top:20px;">
-        <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Відкрити пристрій</a>
-      </div>` : ''}
+      ${infoRow(T.device, escHtml(deviceName))}
+      ${location ? infoRow(T.location, escHtml(location)) : ''}
+      ${alarmName ? infoRow(T.hint_alarm, escHtml(alarmName)) : ''}
+      ${reading ? infoRow(T.hint_count, escHtml(reading)) : ''}
+      ${infoRow(T.hint_advice, escHtml(advice[payload.ruleKey] || ''))}
+      ${infoRow(T.time, formatTime(payload.timestamp, payload))}
+      ${openDeviceButton(payload, T)}
     </td></tr>
-  `);
+  `, lang);
   return { subject, html };
 }
 
 // ── HTML helpers ──────────────────────────────────────────
 
-function wrapHtml(bodyRows) {
+function wrapHtml(bodyRows, lang = 'uk') {
   return `<!DOCTYPE html>
-<html lang="uk">
+<html lang="${lang}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#0f172a;padding:32px 16px;">
@@ -344,21 +497,9 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function formatTime(isoStr) {
-  try {
-    const d = new Date(isoStr);
-    return d.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', hour12: false });
-  } catch {
-    return isoStr || '—';
-  }
-}
-
-function formatDuration(ms) {
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `${mins} хв`;
-  const hrs = Math.floor(mins / 60);
-  const rem = mins % 60;
-  return rem ? `${hrs} год ${rem} хв` : `${hrs} год`;
+/** In the recipient's language and time zone (payload.lang / payload.timezone). */
+function formatTime(isoStr, payload = {}) {
+  return formatDateTime(isoStr, { locale: payload.lang, timezone: payload.timezone });
 }
 
 // ── Transactional mail (invitations, password reset) ─────
@@ -398,9 +539,43 @@ const TX = {
     reset_expires:   (m) => `The link is valid for ${m} minutes. If you did not request a reset, do nothing — your password stays as it is.`,
     link_fallback:   'Or copy the link into your browser:',
   },
+  pl: {
+    invite_subject:  (org) => `Zaproszenie do „${org}” w ModESP Cloud`,
+    invite_title:    'Zaproszono Cię do ModESP Cloud',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' zaprasza Cię' : 'Zaproszono Cię'} do organizacji „${escHtml(org)}” na platformie monitoringu chłodnictwa ModESP Cloud.`,
+    invite_cta:      'Przyjmij zaproszenie',
+    invite_expires:  (h) => `Link jest ważny ${h} godz. Jeśli nie spodziewałeś się tej wiadomości, po prostu ją zignoruj.`,
+    org:             'Organizacja',
+    role:            'Rola',
+    roles:           { admin: 'Administrator', technician: 'Technik', viewer: 'Podgląd' },
+    reset_subject:   'Reset hasła ModESP Cloud',
+    reset_title:     'Reset hasła',
+    reset_intro:     'Ktoś (mamy nadzieję, że Ty) poprosił o reset hasła do konta ModESP Cloud. Naciśnij przycisk, aby ustawić nowe hasło.',
+    reset_cta:       'Ustaw nowe hasło',
+    reset_code:      'Kod (jeśli przycisk nie działa)',
+    reset_expires:   (m) => `Link jest ważny ${m} min. Jeśli nie prosiłeś o reset, nic nie rób — hasło pozostanie bez zmian.`,
+    link_fallback:   'Lub skopiuj link do przeglądarki:',
+  },
+  de: {
+    invite_subject:  (org) => `Einladung zu „${org}“ bei ModESP Cloud`,
+    invite_title:    'Sie wurden zu ModESP Cloud eingeladen',
+    invite_intro:    (org, by) => `${by ? escHtml(by) + ' lädt Sie ein' : 'Sie wurden eingeladen'}, der Organisation „${escHtml(org)}“ auf der Kälteüberwachungsplattform ModESP Cloud beizutreten.`,
+    invite_cta:      'Einladung annehmen',
+    invite_expires:  (h) => `Der Link ist ${h} Stunden gültig. Wenn Sie diese E-Mail nicht erwartet haben, ignorieren Sie sie einfach.`,
+    org:             'Organisation',
+    role:            'Rolle',
+    roles:           { admin: 'Administrator', technician: 'Techniker', viewer: 'Betrachter' },
+    reset_subject:   'ModESP Cloud Passwort zurücksetzen',
+    reset_title:     'Passwort zurücksetzen',
+    reset_intro:     'Jemand (hoffentlich Sie) hat darum gebeten, das Passwort Ihres ModESP-Cloud-Kontos zurückzusetzen. Klicken Sie auf die Schaltfläche, um ein neues Passwort zu wählen.',
+    reset_cta:       'Neues Passwort wählen',
+    reset_code:      'Code (falls die Schaltfläche nicht funktioniert)',
+    reset_expires:   (m) => `Der Link ist ${m} Minuten gültig. Wenn Sie kein Zurücksetzen angefordert haben, tun Sie nichts — Ihr Passwort bleibt unverändert.`,
+    link_fallback:   'Oder kopieren Sie den Link in Ihren Browser:',
+  },
 };
 
-function txLang(lang) { return lang === 'en' || lang === 'pl' || lang === 'de' ? 'en' : 'uk'; }
+function txLang(lang) { return pickLocale(lang); }
 
 function ctaButton(href, label) {
   return `<p style="margin:24px 0;">
@@ -434,7 +609,7 @@ async function sendInvitation({ to, link, tenantName, role, invitedBy, lang, exp
     L.invite_title, L.invite_intro(tenantName, invitedBy), rows,
     ctaButton(link, L.invite_cta), L.invite_expires(expiresHours),
     `${L.link_fallback}<br>${escHtml(link)}`
-  ));
+  ), txLang(lang));
   const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.invite_subject(tenantName), html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
@@ -449,7 +624,7 @@ async function sendPasswordReset({ to, link, code, lang, expiresMinutes = 30 }) 
     L.reset_title, L.reset_intro, rows,
     ctaButton(link, L.reset_cta), L.reset_expires(expiresMinutes),
     `${L.link_fallback}<br>${escHtml(link)}`
-  ));
+  ), txLang(lang));
   const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.reset_subject, html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
@@ -482,4 +657,9 @@ async function sendPilotRequest({ to, request }) {
   return true;
 }
 
-module.exports = { init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest };
+module.exports = {
+  init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest,
+  // scripts/check-locales.js and test/notification-templates.test.js
+  __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX },
+  __test: { buildEmail },
+};

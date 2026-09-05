@@ -2,6 +2,7 @@
 
 const mqttSvc = require('./mqtt');
 const db      = require('./db');
+const { pickLocale, pickTimezone } = require('../lib/locale');
 
 let logger;
 
@@ -85,6 +86,30 @@ function shutdown() {
 // ── Alarm handling ────────────────────────────────────────
 
 /**
+ * Language and time zone an organisation's notifications default to
+ * (tenant_settings; plan epic 2.11). A user's own choice overrides them in
+ * withUserLocale().
+ */
+async function tenantLocale(tenantId) {
+  try {
+    const { rows } = await db.query('SELECT locale, timezone FROM tenant_settings WHERE tenant_id = $1', [tenantId]);
+    return { locale: pickLocale(rows[0]?.locale), timezone: pickTimezone(rows[0]?.timezone) };
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'tenant_settings unavailable — platform locale');
+    return { locale: pickLocale(), timezone: pickTimezone() };
+  }
+}
+
+/** The payload one recipient sees: their locale/time zone, else the organisation's. */
+function withUserLocale(payload, user, tenantPrefs) {
+  return {
+    ...payload,
+    lang:     pickLocale(user && user.user_locale, tenantPrefs && tenantPrefs.locale),
+    timezone: pickTimezone(user && user.user_timezone, tenantPrefs && tenantPrefs.timezone),
+  };
+}
+
+/**
  * Handle alarm event from MQTT (both raise and clear).
  * @param {{ tenantSlug: string, deviceId: string, alarmCode: string, active: boolean, severity: string }} evt
  */
@@ -149,6 +174,7 @@ async function handleAlarm(evt) {
     if (evt.active) {
       const linkedTgIds = await getLinkedTelegramIds(tenantId);
       const subscribers = await getSubscribers(tenantId, evt.deviceId, deviceUuid);
+      const subPayload  = withUserLocale(payload, null, await tenantLocale(tenantId));   // no user: the organisation's language
 
       for (const sub of subscribers) {
         // Skip telegram subscribers that have a linked user account (avoid duplicates)
@@ -158,7 +184,7 @@ async function handleAlarm(evt) {
         if (!handler) continue;
 
         try {
-          await handler.send(sub.address, payload);
+          await handler.send(sub.address, subPayload);
           await logDelivery(tenantId, sub.id, sub.channel, evt.deviceId, evt.alarmCode, 'sent');
           logger.info({ channel: sub.channel, deviceId: evt.deviceId, alarmCode: evt.alarmCode }, 'Push sent');
         } catch (err) {
@@ -308,6 +334,7 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
 
   const { rows: users } = await db.query(
     `SELECT DISTINCT u.id, u.role, u.telegram_id, u.email, u.receive_all_tenant_alerts,
+            u.locale AS user_locale, u.timezone AS user_timezone,
             p.enabled AS pref_enabled, p.min_severity,
             p.telegram AS pref_telegram, p.webpush AS pref_webpush, p.email AS pref_email,
             p.quiet_from, p.quiet_to, p.quiet_tz
@@ -366,6 +393,7 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
   const delivered = [];
   const alarmCode = payload.alarmCode || null;
   const logCtx = { userId: null, alarmId: payload.alarmId || null };
+  const tenantPrefs = recipients.length > 0 ? await tenantLocale(tenantId) : null;
 
   for (const user of recipients) {
     const verdict = evaluatePrefs(user, payload, { ignoreQuietHours });
@@ -374,10 +402,12 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
       continue;
     }
     logCtx.userId = user.id;
+    // Each recipient reads the message in their own language and time zone (plan epic 2.11)
+    const userPayload = withUserLocale(payload, user, tenantPrefs);
 
     if (tgHandler && verdict.channels.telegram && user.telegram_id) {
       try {
-        await tgHandler.send(String(user.telegram_id), payload);
+        await tgHandler.send(String(user.telegram_id), userPayload);
         await logDelivery(tenantId, null, 'telegram', deviceId, alarmCode, 'sent', null, logCtx);
         delivered.push({ userId: user.id, channel: 'telegram' });
         logger.info({ channel: 'telegram', userId: user.id, deviceId, type: payload.type || 'alarm' }, 'User push sent');
@@ -392,7 +422,7 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
       for (const sub of userSubs) {
         const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.key_p256dh, auth: sub.key_auth } };
         try {
-          await wpHandler.send(subscription, payload);
+          await wpHandler.send(subscription, userPayload);
           await logDelivery(tenantId, null, 'webpush', deviceId, alarmCode, 'sent', null, logCtx);
           delivered.push({ userId: user.id, channel: 'webpush' });
           logger.info({ channel: 'webpush', userId: user.id, deviceId }, 'WebPush sent');
@@ -405,7 +435,7 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
 
     if (emailHandler && verdict.channels.email && user.email) {
       try {
-        await emailHandler.send(user.email, payload);
+        await emailHandler.send(user.email, userPayload);
         await logDelivery(tenantId, null, 'email', deviceId, alarmCode, 'sent', null, logCtx);
         delivered.push({ userId: user.id, channel: 'email' });
         logger.info({ channel: 'email', userId: user.id, deviceId }, 'Email sent');
@@ -563,6 +593,7 @@ async function testSend(tenantId, subscriberId) {
   const sub = rows[0];
   const handler = channels.get(sub.channel);
   if (!handler) throw new Error(`Channel '${sub.channel}' not configured`);
+  const tenantPrefs = await tenantLocale(tenantId);
 
   const testPayload = {
     deviceId:  'TEST',
@@ -577,7 +608,7 @@ async function testSend(tenantId, subscriberId) {
   };
 
   try {
-    await handler.send(sub.address, testPayload);
+    await handler.send(sub.address, withUserLocale(testPayload, null, tenantPrefs));
     await logDelivery(tenantId, sub.id, sub.channel, 'TEST', 'test_notification', 'sent');
     return { status: 'sent' };
   } catch (err) {
@@ -596,7 +627,7 @@ function channelHealth() {
 module.exports = {
   registerChannel, start, shutdown, testSend, channelHealth, notifyHint, notifyWorkOrder,
   // test/notifications-dispatch.test.js drives the dispatch without a broker
-  __test: {
+  __test: { withUserLocale, tenantLocale,
     handleAlarm, dispatchToLinkedUsers, runEscalations, evaluatePrefs, inQuietHours,
     setLogger(l) { logger = l; },
     reset() { debounceMap.clear(); channels.clear(); channelStats.clear(); },

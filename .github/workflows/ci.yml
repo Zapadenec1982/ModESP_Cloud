@@ -46,6 +46,17 @@ jobs:
         run: npm ci
         working-directory: webui
 
+      # A key missing in one language renders as the raw key (WebUI) or falls
+      # back to Ukrainian (notification templates); neither is a test failure,
+      # so the parity of uk / en / pl / de is checked here (plan epic 2.11).
+      - name: Locale parity — WebUI dictionaries
+        run: node scripts/check-i18n-parity.mjs
+        working-directory: webui
+
+      - name: Locale parity — Telegram, e-mail and web push templates
+        run: node scripts/check-locales.js
+        working-directory: backend
+
       - name: Build webui
         run: npm run build
         working-directory: webui

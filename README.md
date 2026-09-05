@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-725-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-731-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -33,7 +33,7 @@ ModESP Cloud transforms standalone ESP32 refrigeration controllers ([ModESP_v4](
 | **Maintenance hints** | The controller decides what is a fault; the cloud notices the same alarm coming back — N repeats in a window → "plan a visit"; per-organisation thresholds, admin notifications |
 | **Work orders** | Alarm or hint → "assign order" dialog → technician → visit → structured service record (duration, parts, cost); assignee gets the site address and a route link |
 | **Audit logging** | Immutable append-only log of all mutations — who did what, when, with before/after changes |
-| **Internationalization** | Ukrainian & English (WebUI + Telegram Bot), light/dark theme |
+| **Internationalization** | Ukrainian, English, Polish, German across the WebUI, Telegram, e-mail and web push; per-user language and time zone; locale parity checked in CI; light/dark theme |
 
 ---
 
@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 725 tests across 55 test files
+│   ├── test/                        # 731 tests across 56 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -248,7 +248,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**725 integration tests** across 55 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**731 integration tests** across 56 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -353,7 +353,7 @@ once `STAGING_HOST` and an SSH key are configured in the repository settings.
 | 8b | Multi-Tenant Users (M:N memberships, tenant picker/switcher) | ✅ Complete |
 | 8c | Telegram Bot Redesign (auth, RBAC, i18n, persistent keyboard) | ✅ Complete |
 | 9 | Audit Logging (immutable log, middleware, before/after changes) | ✅ Complete |
-| 10 | Test Infrastructure (Vitest, 725 tests, 55 test suites) | ✅ Complete |
+| 10 | Test Infrastructure (Vitest, 731 tests, 56 test suites) | ✅ Complete |
 | 11 | Platform Hardening (Events API, HACCP Export, Password Change, Alarm Severity) | ✅ Complete |
 | — | VPS Production Deployment | ✅ Production |
 

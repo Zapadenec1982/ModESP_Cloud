@@ -513,7 +513,7 @@ describe('User site grants + home base', () => {
       // must never carry a hash, a reset code or a link code.
       expect(Object.keys(res.body.data).sort()).toEqual(
         ['active', 'base_address', 'base_latitude', 'base_longitude', 'created_at', 'email',
-         'id', 'last_login', 'role', 'telegram_id'].sort()
+         'id', 'last_login', 'role', 'telegram_id', 'locale', 'timezone'].sort()
       );
       expect(JSON.stringify(res.body.data)).not.toContain('$2b$');
       expect(res.body.data).not.toHaveProperty('password_hash');

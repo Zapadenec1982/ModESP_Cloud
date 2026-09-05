@@ -66,6 +66,25 @@ describe('notification dispatch', () => {
     await db.query('DELETE FROM notification_log');
   });
 
+  it('each recipient gets the message in their own language and time zone, else the organisation\'s (plan epic 2.11)', async () => {
+    await db.query(`INSERT INTO tenant_settings (tenant_id, locale, timezone) VALUES ($1, 'pl', 'Europe/Warsaw')
+                    ON CONFLICT (tenant_id) DO UPDATE SET locale = 'pl', timezone = 'Europe/Warsaw'`, [tenant.id]);
+    await db.query(`UPDATE users SET locale = 'de', timezone = 'Europe/Berlin' WHERE id = $1`, [admin.id]);
+    await db.query(`UPDATE users SET locale = NULL, timezone = NULL WHERE id = $1`, [techSite.id]);
+    try {
+      await T.handleAlarm({ ...evtBase, alarmCode: 'high_temp_alarm', severity: 'critical' });
+      const byAddr = Object.fromEntries(sent.map(s => [s.address, s.payload]));
+      expect(byAddr['1001']).toMatchObject({ lang: 'de', timezone: 'Europe/Berlin' });   // the admin's own choice
+      expect(byAddr['1002']).toMatchObject({ lang: 'pl', timezone: 'Europe/Warsaw' });   // the organisation's
+      expect(T.withUserLocale({ x: 1 }, { user_locale: 'xx', user_timezone: 'Nowhere/City' }, { locale: 'en', timezone: 'Europe/London' }))
+        .toEqual({ x: 1, lang: 'en', timezone: 'Europe/London' });
+      expect(T.withUserLocale({}, null, null)).toEqual({ lang: 'uk', timezone: 'Europe/Kyiv' });
+    } finally {
+      await db.query(`UPDATE users SET locale = NULL, timezone = NULL WHERE id = $1`, [admin.id]);
+      await db.query(`DELETE FROM tenant_settings WHERE tenant_id = $1`, [tenant.id]);
+    }
+  });
+
   it('reaches admins, site-granted and device-granted users; not the ungranted technician or an opted-out superadmin', async () => {
     const { rows } = await db.query(
       `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active) VALUES ($1, 'DSP001', 'door_alarm', 'warning', true) RETURNING id`, [tenant.id]);

@@ -33,13 +33,14 @@
   ];
 
   const SERIES_CONFIG = {
-    air:      { label: 'Air',        stroke: '#22d3ee', width: 2 },
-    evap:     { label: 'Evaporator', stroke: '#34d399', width: 2 },
-    cond:     { label: 'Condenser',  stroke: '#f97316', width: 2 },
-    setpoint: { label: 'Setpoint',   stroke: '#a78bfa', width: 2, dash: [5, 5] },
-    comp:     { label: 'Compressor', stroke: 'rgba(59,130,246,0.5)', fill: 'rgba(59,130,246,0.08)', band: true },
-    defrost:  { label: 'Defrost',    stroke: 'rgba(251,146,60,0.5)', fill: 'rgba(251,146,60,0.12)', band: true },
-    energy:   { label: 'Energy (kWh)', stroke: '#fbbf24', width: 2, fill: 'rgba(251,191,36,0.08)' },
+    // Labels come from the locale (chart.series_*) at draw time — plan epic 2.11.
+    air:      { label: 'series_air',      stroke: '#22d3ee', width: 2 },
+    evap:     { label: 'series_evap',     stroke: '#34d399', width: 2 },
+    cond:     { label: 'series_cond',     stroke: '#f97316', width: 2 },
+    setpoint: { label: 'series_setpoint', stroke: '#a78bfa', width: 2, dash: [5, 5] },
+    comp:     { label: 'series_comp',     stroke: 'rgba(59,130,246,0.5)', fill: 'rgba(59,130,246,0.08)', band: true },
+    defrost:  { label: 'series_defrost',  stroke: 'rgba(251,146,60,0.5)', fill: 'rgba(251,146,60,0.12)', band: true },
+    energy:   { label: 'series_energy',   stroke: '#fbbf24', width: 2, fill: 'rgba(251,191,36,0.08)' },
     // Outdoor temperature — an optional OVERLAY, never an `activeChannels` entry.
     // Its own `outdoor` scale and right-hand axis are load-bearing: a −22 °C
     // cabinet and a +32 °C summer afternoon share nothing but a unit, and putting
@@ -455,9 +456,44 @@
     };
   }
 
+  // Last drawn data set: the chart is rebuilt from it when the language changes
+  // (series labels and axis dates live inside uPlot).
+  let lastDrawn = null;
+  $: if ($locale && lastDrawn && chart) createChart(lastDrawn.data, lastDrawn.channels);
+
+  /** Localised month and weekday names for uPlot's cursor dates. */
+  function dateNames() {
+    const split = (key) => $t(key).split(',').map(x => x.trim());
+    const MMM = split('chart.months_short'), WWW = split('chart.days_short');
+    return { MMMM: MMM, MMM, WWWW: WWW, WWW };
+  }
+  /**
+   * Axis ticks in the user's locale and a 24-hour clock instead of uPlot's
+   * "8am · 8/28/26" defaults: hour ticks read HH:MM with the date on a second
+   * line at midnight and at the first tick, day ticks read the short date.
+   */
+  function axisDates(u, splits, axisIdx, foundSpace, foundIncr) {
+    const code = $t('time.locale_code');
+    const dayIncr = foundIncr >= 86400;
+    const dateFmt = new Intl.DateTimeFormat(code, dayIncr && foundIncr >= 86400 * 300 ? { month: 'short', year: 'numeric' } : { day: '2-digit', month: '2-digit' });
+    const timeFmt = new Intl.DateTimeFormat(code, { hour: '2-digit', minute: '2-digit', hour12: false });
+    return splits.map((sec, i) => {
+      const d = new Date(sec * 1000);
+      if (dayIncr) return dateFmt.format(d);
+      const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+      return midnight || i === 0 ? `${timeFmt.format(d)}\n${dateFmt.format(d)}` : timeFmt.format(d);
+    });
+  }
+  function cursorDate(u, sec) {
+    if (sec == null) return '--';
+    return new Date(sec * 1000).toLocaleString($t('time.locale_code'), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  const seriesLabel = (cfg, ch) => (cfg.label ? $t(`chart.${cfg.label}`) : ch);
+
   function createChart(data, channels) {
     if (chart) { chart.destroy(); chart = null; }
     if (!chartEl || !data) return;
+    lastDrawn = { data, channels };
 
     const width = chartEl.clientWidth;
     if (width < 50) return;
@@ -466,13 +502,13 @@
     const hasOutdoor = data.length === channels.length + 2;
 
     const series = [
-      {},  // x-axis
+      { label: $t('chart.time'), value: cursorDate },  // x-axis
       ...channels.map(ch => {
         // Guarded: an unknown channel must not throw the whole chart away.
         const cfg = SERIES_CONFIG[ch] || {};
         if (cfg.band) {
           return {
-            label:    cfg.label,
+            label:    seriesLabel(cfg, ch),
             stroke:   cfg.stroke,
             width:    0,
             fill:     cfg.fill,
@@ -483,7 +519,7 @@
           };
         }
         return {
-          label:    cfg.label || ch,
+          label:    seriesLabel(cfg, ch),
           stroke:   cfg.stroke,
           width:    cfg.width,
           dash:     cfg.dash,
@@ -516,6 +552,7 @@
         grid: { stroke: 'rgba(48, 54, 61, 0.6)', width: 1 },
         font: '11px "IBM Plex Sans", system-ui',
         ticks: { stroke: 'rgba(48, 54, 61, 0.6)' },
+        values: axisDates,
       },
       {
         stroke: 'rgba(139, 148, 158, 0.6)',
@@ -562,9 +599,11 @@
       scales.outdoor = { auto: true };
     }
 
+    const names = dateNames();
     const opts = {
       width,
       height: 320,
+      fmtDate: (tpl) => uPlot.fmtDate(tpl, names),
       cursor: { show: true, drag: { x: true, y: false } },
       scales,
       axes,
@@ -806,7 +845,7 @@
 
 <div class="telemetry-chart">
   <div class="chart-header">
-    <h3>Temperature History</h3>
+    <h3>{$t('chart.title')}</h3>
     <div class="presets">
       {#each PRESETS as preset}
         <button
@@ -820,7 +859,7 @@
 
   <div class="range-row">
     <label>
-      <span>FROM</span>
+      <span>{$t('chart.from')}</span>
       <input
         type="datetime-local"
         bind:value={range.from}
@@ -829,7 +868,7 @@
       />
     </label>
     <label>
-      <span>TO</span>
+      <span>{$t('chart.to')}</span>
       <input
         type="datetime-local"
         bind:value={range.to}
@@ -838,7 +877,7 @@
       />
     </label>
     <button class="btn-apply" on:click={applyCustomRange} disabled={loading}>
-      Apply
+      {$t('chart.apply')}
     </button>
   </div>
   <div class="export-row">
@@ -872,14 +911,14 @@
   <div class="chart-wrap">
     <div class="chart-container" bind:this={chartEl}></div>
     {#if loading}
-      <div class="chart-overlay">Loading...</div>
+      <div class="chart-overlay">{$t('common.loading')}</div>
     {:else if loadError}
       <div class="chart-overlay chart-error">
         <span>{$t('chart.load_failed')}</span>
         <button class="btn-retry" on:click={() => loadData()}>{$t('chart.retry')}</button>
       </div>
     {:else if noData}
-      <div class="chart-overlay">No telemetry data for this period</div>
+      <div class="chart-overlay">{$t('chart.no_data')}</div>
     {/if}
   </div>
 
