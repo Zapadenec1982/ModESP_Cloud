@@ -3,10 +3,10 @@
   // list. Per device (deviceId) or for the whole organisation. Acknowledging
   // needs technician rights on the device, dismissing is for administrators.
   import { onMount, onDestroy } from 'svelte'
-  import { getDeviceHints, getHints, ackHint, dismissHint } from '../lib/api.js'
+  import { getDeviceHints, getHints, ackHint, dismissHint, createWorkOrder } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { formatDate, timeAgo } from '../lib/format.js'
-  import { isAdmin, canWrite } from '../lib/stores.js'
+  import { isAdmin, canWrite, navigate } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import Icon from './ui/Icon.svelte'
@@ -65,6 +65,19 @@
       hints = hints.map(x => x.id === h.id ? { ...x, ...d } : x)
     } catch (e) { toast.error(e.message) } finally { busy = null }
   }
+  async function createOrder(h) {
+    busy = h.id
+    try {
+      const o = await createWorkOrder({
+        title: `${label(h)} — ${h.device_name || h.device_id}`,
+        device_id: h.device_uuid || h.device_id || deviceId,
+        hint_id: h.id,
+        description: $t(`hint.advice_${h.rule_key}`),
+      })
+      toast.success($t('wo.saved'))
+      navigate(`/work-orders?id=${o.id}`)
+    } catch (e) { toast.error(e.message) } finally { busy = null }
+  }
   async function dismiss(h) {
     busy = h.id
     try {
@@ -115,6 +128,11 @@
               </div>
             </div>
             <div class="actions">
+              {#if h.work_order_id}
+                <Button size="sm" variant="ghost" on:click={() => navigate(`/work-orders?id=${h.work_order_id}`)}>{$t('hint.wo_exists').replace('{0}', h.work_order_id)}</Button>
+              {:else if $canWrite}
+                <Button size="sm" variant="secondary" disabled={busy === h.id} on:click={() => createOrder(h)}>{$t('hint.create_wo')}</Button>
+              {/if}
               {#if !h.acknowledged_at && $canWrite}
                 <Button size="sm" variant="secondary" disabled={busy === h.id} on:click={() => ack(h)}>{$t('hint.ack')}</Button>
               {/if}

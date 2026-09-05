@@ -122,6 +122,9 @@ function createTestApp() {
   const maintenanceRoutes = require('../../src/routes/maintenance');
   app.use('/api/maintenance', maintenanceRoutes.router);
   app.use('/api/devices',     maintenanceRoutes.deviceRouter);
+  const workOrderRoutes = require('../../src/routes/work-orders');
+  app.use('/api/work-orders', workOrderRoutes.router);
+  app.use('/api/devices',     workOrderRoutes.deviceRouter);
   app.use('/api/devices', require('../../src/routes/events'));
   app.use('/api/notifications', require('../../src/routes/notifications'));
   app.use('/api/fleet',   require('../../src/routes/fleet'));

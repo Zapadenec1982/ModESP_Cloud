@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getAlarms, exportAlarmsCsv, ackAlarm } from '../lib/api.js'
+  import { getAlarms, exportAlarmsCsv, ackAlarm, createWorkOrder } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { navigate, canWrite } from '../lib/stores.js'
   import { timeAgo, alarmLabel } from '../lib/format.js'
@@ -107,6 +107,26 @@
 
   // ── Acknowledge (plan epic 1.6) ──
   let ackingId = null
+
+  // ── Work order from an alarm (plan epic 2.3) ──
+  let orderingId = null
+  async function handleCreateOrder(alarm) {
+    orderingId = alarm.id
+    try {
+      const o = await createWorkOrder({
+        title: `${alarmLabel(alarm.alarm_code)} — ${alarm.device_name || alarm.device_id || alarm.mqtt_device_id}`,
+        device_id: alarm.device_id || alarm.mqtt_device_id,
+        alarm_id: alarm.id,
+        priority: alarm.severity === 'critical' ? 'high' : 'normal',
+      })
+      toast.success($t('wo.saved'))
+      navigate(`/work-orders?id=${o.id}`)
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      orderingId = null
+    }
+  }
 
   async function handleAck(alarm) {
     const note = prompt($t('alarm.ack_note_prompt'), '')
@@ -259,6 +279,17 @@
                 <button class="ack-btn" on:click={() => handleAck(alarm)} disabled={ackingId === alarm.id} title={$t('alarm.ack')}>
                   <Icon name="check" size={14} />
                   <span>{$t('alarm.ack')}</span>
+                </button>
+              {/if}
+              {#if alarm.work_order_id}
+                <button class="ack-btn wo-link" on:click={() => navigate(`/work-orders?id=${alarm.work_order_id}`)} title={$t('wo.status_' + alarm.work_order_status)}>
+                  <Icon name="clipboard" size={14} />
+                  <span>{$t('alarm.wo_exists').replace('{0}', alarm.work_order_id)}</span>
+                </button>
+              {:else if $canWrite}
+                <button class="ack-btn" on:click={() => handleCreateOrder(alarm)} disabled={orderingId === alarm.id} title={$t('alarm.create_wo')}>
+                  <Icon name="clipboard" size={14} />
+                  <span>{$t('alarm.create_wo')}</span>
                 </button>
               {/if}
             </div>
@@ -543,6 +574,8 @@
     margin-top: 2px;
   }
   .ack-info.escalated { color: var(--accent-orange, #f59e0b); }
+  .ack-btn.wo-link { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.35); }
+
   .ack-btn {
     display: inline-flex;
     align-items: center;

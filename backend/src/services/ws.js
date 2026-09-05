@@ -55,6 +55,7 @@ function attach(server, log) {
   mqttSvc.on('pending_device',    onPendingDevice);
   mqttSvc.on('backfill_complete', onBackfillComplete);
   mqttSvc.on('hint',              onHint);
+  mqttSvc.on('work_order',        onWorkOrder);
 
   logger.info('WebSocket server attached on /ws');
 }
@@ -330,6 +331,13 @@ function onHint({ tenantId, tenantSlug, deviceId, hintId, ruleKey, severity, val
     time: new Date().toISOString(),
   };
   broadcast(deviceId, payload);
+  broadcastGlobal({ ...payload, tenant_slug: tenantSlug, tenant_id: tenantId || null });
+}
+
+// Work order created / assigned / started / closed / cancelled (plan epic 2.3)
+function onWorkOrder({ tenantId, tenantSlug, orderId, deviceId, status, assignedTo, action: act }) {
+  const payload = { type: 'work_order', order_id: orderId, device_id: deviceId || null, status, assigned_to: assignedTo || null, action: act, time: new Date().toISOString() };
+  if (deviceId) broadcast(deviceId, payload);
   broadcastGlobal({ ...payload, tenant_slug: tenantSlug, tenant_id: tenantId || null });
 }
 

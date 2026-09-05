@@ -642,6 +642,57 @@ GRANT USAGE, SELECT ON SEQUENCE maintenance_hints_id_seq TO modesp_cloud;
 
 ---
 
+## Наряди на роботу (migration 033)
+
+### `work_orders`
+
+```sql
+CREATE TABLE work_orders (
+  id                BIGSERIAL    PRIMARY KEY,
+  tenant_id         UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  site_id           UUID         REFERENCES sites(id)   ON DELETE SET NULL,
+  device_id         UUID         REFERENCES devices(id) ON DELETE SET NULL,   -- uuid, поки пристрій існує
+  device_mqtt_id    VARCHAR(16),                                              -- ідентичність після видалення
+  alarm_id          BIGINT,      -- без FK: аварії чистить ретенція
+  hint_id           BIGINT,      -- без FK: підказки чистить ретенція
+  title             VARCHAR(200) NOT NULL,
+  description       TEXT,
+  priority          VARCHAR(8)   NOT NULL DEFAULT 'normal',   -- low | normal | high | urgent
+  status            VARCHAR(16)  NOT NULL DEFAULT 'new',      -- new | assigned | in_progress | done | cancelled
+  assigned_to       UUID         REFERENCES users(id) ON DELETE SET NULL,
+  created_by        UUID         REFERENCES users(id) ON DELETE SET NULL,
+  scheduled_at      TIMESTAMPTZ, assigned_at TIMESTAMPTZ, started_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
+  closed_reason     VARCHAR(512),
+  service_record_id BIGINT,
+  created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+-- індекси: відкриті по організації, по виконавцю (відкриті), за часом, по пристрою, alarm_id, hint_id
+```
+
+### `service_records` — структуровані поля
+
+```sql
+ALTER TABLE service_records
+  ADD COLUMN user_id       UUID REFERENCES users(id) ON DELETE SET NULL,      -- хто виконав
+  ADD COLUMN work_order_id BIGINT REFERENCES work_orders(id) ON DELETE SET NULL,
+  ADD COLUMN duration_min  INT,
+  ADD COLUMN parts         JSONB,        -- [{ name, qty, cost }]
+  ADD COLUMN cost          NUMERIC(12,2),
+  ADD COLUMN cost_currency CHAR(3),
+  ADD COLUMN updated_at    TIMESTAMPTZ NOT NULL DEFAULT now();
+```
+
+> `technician` (текст) лишається для старої історії; при закритті наряду заповнюється e-mail виконавця.
+> Наряди не підпадають під ретенцію: це історія обслуговування, з якої рахують попереджені ремонти.
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON work_orders TO modesp_cloud;
+GRANT USAGE, SELECT ON SEQUENCE work_orders_id_seq TO modesp_cloud;
+```
+
+---
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,

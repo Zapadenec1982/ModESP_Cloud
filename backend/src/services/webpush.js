@@ -73,6 +73,10 @@ async function send(subscriptionJson, payload) {
     title = 'ModESP Cloud — Тест';
     body  = 'Тестове сповіщення надіслано успішно.';
     tag   = 'test';
+  } else if (payload.type === 'work_order') {
+    title = `📋 Наряд #${payload.orderId}: ${payload.title}`;
+    body  = [payload.siteName, payload.siteAddress].filter(Boolean).join(' · ') || (payload.deviceName || '');
+    tag   = `wo-${payload.orderId}`;
   } else if (payload.type === 'hint') {
     const HINTS = { compressor_starts: 'Часті пуски компресора', compressor_duty: 'Компресор майже не зупиняється',
                     defrost_timeouts: 'Відтайки по таймауту', door_openings: 'Забагато відкривань дверей', cond_temp: 'Гарячий конденсатор' };

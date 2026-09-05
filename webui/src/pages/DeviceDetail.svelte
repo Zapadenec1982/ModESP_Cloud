@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, recoverDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
+  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, recoverDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, getDeviceWorkOrders, createWorkOrder, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
@@ -199,10 +199,28 @@
   let serviceForm = { service_date: '', technician: '', reason: '', work_done: '' }
   let serviceSaving = false
 
+  // ── Work orders of this device (plan epic 2.3) ──
+  let workOrders = []
+  async function loadWorkOrders() {
+    try { workOrders = await getDeviceWorkOrders(resolvedId) } catch { workOrders = [] }
+  }
+  let creatingOrder = false
+  async function createOrderHere() {
+    const title = window.prompt($t('wo.title'), `${$t('device.service_records')} — ${device.name || device.mqtt_device_id}`)
+    if (!title) return
+    creatingOrder = true
+    try {
+      const o = await createWorkOrder({ title, device_id: device.id })
+      toast.success($t('wo.saved'))
+      navigate(`/work-orders?id=${o.id}`)
+    } catch (e) { toast.error(e.message) } finally { creatingOrder = false }
+  }
+
   async function loadServiceRecords() {
     serviceLoading = true
     try {
       serviceRecords = await getServiceRecords(resolvedId)
+      loadWorkOrders()
     } catch (e) {
       serviceRecords = []
     } finally {
@@ -798,6 +816,30 @@
         <MaintenanceHints deviceId={resolvedId} />
       {:else if activeTab === 'service'}
         <div class="service-section">
+          <div class="service-header">
+            <h3>{$t('device.work_orders')}</h3>
+            {#if $canWrite}
+              <button class="btn btn-sm btn-ghost" on:click={createOrderHere} disabled={creatingOrder}>
+                <Icon name="clipboard" size={14} />
+                {$t('device.create_work_order')}
+              </button>
+            {/if}
+          </div>
+          {#if workOrders.length === 0}
+            <p class="wo-empty">{$t('device.no_work_orders')}</p>
+          {:else}
+            <div class="wo-list">
+              {#each workOrders as o (o.id)}
+                <button class="wo-row" on:click={() => navigate(`/work-orders?id=${o.id}`)}>
+                  <span class="wo-id">#{o.id}</span>
+                  <span class="wo-title">{o.title}</span>
+                  <span class="wo-status {o.status}">{$t(`wo.status_${o.status}`)}</span>
+                  <span class="wo-who">{o.assigned_to_email || $t('wo.unassigned')}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
           <div class="service-header">
             <h3>{$t('device.service_records')}</h3>
             {#if $canWrite}
@@ -1586,6 +1628,18 @@
   }
 
   /* ── Modal ── */
+  .wo-empty { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-4); }
+  .wo-list { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }
+  .wo-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-3);
+    background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); text-align: left; cursor: pointer; font-size: var(--text-sm); }
+  .wo-id { font-family: var(--font-mono); color: var(--text-secondary); }
+  .wo-title { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wo-status { font-size: var(--text-xs); padding: 2px 8px; border-radius: var(--radius-full); background: var(--bg-tertiary); }
+  .wo-status.done { color: var(--accent-green); }
+  .wo-status.in_progress { color: var(--accent-blue); }
+  .wo-status.cancelled { color: var(--text-muted); }
+  .wo-who { color: var(--text-secondary); }
+
   .modal-backdrop {
     position: fixed;
     inset: 0;

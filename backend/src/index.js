@@ -453,6 +453,9 @@ app.use('/api/devices',  require('./routes/events'));     // /:id/events
 const maintenanceRoutes = require('./routes/maintenance');
 app.use('/api/maintenance', maintenanceRoutes.router);         // hints, rules (plan epic 2.4)
 app.use('/api/devices',     maintenanceRoutes.deviceRouter);   // /:id/hints
+const workOrderRoutes = require('./routes/work-orders');
+app.use('/api/work-orders', workOrderRoutes.router);           // alarm → technician → visit (plan epic 2.3)
+app.use('/api/devices',     workOrderRoutes.deviceRouter);     // /:id/work-orders
 const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('./routes/export');
 app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
 app.use('/api/alarms',   exportAlarms);                   // /export.csv

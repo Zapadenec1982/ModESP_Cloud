@@ -35,7 +35,9 @@ const deviceRouter = Router();
 
 const HINT_COLUMNS = `h.id, h.device_id, h.rule_key, h.severity, h.value::float AS value, h.threshold::float AS threshold,
                       h.window_hours, h.opened_at, h.last_seen_at, h.closed_at, h.closed_reason,
-                      h.acknowledged_at, h.ack_note, ack.email AS acknowledged_by_email`;
+                      h.acknowledged_at, h.ack_note, ack.email AS acknowledged_by_email,
+                      wo.id AS work_order_id, wo.status AS work_order_status`;
+const HINT_WO_JOIN = `LEFT JOIN LATERAL (SELECT w.id, w.status FROM work_orders w WHERE w.hint_id = h.id ORDER BY w.created_at DESC LIMIT 1) wo ON true`;
 
 // ── GET /maintenance/hints ────────────────────────────────
 router.get('/hints', requireFeature('maintenance'), filterDeviceAccess(), async (req, res, next) => {
@@ -59,6 +61,7 @@ router.get('/hints', requireFeature('maintenance'), filterDeviceAccess(), async 
          FROM maintenance_hints h
          LEFT JOIN devices d ON d.mqtt_device_id = h.device_id AND d.tenant_id = h.tenant_id
          LEFT JOIN users ack ON ack.id = h.acknowledged_by
+         ${HINT_WO_JOIN}
          ${isSuperadmin ? 'LEFT JOIN tenants t ON t.id = h.tenant_id' : ''}
         WHERE ${where}
         ORDER BY (h.closed_at IS NULL) DESC, h.opened_at DESC
@@ -85,6 +88,7 @@ deviceRouter.get('/:id/hints', checkDeviceAccess(), async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT ${HINT_COLUMNS} FROM maintenance_hints h
          LEFT JOIN users ack ON ack.id = h.acknowledged_by
+         ${HINT_WO_JOIN}
         WHERE h.tenant_id = $1 AND h.device_id = $2
         ORDER BY (h.closed_at IS NULL) DESC, h.opened_at DESC LIMIT $3`,
       [dev[0].tenant_id, dev[0].mqtt_device_id, limit]

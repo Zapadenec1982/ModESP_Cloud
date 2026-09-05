@@ -664,6 +664,70 @@ unit, overridden, default { … }, model_overrides [ … ]`.
 
 ---
 
+## Work orders (plan epic 2.3)
+
+Наряд звʼязує аварію чи рекомендацію з техніком, точкою і візитом. Статуси:
+`new → assigned → in_progress → done | cancelled`. Видимість: адмін бачить усі наряди організації,
+технік і глядач — призначені їм і на пристроях, які вони можуть відкрити (`user_devices ∪ user_sites`).
+Кожен рядок: `id, title, description, priority (low|normal|high|urgent), status, device_id (uuid),
+device_mqtt_id, device_name, site_id, site_name, site_city, site_address, maps_url, alarm_id, hint_id,
+assigned_to, assigned_to_email, created_by_email, scheduled_at, assigned_at, started_at, closed_at,
+closed_reason, service_record_id, created_at`.
+
+### `GET /work-orders`
+Query: `status=open|closed|all|<status>` (default `open`), `mine=1`, `device_id`, `site_id`, `limit` (≤ 200), `offset`.
+Сортування: терміновість, потім найновіші.
+
+### `POST /work-orders`
+Створити (admin; technician — лише на пристрої з доступом і лише `assigned_to` = себе).
+```json
+{ "title": "Висока температура — камера №1", "device_id": "WO0001", "alarm_id": 42,
+  "priority": "high", "assigned_to": "<user uuid>", "scheduled_at": "2026-09-06T08:00:00Z" }
+```
+`device_id` — uuid або mqtt id; `site_id` береться з пристрою, якщо не передано; потрібен хоча б один із них.
+`alarm_id` / `hint_id` мають належати організації (і цьому пристрою). Непідтверджена аварія чи
+підказка підтверджується автоматично з приміткою `Наряд #N`. Виконавцю (крім самого себе) надходить
+сповіщення `work_order` з адресою точки і `maps_url`; WebSocket `work_order` (`action: created`).
+
+### `GET /work-orders/:id`
+Деталі + `alarm`, `hint`, `service_record` (або `null`).
+
+### `PATCH /work-orders/:id`
+`title, description, priority, scheduled_at` — admin або виконавець; закритий наряд — `409 closed`.
+
+### `POST /work-orders/:id/assign`
+`{ "user_id": "<uuid>" }` — admin: будь-який активний technician/admin організації; technician: лише
+себе і лише непризначений наряд (`409 already_assigned`). Новий виконавець отримує сповіщення.
+
+### `POST /work-orders/:id/start`
+Виконавець або admin → `in_progress` (`409 already_started`).
+
+### `POST /work-orders/:id/close`
+```json
+{ "work_done": "Замінено пускове реле", "duration_min": 95, "cost": 1450, "cost_currency": "UAH",
+  "parts": [{ "name": "Реле пускове", "qty": 1, "cost": 850 }], "service_date": "2026-09-05", "reason": "…" }
+```
+Виконавець або admin. Пише `service_records` (`user_id`, `work_order_id`, `technician` = e-mail, `reason`
+за замовчуванням — назва наряду) і переводить наряд у `done`; відповідь містить `service_record_id`.
+
+### `POST /work-orders/:id/cancel`
+`{ "reason": "…" }` (admin) → `cancelled`.
+
+### `GET /work-orders/stats`
+`from`, `to` (default 30 днів): `total, new, assigned, in_progress, done, cancelled, from_alarms, from_hints,
+avg_assign_min, avg_start_min, avg_close_min` (admin, technician).
+
+### `GET /work-orders/assignees`
+Активні техніки й адміни організації (admin): `id, email, role, base_address`.
+
+### `GET /devices/:id/work-orders`
+Наряди одного пристрою (`status=open` — лише відкриті), будь-яка роль із доступом до пристрою.
+
+Списки `GET /alarms` і `GET /maintenance/hints` віддають `work_order_id` і `work_order_status`
+останнього наряду, створеного з цієї аварії чи підказки.
+
+---
+
 ## Data Export
 
 Усі export-ендпоінти захищені rate limiter (10 req/min/user). Кожне завантаження (і GET також)

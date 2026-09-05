@@ -662,6 +662,65 @@ export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
 }
 
+// ── Work orders (plan epic 2.3) ─────────────────────────
+
+export function getWorkOrders({ status, mine, device_id, site_id, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (mine) params.set('mine', '1');
+  if (device_id) params.set('device_id', device_id);
+  if (site_id) params.set('site_id', site_id);
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  const qs = params.toString();
+  return request(`/work-orders${qs ? '?' + qs : ''}`);
+}
+
+export function getWorkOrder(id) {
+  return request(`/work-orders/${id}`);
+}
+
+export function getWorkOrderStats({ from, to } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return request(`/work-orders/stats${qs ? '?' + qs : ''}`);
+}
+
+export function getWorkOrderAssignees() {
+  return request('/work-orders/assignees');
+}
+
+export function createWorkOrder(data) {
+  return request('/work-orders', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function updateWorkOrder(id, data) {
+  return request(`/work-orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export function assignWorkOrder(id, userId) {
+  return request(`/work-orders/${id}/assign`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+}
+
+export function startWorkOrder(id) {
+  return request(`/work-orders/${id}/start`, { method: 'POST' });
+}
+
+export function closeWorkOrder(id, data) {
+  return request(`/work-orders/${id}/close`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function cancelWorkOrder(id, reason) {
+  return request(`/work-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: reason || null }) });
+}
+
+export function getDeviceWorkOrders(deviceId, { status } = {}) {
+  const qs = status ? `?status=${status}` : '';
+  return request(`/devices/${deviceId}/work-orders${qs}`);
+}
+
 // ── Maintenance hints (plan epic 2.4) ───────────────────
 
 export function getHints({ active, limit, offset } = {}) {

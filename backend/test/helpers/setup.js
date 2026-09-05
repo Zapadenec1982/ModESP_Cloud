@@ -42,6 +42,7 @@ async function cleanDatabase() {
       ota_jobs,
       ota_rollouts,
       firmwares,
+      work_orders,
       maintenance_hints,
       events,
       alarms,

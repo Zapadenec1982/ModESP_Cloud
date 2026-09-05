@@ -73,6 +73,14 @@ const STRINGS = {
     alarm_device_offline: 'Пристрій офлайн',
     test_notification: '\u{1F514} Тестове сповіщення ModESP Cloud\n\nЯкщо ви бачите це повідомлення \u{2014} сповіщення працюють коректно!',
     device_label: '\u{1F4CD} Пристрій',
+    // Work orders (plan epic 2.3)
+    wo_title:       '\u{1F4CB} Вам призначено наряд',
+    wo_site:        '\u{1F3EA} Точка',
+    wo_address:     '\u{1F4CD} Адреса',
+    wo_route:       '\u{1F5FA}\u{FE0F} Маршрут',
+    wo_when:        '\u{1F4C5} Запланово на',
+    wo_priority:    'Пріоритет',
+    prio_low:       'низький', prio_normal: 'звичайний', prio_high: 'високий', prio_urgent: 'терміновий',
     // Maintenance hints (plan epic 2.4)
     hint_title:              '\u{1F527} Рекомендація з обслуговування',
     hint_value_label:        'Показник',
@@ -162,6 +170,13 @@ const STRINGS = {
     alarm_device_offline: 'Device offline',
     test_notification: '\u{1F514} ModESP Cloud test notification\n\nIf you see this message \u{2014} notifications are working correctly!',
     device_label: '\u{1F4CD} Device',
+    wo_title:       '\u{1F4CB} Work order assigned to you',
+    wo_site:        '\u{1F3EA} Site',
+    wo_address:     '\u{1F4CD} Address',
+    wo_route:       '\u{1F5FA}\u{FE0F} Route',
+    wo_when:        '\u{1F4C5} Scheduled for',
+    wo_priority:    'Priority',
+    prio_low:       'low', prio_normal: 'normal', prio_high: 'high', prio_urgent: 'urgent',
     hint_title:              '\u{1F527} Maintenance hint',
     hint_value_label:        'Reading',
     hint_line_label:         'Limit',
@@ -904,6 +919,8 @@ async function send(chatId, payload) {
   let message;
   if (payload.isTest) {
     message = buildTestMessage(chatId, payload);
+  } else if (payload.type === 'work_order') {
+    message = buildWorkOrderMessage(chatId, payload);
   } else if (payload.type === 'hint') {
     message = buildHintMessage(chatId, payload);
   } else if (payload.type === 'device_offline') {
@@ -915,6 +932,20 @@ async function send(chatId, payload) {
   }
 
   await bot.sendMessage(chatId, message);
+}
+
+function buildWorkOrderMessage(chatId, payload) {
+  const lines = [
+    `${t(chatId, 'wo_title')} #${payload.orderId}: ${payload.title}`,
+    `${t(chatId, 'wo_priority')}: ${t(chatId, 'prio_' + (payload.priority || 'normal'))}`,
+  ];
+  if (payload.deviceName || payload.deviceId) lines.push(`${t(chatId, 'device_label')}: ${payload.deviceName || payload.deviceId}${payload.deviceName && payload.deviceId ? ` (${payload.deviceId})` : ''}`);
+  if (payload.siteName)    lines.push(`${t(chatId, 'wo_site')}: ${payload.siteName}`);
+  if (payload.siteAddress) lines.push(`${t(chatId, 'wo_address')}: ${payload.siteAddress}`);
+  if (payload.mapsUrl)     lines.push(`${t(chatId, 'wo_route')}: ${payload.mapsUrl}`);
+  if (payload.scheduledAt) lines.push(`${t(chatId, 'wo_when')}: ${formatTime(chatId, payload.scheduledAt)}`);
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);
+  return lines.join('\n');
 }
 
 function buildHintMessage(chatId, payload) {

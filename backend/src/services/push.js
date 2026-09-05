@@ -302,7 +302,7 @@ function evaluatePrefs(user, payload, { ignoreQuietHours = false, now = new Date
  * (users.receive_all_tenant_alerts). Every attempt is written to
  * notification_log with user_id and alarm_id.
  */
-async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { roleFilter, ignoreQuietHours = false } = {}) {
+async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { roleFilter, ignoreQuietHours = false, onlyUserIds = null } = {}) {
   // Enrich payload with device UUID for deep links
   payload.deviceUuid = deviceUuid;
 
@@ -341,6 +341,9 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
   const emailHandler = channels.get('email');
 
   const recipients = users.filter(u => {
+    // An explicit addressee (work-order assignee) is told whatever their device
+    // access set says: the assignment itself is the grant.
+    if (onlyUserIds) return onlyUserIds.includes(u.id);
     if (roleFilter && !roleFilter.includes(u.role)) return false;
     if (u.role === 'superadmin') return u.receive_all_tenant_alerts === true;
     if (u.role === 'admin') return true;
@@ -447,6 +450,34 @@ async function notifyHint(evt) {
   };
   return dispatchToLinkedUsers(evt.tenantId, evt.deviceId, dev.id || evt.deviceUuid || null, payload,
     { roleFilter: ['admin', 'superadmin'] });
+}
+
+/**
+ * Work order assigned (plan epic 2.3): tell the assignee where to go. One
+ * addressee, their own channel preferences, severity `warning` so a
+ * "critical only" preference mutes it and quiet hours still apply (an order
+ * is planned work, not a fire). Logged with alarm_code `work_order`.
+ */
+async function notifyWorkOrder(evt) {
+  if (channels.size === 0 || !evt.assignedTo) return [];
+  const payload = {
+    type:        'work_order',
+    alarmCode:   'work_order',
+    severity:    evt.priority === 'urgent' ? 'critical' : 'warning',
+    active:      true,
+    orderId:     evt.orderId,
+    title:       evt.title,
+    priority:    evt.priority,
+    deviceId:    evt.deviceId || null,
+    deviceName:  evt.deviceName || null,
+    siteName:    evt.siteName || null,
+    siteAddress: evt.siteAddress || null,
+    mapsUrl:     evt.mapsUrl || null,
+    scheduledAt: evt.scheduledAt || null,
+    timestamp:   new Date().toISOString(),
+  };
+  return dispatchToLinkedUsers(evt.tenantId, evt.deviceId || null, evt.deviceUuid || null, payload,
+    { onlyUserIds: [evt.assignedTo] });
 }
 
 /**
@@ -561,7 +592,7 @@ function channelHealth() {
 }
 
 module.exports = {
-  registerChannel, start, shutdown, testSend, channelHealth, notifyHint,
+  registerChannel, start, shutdown, testSend, channelHealth, notifyHint, notifyWorkOrder,
   // test/notifications-dispatch.test.js drives the dispatch without a broker
   __test: {
     handleAlarm, dispatchToLinkedUsers, runEscalations, evaluatePrefs, inQuietHours,
