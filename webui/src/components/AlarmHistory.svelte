@@ -2,7 +2,9 @@
   import { onMount } from 'svelte'
   import { getDeviceAlarms, getAlarms } from '../lib/api.js'
   import { alarmLabel, formatDate, formatDuration } from '../lib/format.js'
+  import { navigate, canWrite } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
+  import WorkOrderModal from './WorkOrderModal.svelte'
 
   export let deviceId = null
   export let limit = 20
@@ -10,6 +12,20 @@
   let alarms = []
   let loading = true
   let error = ''
+
+  // Work order straight from the row (plan epic 2.3); the backend acknowledges the alarm
+  let orderFor = null
+  function orderSource(alarm) {
+    return { kind: 'alarm', id: alarm.id, alarm_code: alarm.alarm_code, severity: alarm.severity,
+             device_id: alarm.device_id || deviceId, device_name: alarm.device_name }
+  }
+  function onOrderCreated(e) {
+    const o = e.detail
+    alarms = alarms.map(a => a.id === orderFor.id
+      ? { ...a, work_order_id: o.id, work_order_status: o.status, acknowledged_at: a.acknowledged_at || new Date().toISOString() }
+      : a)
+    orderFor = null
+  }
 
   function duration(triggered, cleared) {
     if (!cleared) return null
@@ -54,6 +70,7 @@
           <th>{$t('alarm.col_duration')}</th>
           <th>{$t('alarm.col_status')}</th>
           <th>{$t('alarm.col_ack')}</th>
+          <th>{$t('alarm.col_order')}</th>
         </tr>
       </thead>
       <tbody>
@@ -82,12 +99,27 @@
                 —
               {/if}
             </td>
+            <td>
+              {#if alarm.work_order_id}
+                <button class="order-btn linked" on:click={() => navigate(`/work-orders?id=${alarm.work_order_id}`)} title={$t('wo.status_' + alarm.work_order_status)}>
+                  {$t('alarm.wo_exists').replace('{0}', alarm.work_order_id)}
+                </button>
+              {:else if $canWrite}
+                <button class="order-btn" on:click={() => orderFor = orderSource(alarm)}>{$t('alarm.create_wo')}</button>
+              {:else}
+                <span class="muted">—</span>
+              {/if}
+            </td>
           </tr>
         {/each}
       </tbody>
     </table>
   {/if}
 </div>
+
+{#if orderFor}
+  <WorkOrderModal source={orderFor} on:created={onOrderCreated} on:close={() => orderFor = null} />
+{/if}
 
 <style>
   .alarm-history {
@@ -153,4 +185,17 @@
     color: var(--text-muted);
     font-size: var(--text-sm);
   }
+
+  .order-btn {
+    padding: 2px 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .order-btn:hover { border-color: var(--accent-blue); }
+  .order-btn.linked { color: var(--accent-blue); border-color: rgba(74, 158, 255, 0.35); }
 </style>

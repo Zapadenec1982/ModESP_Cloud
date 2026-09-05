@@ -609,32 +609,33 @@ user_sites`; superadmin — лише з `users.receive_all_tenant_alerts`; на�
 
 ## Maintenance hints (plan epic 2.4)
 
-Правила «попередження ремонту» (`services/maintenance.js`) раз на годину (`MAINTENANCE_EVAL_INTERVAL_MIN`,
-0 вимикає) оцінюють кожну організацію з функцією плану `maintenance` (тариф «Обʼєкт» і вище).
-Без функції — `402 plan_feature` на всьому, крім `GET /devices/:id/hints`, який тоді віддає
-`{ data: [], feature_enabled: false }`.
+Аварію визначає контролер; `services/maintenance.js` раз на годину (`MAINTENANCE_EVAL_INTERVAL_MIN`,
+0 вимикає) дивиться на історію його аварій у кожній організації з функцією плану `maintenance`
+(тариф «Обʼєкт» і вище). Без функції — `402 plan_feature` на всьому, крім `GET /devices/:id/hints`,
+який тоді віддає `{ data: [], feature_enabled: false }`.
 
 | `rule_key` | Показник | Дефолт | Вікно |
 |---|---|---|---|
-| `compressor_starts` | пусків компресора за годину (середнє по вікну) | 8 | 24 год |
-| `compressor_duty` | частка часу з увімкненим компресором, % | 85 | 24 год |
-| `defrost_timeouts` | `defrost.consecutive_timeouts` з живого стану | 3 | — |
-| `door_openings` | відкривань дверей за вікно | 80 | 24 год |
-| `cond_temp` | середня температура конденсатора (канал `cond`, ≥ 12 зразків), °C | 55 | 24 год |
+| `alarm_repeat` | той самий `alarm_code` від контролера на пристрої, разів за вікно (`device_offline` не рахується) | 3 | 168 год (7 днів) |
 
-Підказка відкривається один раз на (пристрій, правило), оновлює `last_seen_at`, поки показник за межею,
-і закривається з `closed_reason = 'resolved'`, щойно показник повертається. Офлайн-пристрій або пристрій
-без даних не оцінюється — відкриту підказку ніколи не закриває тиша. Відхилена підказка може відкритись
-знову наступної години, якщо ознака нікуди не зникла. Відкриття розсилає WebSocket-подію `hint`
-(`{ hint_id, device_id, rule_key, severity, value, threshold, active }`) і сповіщення адміністраторам
-організації (`info`, або `warning` за правилом) у Telegram / пошту / web push з порадою, що перевірити;
-запис у `notification_log` з `alarm_code = hint:<rule_key>`.
+Підказка відкривається один раз на (пристрій, код аварії), коли лічильник ≥ межі, оновлює `value`
+і `last_seen_at`, поки вікно ще тримає стільки аварій, і закривається з `closed_reason = 'resolved'`,
+щойно старі аварії випадають з вікна. Відхилена підказка може відкритись знову наступної години,
+якщо аварії нікуди не зникли. Відкриття розсилає WebSocket-подію `hint`
+(`{ hint_id, device_id, rule_key, alarm_code, severity, value, threshold, active }`) і сповіщення
+адміністраторам організації (`info`, або `warning` за правилом) у Telegram / пошту / web push з назвою
+аварії, кількістю та вікном; запис у `notification_log` з `alarm_code = hint:<код аварії>`.
+
+Міграція 034 прибрала пʼять серверних метричних правил (пуски компресора, частка роботи, таймаути
+відтайки, відкривання дверей, температура конденсатора): це дублювало логіку прошивки. Їхні відкриті
+підказки закрито як `dismissed`.
 
 ### `GET /maintenance/hints`
 Підказки організації (superadmin — усіх). Query: `active=true|false|all` (default `true`),
 `limit` (≤ 200), `offset`. Техніки й глядачі бачать лише свої пристрої (`user_devices ∪ user_sites`).
-Кожен рядок: `id, device_id, device_uuid, device_name, device_model, rule_key, severity, value, threshold,
-window_hours, opened_at, last_seen_at, closed_at, closed_reason, acknowledged_at, acknowledged_by_email, ack_note`.
+Кожен рядок: `id, device_id, device_uuid, device_name, device_model, rule_key, alarm_code, severity, value, threshold,
+window_hours, opened_at, last_seen_at, closed_at, closed_reason, acknowledged_at, acknowledged_by_email, ack_note,
+work_order_id, work_order_status`.
 
 ### `GET /devices/:id/hints`
 Те саме для одного пристрою (uuid або mqtt id), плюс `feature_enabled`.
@@ -651,9 +652,9 @@ window_hours, opened_at, last_seen_at, closed_at, closed_reason, acknowledged_at
 unit, overridden, default { … }, model_overrides [ … ]`.
 
 ### `PUT /maintenance/rules/:key`
-Перевизначення організації (admin): `{ threshold, window_hours?, severity?, enabled?, model? }`;
+Перевизначення організації (admin): `{ threshold (≥ 1), window_hours? (1–720), severity?, enabled?, model? }`;
 `model` — рядок з `devices.model` для правила лише на цю модель. `?global=1` — платформне значення
-(лише superadmin). Невідомий ключ — `404`.
+(лише superadmin). Невідомий ключ — `404`. WebUI показує вікно в днях і зберігає `days × 24`.
 
 ### `DELETE /maintenance/rules/:key[?model=…]`
 Прибрати перевизначення (повернутись до платформного). Немає перевизначення — `404`.
@@ -723,7 +724,7 @@ avg_assign_min, avg_start_min, avg_close_min` (admin, technician).
 ### `GET /devices/:id/work-orders`
 Наряди одного пристрою (`status=open` — лише відкриті), будь-яка роль із доступом до пристрою.
 
-Списки `GET /alarms` і `GET /maintenance/hints` віддають `work_order_id` і `work_order_status`
+Списки `GET /alarms`, `GET /devices/:id/alarms` і `GET /maintenance/hints` віддають `work_order_id` і `work_order_status`
 останнього наряду, створеного з цієї аварії чи підказки.
 
 ---

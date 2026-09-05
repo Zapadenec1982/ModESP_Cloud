@@ -1,16 +1,18 @@
 <script>
-  // Maintenance hints (plan epic 2.4): the platform's "check the defrost heater"
-  // list. Per device (deviceId) or for the whole organisation. Acknowledging
-  // needs technician rights on the device, dismissing is for administrators.
+  // Maintenance hints (plan epic 2.4): alarms the controller keeps raising on
+  // the same cabinet. Per device (deviceId) or for the whole organisation.
+  // Acknowledging needs technician rights on the device, dismissing is for
+  // administrators; "assign order" opens the work-order dialog.
   import { onMount, onDestroy } from 'svelte'
-  import { getDeviceHints, getHints, ackHint, dismissHint, createWorkOrder } from '../lib/api.js'
+  import { getDeviceHints, getHints, ackHint, dismissHint } from '../lib/api.js'
   import { on } from '../lib/ws.js'
-  import { formatDate, timeAgo } from '../lib/format.js'
+  import { formatDate, timeAgo, alarmLabel } from '../lib/format.js'
   import { isAdmin, canWrite, navigate } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import Icon from './ui/Icon.svelte'
   import Button from './ui/Button.svelte'
+  import WorkOrderModal from './WorkOrderModal.svelte'
 
   export let deviceId = null
   export let limit = 50
@@ -43,13 +45,13 @@
   function label(h) {
     const key = `hint.${h.rule_key}`
     const s = $t(key)
-    return s === key ? h.rule_key : s
+    const name = s === key ? h.rule_key : s
+    return h.alarm_code ? `${name}: ${alarmLabel(h.alarm_code)}` : name
   }
+  function days(h) { return h.window_hours ? Math.max(1, Math.round(h.window_hours / 24)) : '—' }
   function reading(h) {
     if (h.value == null) return '—'
-    const unit = $t(`hint.unit_${h.rule_key}`)
-    const win = h.window_hours && h.rule_key !== 'defrost_timeouts' ? ' · ' + $t('hint.window').replace('{0}', h.window_hours) : ''
-    return `${h.value} ${unit}${win} · ${$t('hint.limit').replace('{0}', h.threshold)}`
+    return $t('hint.repeat_reading').replace('{0}', h.value).replace('{1}', days(h)).replace('{2}', h.threshold ?? '—')
   }
   function status(h) {
     if (h.closed_at) return h.closed_reason === 'dismissed' ? 'dismissed' : 'resolved'
@@ -65,18 +67,19 @@
       hints = hints.map(x => x.id === h.id ? { ...x, ...d } : x)
     } catch (e) { toast.error(e.message) } finally { busy = null }
   }
-  async function createOrder(h) {
-    busy = h.id
-    try {
-      const o = await createWorkOrder({
-        title: `${label(h)} — ${h.device_name || h.device_id}`,
-        device_id: h.device_uuid || h.device_id || deviceId,
-        hint_id: h.id,
-        description: $t(`hint.advice_${h.rule_key}`),
-      })
-      toast.success($t('wo.saved'))
-      navigate(`/work-orders?id=${o.id}`)
-    } catch (e) { toast.error(e.message) } finally { busy = null }
+  let orderFor = null
+  function createOrder(h) {
+    orderFor = { kind: 'hint', id: h.id, alarm_code: h.alarm_code, severity: h.severity,
+                 device_id: h.device_uuid || h.device_id || deviceId, device_name: h.device_name,
+                 title: label(h), description: $t(`hint.advice_${h.rule_key}`) }
+  }
+  function onOrderCreated(e) {
+    const o = e.detail
+    // The backend acknowledges the hint when an order is made from it
+    hints = hints.map(x => x.id === orderFor.id
+      ? { ...x, work_order_id: o.id, work_order_status: o.status, acknowledged_at: x.acknowledged_at || new Date().toISOString() }
+      : x)
+    orderFor = null
   }
   async function dismiss(h) {
     busy = h.id
@@ -171,6 +174,10 @@
     {/if}
   {/if}
 </div>
+
+{#if orderFor}
+  <WorkOrderModal source={orderFor} on:created={onOrderCreated} on:close={() => orderFor = null} />
+{/if}
 
 <style>
   .head { margin-bottom: var(--space-3); }

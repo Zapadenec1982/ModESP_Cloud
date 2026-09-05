@@ -318,12 +318,13 @@ function onDeviceStatus({ deviceId, online, lastSeen }) {
 }
 
 // Maintenance hint opened/closed (plan epic 2.4) — services/maintenance.js
-function onHint({ tenantId, tenantSlug, deviceId, hintId, ruleKey, severity, value, threshold, active }) {
+function onHint({ tenantId, tenantSlug, deviceId, hintId, ruleKey, alarmCode, severity, value, threshold, active }) {
   const payload = {
     type: 'hint',
     hint_id: hintId,
     device_id: deviceId,
     rule_key: ruleKey,
+    alarm_code: alarmCode || null,
     severity,
     value,
     threshold,
@@ -380,7 +381,9 @@ function broadcast(deviceId, payload) {
  * Superadmins receive all events; others only receive events matching their tenantId.
  */
 function broadcastGlobal(payload) {
-  logger.info({ type: payload.type, globalCount: globalListeners.size }, 'broadcastGlobal');
+  // debug, not info: the hourly maintenance sweep emits one of these per hint
+  // (a hundred lines per cycle on a demo fleet), and alarms already log themselves.
+  logger.debug({ type: payload.type, globalCount: globalListeners.size }, 'broadcastGlobal');
   if (globalListeners.size === 0) return;
 
   const data = JSON.stringify(payload);
@@ -398,7 +401,7 @@ function broadcastGlobal(payload) {
     ws.send(data);
     sent++;
   }
-  logger.info({ type: payload.type, sent }, 'broadcastGlobal sent');
+  logger.debug({ type: payload.type, sent }, 'broadcastGlobal sent');
 }
 
 function sendJSON(ws, obj) {

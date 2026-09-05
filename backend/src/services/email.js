@@ -239,39 +239,11 @@ function buildOfflineEmail(payload, lang) {
   return { subject, html };
 }
 
-const HINT_NAMES = {
-  uk: {
-    compressor_starts: 'Часті пуски компресора',
-    compressor_duty:   'Компресор працює майже безперервно',
-    defrost_timeouts:  'Відтайки завершуються по таймауту',
-    door_openings:     'Забагато відкривань дверей',
-    cond_temp:         'Гарячий конденсатор',
-  },
-  en: {
-    compressor_starts: 'Compressor short-cycling',
-    compressor_duty:   'Compressor running almost continuously',
-    defrost_timeouts:  'Defrosts ending on timeout',
-    door_openings:     'Too many door openings',
-    cond_temp:         'Hot condenser',
-  },
-};
+const HINT_NAMES  = { uk: { alarm_repeat: 'Аварія повторюється' }, en: { alarm_repeat: 'Recurring alarm' } };
 const HINT_ADVICE = {
-  uk: {
-    compressor_starts: 'Перевірте реле, уставку й гістерезис, витік холодоагенту.',
-    compressor_duty:   'Перевірте заправку, ущільнення дверей і чистоту конденсатора.',
-    defrost_timeouts:  'Перевірте ТЕН відтайки і датчик випарника.',
-    door_openings:     'Перевірте ущільнення дверей і дисципліну персоналу.',
-    cond_temp:         'Очистіть конденсатор, перевірте його вентилятор і вентиляцію.',
-  },
-  en: {
-    compressor_starts: 'Check the relay, setpoint and differential; look for a refrigerant leak.',
-    compressor_duty:   'Check the charge, door gaskets and condenser cleanliness.',
-    defrost_timeouts:  'Check the defrost heater and the evaporator sensor.',
-    door_openings:     'Check the door gaskets and staff routine.',
-    cond_temp:         'Clean the condenser, check its fan and the ventilation.',
-  },
+  uk: { alarm_repeat: 'Контролер піднімає цю аварію знову і знову. Ще одне підтвердження не допоможе — потрібен візит: створіть наряд.' },
+  en: { alarm_repeat: 'The controller keeps raising this alarm. Another acknowledgement will not fix it — plan a visit: create a work order.' },
 };
-const HINT_UNITS = { compressor_starts: '/год', compressor_duty: ' %', cond_temp: ' °C' };
 
 const PRIORITY_LABELS = { uk: { low: 'низький', normal: 'звичайний', high: 'високий', urgent: 'терміновий' }, en: { low: 'low', normal: 'normal', high: 'high', urgent: 'urgent' } };
 
@@ -306,20 +278,22 @@ function buildHintEmail(payload, lang) {
   const title  = names[payload.ruleKey] || payload.ruleKey;
   const deviceName = payload.deviceName || payload.deviceId || '—';
   const location = payload.location || '';
-  const unit = HINT_UNITS[payload.ruleKey] || '';
+  const alarmName = payload.sourceAlarmCode ? alarmNameFor(lang, payload.sourceAlarmCode) : null;
+  const days = payload.windowHours ? Math.max(1, Math.round(payload.windowHours / 24)) : null;
   const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
   const reading = payload.value != null
-    ? `${payload.value}${unit}${payload.windowHours ? ` за ${payload.windowHours} год` : ''} (межа ${payload.threshold}${unit})`
+    ? `${payload.value} ${lang === 'en' ? 'times in' : 'разів за'} ${days || '—'} ${lang === 'en' ? 'days' : 'дн.'}${payload.threshold != null ? ` (${lang === 'en' ? 'limit' : 'межа'} ${payload.threshold})` : ''}`
     : null;
 
-  const subject = `🔧 ${title} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
+  const subject = `🔧 ${title}: ${alarmName || ''} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
   const html = wrapHtml(`
     <tr><td style="padding:0;"><div style="background:#3b82f6;height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
     <tr><td style="padding:24px 32px;">
       <h2 style="margin:0 0 12px;color:#3b82f6;font-size:20px;">&#x1F527; ${escHtml(title)}</h2>
       ${infoRow('Пристрій', escHtml(deviceName))}
       ${location ? infoRow('Розташування', escHtml(location)) : ''}
-      ${reading ? infoRow('Показник', escHtml(reading)) : ''}
+      ${alarmName ? infoRow('Аварія', escHtml(alarmName)) : ''}
+      ${reading ? infoRow('Скільки разів', escHtml(reading)) : ''}
       ${infoRow('Що зробити', escHtml(advice[payload.ruleKey] || ''))}
       ${infoRow('Час', formatTime(payload.timestamp))}
       ${deviceUrl ? `

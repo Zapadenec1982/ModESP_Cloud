@@ -1,30 +1,34 @@
 'use strict';
 
 /**
- * Maintenance hints — repair-prevention rules (plan epic 2.4, ROADMAP phase 18).
+ * Maintenance hints — "the same alarm keeps coming back" (plan epic 2.4,
+ * ROADMAP phase 18).
  *
- * Once an hour (MAINTENANCE_EVAL_INTERVAL_MIN, 0 disables) every organisation
- * whose plan carries the `maintenance` feature is evaluated against five rules.
- * Each rule reads what the platform already stores — compressor / door events,
- * the `cond` telemetry channel, the controller's live defrost counters — and
- * compares a metric with a line (maintenance_rules). Over the line: one open
- * hint per (device, rule) is opened (or refreshed); back under: the hint is
- * closed as `resolved`. Acknowledging keeps a hint open; dismissing closes it.
+ * The controller decides what is a fault and raises the alarm; the cloud keeps
+ * the history. What the cloud can add that the controller cannot is a look
+ * back over that history: the same alarm raised on the same cabinet again and
+ * again is a service call, not another acknowledgement. Once an hour
+ * (MAINTENANCE_EVAL_INTERVAL_MIN, 0 disables) every organisation whose plan
+ * carries the `maintenance` feature is evaluated against one rule:
  *
- * Rules are resolved per device, most specific first: the organisation's row
- * for that device model → the organisation's row for any model → the platform
+ *   alarm_repeat — the same alarm code raised on a device at least `threshold`
+ *                  times within `window_hours` (platform default: 3 in 168 h).
+ *                  `value` on the hint is the count inside the window.
+ *
+ * One open hint per (device, alarm code): opened when the count reaches the
+ * line (WebSocket `hint`, notification to the organisation's administrators),
+ * refreshed while it stays there, closed as `resolved` once the sliding window
+ * holds fewer. Acknowledging keeps a hint open; dismissing closes it, and the
+ * next sweep reopens it if the evidence is still there.
+ *
+ * `device_offline` is the platform's own connectivity alarm, not the
+ * controller's, and is not counted.
+ *
+ * Rules resolve per device, most specific first: the organisation's row for
+ * that device model → the organisation's row for any model → the platform
  * default for that model → the platform default. A disabled row at any level
- * switches the rule off for that scope.
- *
- * Offline devices and devices without enough data are skipped entirely — an
- * open hint is never closed on silence, only on evidence.
- *
- * Metrics (window_hours = W, default 24):
- *   compressor_starts  compressor_on events in W / W            starts per hour
- *   compressor_duty    time compressor ON in W / W × 100         percent
- *   defrost_timeouts   defrost.consecutive_timeouts (live state)  count
- *   door_openings      door_open events in W                      count
- *   cond_temp          avg(telemetry.cond) in W, ≥ 12 samples     °C
+ * switches the rule off for that scope; a switched-off rule leaves open hints
+ * as they are (nothing is closed without evidence).
  */
 
 const db      = require('./db');
@@ -32,14 +36,12 @@ const mqttSvc = require('./mqtt');
 const pushSvc = require('./push');
 
 const RULES = {
-  compressor_starts: { unit: 'starts/h', source: 'events'    },
-  compressor_duty:   { unit: '%',        source: 'events'    },
-  defrost_timeouts:  { unit: 'count',    source: 'state'     },
-  door_openings:     { unit: 'count',    source: 'events'    },
-  cond_temp:         { unit: '°C',       source: 'telemetry' },
+  alarm_repeat: { unit: 'count', source: 'alarms' },
 };
 const RULE_KEYS = Object.keys(RULES);
-const MIN_COND_SAMPLES = 12;
+const DEFAULT_WINDOW_HOURS = 168;
+/** Raised by the platform, not by the controller: never counted. */
+const EXCLUDED_CODES = ['device_offline'];
 
 const BOOT_DELAY_MS  = 90_000;
 const BOOT_JITTER_MS = 60_000;
@@ -97,94 +99,46 @@ async function effectiveRules(tenantId) {
   });
 }
 
-// ── Metrics ────────────────────────────────────────────────
+// ── Evidence ───────────────────────────────────────────────
 
 /**
- * Share of [from, to] the compressor spent ON, from compressor_on/off events
- * inside the window plus the last known state before it. Returns null when
- * nothing is known about the device at all.
+ * Every controller alarm of one organisation raised inside the longest window
+ * any of its rules uses, grouped by device.
+ * Returns Map<mqtt_device_id, { device, alarms: [{ alarm_code, triggered_at }] }>.
  */
-function dutyPercent(events, priorOn, from, to) {
-  if (priorOn === null && events.length === 0) return null;
-  let on = priorOn === true;
-  let cursor = from.getTime();
-  let onMs = 0;
-  for (const e of events) {
-    const t = Math.min(Math.max(e.time.getTime(), from.getTime()), to.getTime());
-    if (on) onMs += t - cursor;
-    cursor = t;
-    on = e.event_type === 'compressor_on';
-  }
-  if (on) onMs += to.getTime() - cursor;
-  const total = to.getTime() - from.getTime();
-  return total > 0 ? (onMs / total) * 100 : null;
-}
-
-/**
- * Compute every metric for every active device of one organisation.
- * Returns Map<mqtt_device_id, { device, metrics: { [ruleKey]: number|null } }>.
- * A metric is null when the device is offline or there is no evidence.
- */
-async function collectMetrics(tenantId, now, maxWindowHours) {
+async function collectAlarms(tenantId, now, maxWindowHours) {
   const from = new Date(now.getTime() - maxWindowHours * 3600e3);
   const { rows: devices } = await db.query(
-    `SELECT id, mqtt_device_id, name, model, online, last_state
-       FROM devices WHERE tenant_id = $1 AND status = 'active'`,
+    `SELECT id, mqtt_device_id, name, model FROM devices WHERE tenant_id = $1 AND status = 'active'`,
     [tenantId]
   );
   const out = new Map();
   if (devices.length === 0) return out;
 
-  const [{ rows: evRows }, { rows: priorRows }, { rows: condRows }] = await Promise.all([
-    db.query(
-      `SELECT device_id, event_type, time FROM events
-        WHERE tenant_id = $1 AND time > $2 AND time <= $3
-          AND event_type IN ('compressor_on', 'compressor_off', 'door_open')
-        ORDER BY device_id, time`,
-      [tenantId, from, now]
-    ),
-    db.query(
-      `SELECT DISTINCT ON (device_id) device_id, event_type FROM events
-        WHERE tenant_id = $1 AND time <= $2 AND event_type IN ('compressor_on', 'compressor_off')
-        ORDER BY device_id, time DESC`,
-      [tenantId, from]
-    ),
-    db.query(
-      `SELECT device_id, avg(value)::float AS v, count(*)::int AS n FROM telemetry
-        WHERE tenant_id = $1 AND channel = 'cond' AND time > $2 AND time <= $3
-        GROUP BY device_id`,
-      [tenantId, from, now]
-    ),
-  ]);
-
+  const { rows } = await db.query(
+    `SELECT device_id, alarm_code, triggered_at FROM alarms
+      WHERE tenant_id = $1 AND triggered_at > $2 AND triggered_at <= $3
+        AND NOT (alarm_code = ANY($4::text[]))
+      ORDER BY device_id, alarm_code, triggered_at`,
+    [tenantId, from, now, EXCLUDED_CODES]
+  );
   const byDevice = new Map();
-  for (const e of evRows) {
-    if (!byDevice.has(e.device_id)) byDevice.set(e.device_id, []);
-    byDevice.get(e.device_id).push(e);
+  for (const a of rows) {
+    if (!byDevice.has(a.device_id)) byDevice.set(a.device_id, []);
+    byDevice.get(a.device_id).push(a);
   }
-  const prior = new Map(priorRows.map(r => [r.device_id, r.event_type === 'compressor_on']));
-  const cond  = new Map(condRows.map(r => [r.device_id, r]));
-
-  for (const d of devices) {
-    const meta   = mqttSvc.getDeviceMeta(d.mqtt_device_id);
-    const online = meta ? !!meta.online : !!d.online;
-    const live   = mqttSvc.getDeviceState(d.mqtt_device_id) || d.last_state || {};
-    const metrics = { compressor_starts: null, compressor_duty: null, defrost_timeouts: null, door_openings: null, cond_temp: null };
-
-    if (online) {
-      const evs = byDevice.get(d.mqtt_device_id) || [];
-      metrics.compressor_starts = evs.filter(e => e.event_type === 'compressor_on').length / maxWindowHours;
-      metrics.door_openings     = evs.filter(e => e.event_type === 'door_open').length;
-      const comp = evs.filter(e => e.event_type !== 'door_open');
-      metrics.compressor_duty   = dutyPercent(comp, prior.has(d.mqtt_device_id) ? prior.get(d.mqtt_device_id) : null, from, now);
-      const t = Number(live['defrost.consecutive_timeouts']);
-      metrics.defrost_timeouts  = Number.isFinite(t) ? t : null;
-      const c = cond.get(d.mqtt_device_id);
-      metrics.cond_temp         = c && c.n >= MIN_COND_SAMPLES ? c.v : null;
-    }
-    out.set(d.mqtt_device_id, { device: d, metrics, windowHours: maxWindowHours });
-  }
+  for (const d of devices) out.set(d.mqtt_device_id, { device: d, alarms: byDevice.get(d.mqtt_device_id) || [] });
   return out;
+}
+
+/** How many times each alarm code was raised after `from`. */
+function countByCode(alarms, from) {
+  const counts = new Map();
+  for (const a of alarms) {
+    if (a.triggered_at <= from) continue;
+    counts.set(a.alarm_code, (counts.get(a.alarm_code) || 0) + 1);
+  }
+  return counts;
 }
 
 // ── Evaluation ─────────────────────────────────────────────
@@ -192,58 +146,61 @@ async function collectMetrics(tenantId, now, maxWindowHours) {
 async function evaluateTenant(tenant, rules, now) {
   const tenantRules = rules.filter(r => r.tenant_id === null || r.tenant_id === tenant.id);
   if (tenantRules.length === 0) return { opened: 0, refreshed: 0, closed: 0, devices: 0 };
-  const maxWindow = Math.max(...tenantRules.map(r => r.window_hours || 24));
-  const collected = await collectMetrics(tenant.id, now, maxWindow);
+  const maxWindow = Math.max(...tenantRules.map(r => r.window_hours || DEFAULT_WINDOW_HOURS));
+  const collected = await collectAlarms(tenant.id, now, maxWindow);
 
   const { rows: openRows } = await db.query(
-    `SELECT id, device_id, rule_key FROM maintenance_hints WHERE tenant_id = $1 AND closed_at IS NULL`,
+    `SELECT id, device_id, rule_key, alarm_code FROM maintenance_hints
+      WHERE tenant_id = $1 AND rule_key = 'alarm_repeat' AND closed_at IS NULL`,
     [tenant.id]
   );
-  const open = new Map(openRows.map(h => [`${h.device_id}|${h.rule_key}`, h]));
+  const open = new Map(openRows.map(h => [`${h.device_id}|${h.alarm_code || ''}`, h]));
   const result = { opened: 0, refreshed: 0, closed: 0, devices: collected.size };
 
-  for (const [deviceId, { device, metrics }] of collected) {
-    for (const key of RULE_KEYS) {
-      const rule = resolveRule(tenantRules, key, tenant.id, device.model);
-      const raw  = metrics[key];
-      if (!rule || raw === null || raw === undefined) continue;   // no evidence → leave as is
+  for (const [deviceId, { device, alarms }] of collected) {
+    const rule = resolveRule(tenantRules, 'alarm_repeat', tenant.id, device.model);
+    if (!rule) continue;
+    const windowHours = rule.window_hours || DEFAULT_WINDOW_HOURS;
+    const counts = countByCode(alarms, new Date(now.getTime() - windowHours * 3600e3));
 
-      // The metric was collected over the longest window; scale rate-type
-      // metrics to this rule's own window where that differs.
-      let value = raw;
-      if (key === 'door_openings' && rule.window_hours !== maxWindow) value = raw * (rule.window_hours / maxWindow);
-      value = Math.round(value * 100) / 100;
+    // Codes to look at: those raised in the window, plus those with an open hint
+    // (their count may have dropped to nothing at all).
+    const codes = new Set(counts.keys());
+    for (const h of openRows) if (h.device_id === deviceId && h.alarm_code) codes.add(h.alarm_code);
 
-      const k = `${deviceId}|${key}`;
-      const existing = open.get(k);
-      if (value > rule.threshold) {
+    for (const code of codes) {
+      const value    = counts.get(code) || 0;
+      const existing = open.get(`${deviceId}|${code}`);
+      const base = { tenantId: tenant.id, tenantSlug: tenant.slug, deviceId, deviceUuid: device.id,
+                     ruleKey: 'alarm_repeat', alarmCode: code, severity: rule.severity,
+                     value, threshold: rule.threshold, windowHours };
+
+      if (value >= rule.threshold) {
         if (existing) {
-          await db.query(`UPDATE maintenance_hints SET value = $2, threshold = $3, last_seen_at = $4 WHERE id = $1`,
-            [existing.id, value, rule.threshold, now]);
+          await db.query(`UPDATE maintenance_hints SET value = $2, threshold = $3, window_hours = $4, last_seen_at = $5 WHERE id = $1`,
+            [existing.id, value, rule.threshold, windowHours, now]);
           result.refreshed++;
         } else {
           const { rows } = await db.query(
-            `INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, rule_id, severity, value, threshold, window_hours, opened_at, last_seen_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
-            [tenant.id, deviceId, key, rule.id, rule.severity, value, rule.threshold, rule.window_hours, now]
+            `INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, alarm_code, rule_id, severity, value, threshold, window_hours, opened_at, last_seen_at)
+             VALUES ($1, $2, 'alarm_repeat', $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
+            [tenant.id, deviceId, code, rule.id, rule.severity, value, rule.threshold, windowHours, now]
           );
           result.opened++;
-          const evt = { tenantId: tenant.id, tenantSlug: tenant.slug, deviceId, deviceUuid: device.id, hintId: rows[0].id,
-                        ruleKey: key, severity: rule.severity, value, threshold: rule.threshold, windowHours: rule.window_hours, active: true };
+          const evt = { ...base, hintId: rows[0].id, active: true };
           mqttSvc.emit('hint', evt);
           // Awaited on purpose: the sweep is hourly and nothing waits on it, while
           // a notification still in flight after the sweep returns is a race for
           // whoever observes the sweep (tests, the on-demand endpoint).
           try { await pushSvc.notifyHint(evt); }
-          catch (err) { log().error({ err, deviceId, key }, 'Hint notification failed'); }
+          catch (err) { log().error({ err, deviceId, code }, 'Hint notification failed'); }
         }
       } else if (existing) {
         await db.query(
           `UPDATE maintenance_hints SET closed_at = $2, closed_reason = 'resolved', value = $3 WHERE id = $1 AND closed_at IS NULL`,
           [existing.id, now, value]);
         result.closed++;
-        mqttSvc.emit('hint', { tenantId: tenant.id, tenantSlug: tenant.slug, deviceId, deviceUuid: device.id, hintId: existing.id,
-                               ruleKey: key, severity: rule.severity, value, threshold: rule.threshold, active: false });
+        mqttSvc.emit('hint', { ...base, hintId: existing.id, active: false });
       }
     }
   }
@@ -314,6 +271,6 @@ function shutdown() {
 
 module.exports = {
   start, shutdown, evaluateAll, effectiveRules,
-  RULES, RULE_KEYS,
-  __test: { evaluateTenant, collectMetrics, resolveRule, dutyPercent, setLogger(l) { logger = l; } },
+  RULES, RULE_KEYS, EXCLUDED_CODES,
+  __test: { evaluateTenant, collectAlarms, countByCode, resolveRule, setLogger(l) { logger = l; } },
 };
