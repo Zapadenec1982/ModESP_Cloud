@@ -420,11 +420,12 @@ async function dispatchToLinkedUsers(tenantId, deviceId, deviceUuid, payload, { 
 
 /**
  * Maintenance hint (plan epic 2.4): tell the organisation's administrators that
- * a device crossed a repair-prevention line. Same recipients rule as alarms,
- * narrowed to admins (a technician learns about it from the work order that
- * follows, not from the hint itself); severity is `info` unless the rule says
- * `warning`, so a user's minimum-severity preference can mute hints alone.
- * Logged in notification_log with alarm_code `hint:<rule_key>`.
+ * the controller keeps raising the same alarm on a device. Same recipients rule
+ * as alarms, narrowed to admins (a technician learns about it from the work
+ * order that follows, not from the hint itself); severity is `info` unless the
+ * rule says `warning`, so a user's minimum-severity preference can mute hints
+ * alone. Logged in notification_log with alarm_code `hint:<alarm code>`;
+ * `sourceAlarmCode` carries the controller's code for the channel templates.
  */
 async function notifyHint(evt) {
   if (channels.size === 0) return [];
@@ -438,7 +439,8 @@ async function notifyHint(evt) {
     deviceId:    evt.deviceId,
     deviceName:  dev.name || null,
     location:    dev.location || null,
-    alarmCode:   `hint:${evt.ruleKey}`,
+    alarmCode:   `hint:${evt.alarmCode || evt.ruleKey}`,
+    sourceAlarmCode: evt.alarmCode || null,
     ruleKey:     evt.ruleKey,
     severity:    evt.severity || 'info',
     active:      true,

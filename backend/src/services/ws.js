@@ -318,12 +318,13 @@ function onDeviceStatus({ deviceId, online, lastSeen }) {
 }
 
 // Maintenance hint opened/closed (plan epic 2.4) — services/maintenance.js
-function onHint({ tenantId, tenantSlug, deviceId, hintId, ruleKey, severity, value, threshold, active }) {
+function onHint({ tenantId, tenantSlug, deviceId, hintId, ruleKey, alarmCode, severity, value, threshold, active }) {
   const payload = {
     type: 'hint',
     hint_id: hintId,
     device_id: deviceId,
     rule_key: ruleKey,
+    alarm_code: alarmCode || null,
     severity,
     value,
     threshold,

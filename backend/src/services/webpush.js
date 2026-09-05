@@ -78,11 +78,13 @@ async function send(subscriptionJson, payload) {
     body  = [payload.siteName, payload.siteAddress].filter(Boolean).join(' · ') || (payload.deviceName || '');
     tag   = `wo-${payload.orderId}`;
   } else if (payload.type === 'hint') {
-    const HINTS = { compressor_starts: 'Часті пуски компресора', compressor_duty: 'Компресор майже не зупиняється',
-                    defrost_timeouts: 'Відтайки по таймауту', door_openings: 'Забагато відкривань дверей', cond_temp: 'Гарячий конденсатор' };
-    title = `🔧 ${HINTS[payload.ruleKey] || payload.ruleKey}`;
-    body  = `${deviceName}${location}`;
-    tag   = `hint-${payload.deviceId}-${payload.ruleKey}`;
+    // The controller keeps raising the same alarm (plan epic 2.4)
+    const src = payload.sourceAlarmCode;
+    const repeatName = src ? (ALARM_NAMES[`protection.${src}`] || ALARM_NAMES[src] || src) : '';
+    const days = payload.windowHours ? Math.max(1, Math.round(payload.windowHours / 24)) : null;
+    title = `🔧 Аварія повторюється${repeatName ? ': ' + repeatName : ''}`;
+    body  = `${deviceName}${location}${payload.value != null ? ` · ${payload.value}× за ${days || '—'} дн.` : ''}`;
+    tag   = `hint-${payload.deviceId}-${src || payload.ruleKey}`;
   } else if (payload.type === 'device_offline') {
     title = `⚠️ ${deviceName}${location} — офлайн`;
     body  = `Пристрій не відповідає`;

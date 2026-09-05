@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Maintenance hints (plan epic 2.4).
+ * Maintenance hints (plan epic 2.4): "the same alarm keeps coming back".
+ * The controller raises the alarms; services/maintenance.js counts them.
  *
  *   GET    /api/maintenance/hints            list (active by default) — tenant-scoped, per-device RBAC
  *   POST   /api/maintenance/hints/:id/ack    take into work (admin, technician with device access)
@@ -33,7 +34,7 @@ const maybeAuthorize = (...roles) => AUTH_ENABLED ? authorize(...roles) : (_req,
 const router       = Router();
 const deviceRouter = Router();
 
-const HINT_COLUMNS = `h.id, h.device_id, h.rule_key, h.severity, h.value::float AS value, h.threshold::float AS threshold,
+const HINT_COLUMNS = `h.id, h.device_id, h.rule_key, h.alarm_code, h.severity, h.value::float AS value, h.threshold::float AS threshold,
                       h.window_hours, h.opened_at, h.last_seen_at, h.closed_at, h.closed_reason,
                       h.acknowledged_at, h.ack_note, ack.email AS acknowledged_by_email,
                       wo.id AS work_order_id, wo.status AS work_order_status`;
@@ -145,7 +146,7 @@ router.post('/hints/:id/ack', requireFeature('maintenance'), maybeAuthorize('adm
     const { rows } = await db.query(
       `UPDATE maintenance_hints SET acknowledged_by = $1, acknowledged_at = now(), ack_note = $2
         WHERE id = $3 AND acknowledged_at IS NULL
-        RETURNING id, device_id, rule_key, severity, acknowledged_at, ack_note`,
+        RETURNING id, device_id, rule_key, alarm_code, severity, acknowledged_at, ack_note`,
       [req.user ? req.user.id : null, parsed.data.note?.trim() || null, hint.id]
     );
     if (rows.length === 0) return res.status(409).json({ error: 'already_acknowledged', message: 'Hint was already acknowledged', status: 409 });
@@ -169,13 +170,14 @@ router.post('/hints/:id/dismiss', requireFeature('maintenance'), maybeAuthorize(
               acknowledged_by = COALESCE(acknowledged_by, $1), acknowledged_at = COALESCE(acknowledged_at, now()),
               ack_note = COALESCE($2, ack_note)
         WHERE id = $3 AND closed_at IS NULL
-        RETURNING id, device_id, rule_key, severity, closed_at, closed_reason`,
+        RETURNING id, device_id, rule_key, alarm_code, severity, closed_at, closed_reason`,
       [req.user ? req.user.id : null, parsed.data.note?.trim() || null, hint.id]
     );
     if (rows.length === 0) return res.status(409).json({ error: 'closed', message: 'Hint is already closed', status: 409 });
     req.auditContext = { entityId: hint.device_id, action: 'maintenance.hint_dismiss', changes: { hint_id: hint.id, rule_key: hint.rule_key } };
     mqttSvc.emit('hint', { tenantId: hint.tenant_id, tenantSlug: hint.tenant_slug, deviceId: hint.device_id, deviceUuid: hint.device_uuid,
-                           hintId: hint.id, ruleKey: hint.rule_key, severity: hint.severity, value: hint.value, threshold: hint.threshold, active: false });
+                           hintId: hint.id, ruleKey: hint.rule_key, alarmCode: hint.alarm_code, severity: hint.severity,
+                           value: hint.value, threshold: hint.threshold, active: false });
     res.json({ data: rows[0] });
   } catch (err) { next(err); }
 });
@@ -189,7 +191,7 @@ router.get('/rules', requireFeature('maintenance'), maybeAuthorize('admin'), asy
 
 const ruleKeyParam = z.enum(maintenance.RULE_KEYS);
 const ruleSchema = z.object({
-  threshold:    z.number().min(0).max(100000),
+  threshold:    z.number().min(1).max(100000),   // times the alarm came back
   window_hours: z.number().int().min(1).max(720).optional(),
   severity:     z.enum(['info', 'warning']).optional(),
   enabled:      z.boolean().optional(),
@@ -210,7 +212,7 @@ router.put('/rules/:key', requireFeature('maintenance'), maybeAuthorize('admin')
     const model = d.model === undefined ? null : d.model;
     const { rows } = await db.query(
       `INSERT INTO maintenance_rules (tenant_id, rule_key, model, threshold, window_hours, severity, enabled, updated_by)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 24), COALESCE($6, 'info'), COALESCE($7, true), $8)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 168), COALESCE($6, 'info'), COALESCE($7, true), $8)
        ON CONFLICT (COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid), rule_key, COALESCE(model, ''))
        DO UPDATE SET threshold = EXCLUDED.threshold,
                      window_hours = COALESCE($5, maintenance_rules.window_hours),

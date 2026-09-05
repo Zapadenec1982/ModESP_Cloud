@@ -83,20 +83,12 @@ const STRINGS = {
     prio_low:       'низький', prio_normal: 'звичайний', prio_high: 'високий', prio_urgent: 'терміновий',
     // Maintenance hints (plan epic 2.4)
     hint_title:              '\u{1F527} Рекомендація з обслуговування',
-    hint_value_label:        'Показник',
-    hint_line_label:         'Межа',
-    hint_window_label:       'за',
-    hint_hours:              'год',
-    hint_compressor_starts:  'Часті пуски компресора',
-    hint_compressor_duty:    'Компресор працює майже безперервно',
-    hint_defrost_timeouts:   'Відтайки завершуються по таймауту',
-    hint_door_openings:      'Забагато відкривань дверей',
-    hint_cond_temp:          'Гарячий конденсатор',
-    advice_compressor_starts: 'Перевірте реле, уставку й гістерезис, витік холодоагенту',
-    advice_compressor_duty:   'Перевірте заправку, ущільнення дверей і чистоту конденсатора',
-    advice_defrost_timeouts:  'Перевірте ТЕН відтайки і датчик випарника',
-    advice_door_openings:     'Перевірте ущільнення дверей і дисципліну персоналу',
-    advice_cond_temp:         'Очистіть конденсатор, перевірте його вентилятор і вентиляцію',
+    hint_alarm_repeat:       'Аварія повторюється',
+    hint_alarm_label:        'Аварія',
+    hint_times:              'разів за',
+    hint_days:               'дн.',
+    hint_line_label:         'межа',
+    advice_alarm_repeat:     'Контролер піднімає цю аварію знову і знову. Ще одне підтвердження не допоможе — потрібен візит: створіть наряд.',
     // Alarm names
     alarm_high_temp:       'Висока температура',
     alarm_low_temp:        'Низька температура',
@@ -178,20 +170,12 @@ const STRINGS = {
     wo_priority:    'Priority',
     prio_low:       'low', prio_normal: 'normal', prio_high: 'high', prio_urgent: 'urgent',
     hint_title:              '\u{1F527} Maintenance hint',
-    hint_value_label:        'Reading',
-    hint_line_label:         'Limit',
-    hint_window_label:       'over',
-    hint_hours:              'h',
-    hint_compressor_starts:  'Compressor short-cycling',
-    hint_compressor_duty:    'Compressor running almost continuously',
-    hint_defrost_timeouts:   'Defrosts ending on timeout',
-    hint_door_openings:      'Too many door openings',
-    hint_cond_temp:          'Hot condenser',
-    advice_compressor_starts: 'Check the relay, setpoint and differential, look for a refrigerant leak',
-    advice_compressor_duty:   'Check the charge, door gaskets and condenser cleanliness',
-    advice_defrost_timeouts:  'Check the defrost heater and the evaporator sensor',
-    advice_door_openings:     'Check the door gaskets and staff routine',
-    advice_cond_temp:         'Clean the condenser, check its fan and the ventilation',
+    hint_alarm_repeat:       'Recurring alarm',
+    hint_alarm_label:        'Alarm',
+    hint_times:              'times in',
+    hint_days:               'days',
+    hint_line_label:         'limit',
+    advice_alarm_repeat:     'The controller keeps raising this alarm. Another acknowledgement will not fix it — plan a visit: create a work order.',
     alarm_high_temp:       'High temperature',
     alarm_low_temp:        'Low temperature',
     alarm_sensor1:         'Sensor 1 fault',
@@ -950,15 +934,19 @@ function buildWorkOrderMessage(chatId, payload) {
 
 function buildHintMessage(chatId, payload) {
   const deviceLabel = payload.deviceName ? `${payload.deviceName} (${payload.deviceId})` : payload.deviceId;
-  const unit = { compressor_starts: '/год', compressor_duty: ' %', cond_temp: ' \u{00B0}C' }[payload.ruleKey] || '';
   const lines = [
     `${t(chatId, 'hint_title')}: ${t(chatId, 'hint_' + payload.ruleKey)}`,
     `${t(chatId, 'device_label')}: ${deviceLabel}`,
   ];
   if (payload.location) lines.push(`\u{1F4CD} ${payload.location}`);
-  if (payload.value != null && payload.threshold != null) {
-    const win = payload.windowHours ? ` ${t(chatId, 'hint_window_label')} ${payload.windowHours} ${t(chatId, 'hint_hours')}` : '';
-    lines.push(`${t(chatId, 'hint_value_label')}: ${payload.value}${unit}${win} (${t(chatId, 'hint_line_label')}: ${payload.threshold}${unit})`);
+  if (payload.sourceAlarmCode) {
+    const days = payload.windowHours ? Math.max(1, Math.round(payload.windowHours / 24)) : null;
+    let reading = '';
+    if (payload.value != null) {
+      reading = ` \u{2014} ${payload.value} ${t(chatId, 'hint_times')}${days ? ` ${days} ${t(chatId, 'hint_days')}` : ''}`;
+      if (payload.threshold != null) reading += ` (${t(chatId, 'hint_line_label')} ${payload.threshold})`;
+    }
+    lines.push(`${t(chatId, 'hint_alarm_label')}: ${getAlarmName(chatId, payload.sourceAlarmCode)}${reading}`);
   }
   lines.push(`\u{1F4A1} ${t(chatId, 'advice_' + payload.ruleKey)}`);
   lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp)}`);

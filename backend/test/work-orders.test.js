@@ -48,7 +48,7 @@ describe('work orders', () => {
     await grantDeviceAccess(viewer.id, d1.id, admin.id);
 
     alarmId = (await db.query(`INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active) VALUES ($1, 'WO0001', 'high_temp_alarm', 'critical', true) RETURNING id`, [tenant.id])).rows[0].id;
-    hintId  = (await db.query(`INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, severity, value, threshold) VALUES ($1, 'WO0001', 'cond_temp', 'info', 61, 55) RETURNING id`, [tenant.id])).rows[0].id;
+    hintId  = (await db.query(`INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, alarm_code, severity, value, threshold, window_hours) VALUES ($1, 'WO0001', 'alarm_repeat', 'rapid_cycle_alarm', 'info', 4, 3, 168) RETURNING id`, [tenant.id])).rows[0].id;
   });
 
   afterAll(async () => {
@@ -95,7 +95,7 @@ describe('work orders', () => {
     expect(noTarget.status).toBe(400);
     expect((await request(app).post('/api/work-orders').set(H(viewer)).send({ title: 'x', device_id: 'WO0001' })).status).toBe(403);
 
-    const res = await request(app).post('/api/work-orders').set(H(tech)).send({ title: 'Почистити конденсатор', device_id: d1.id, hint_id: hintId, assigned_to: tech.id });
+    const res = await request(app).post('/api/work-orders').set(H(tech)).send({ title: 'Часті цикли — знайти причину', device_id: d1.id, hint_id: hintId, assigned_to: tech.id });
     expect(res.status).toBe(201);
     fromHint = res.body.data;
     expect(fromHint).toMatchObject({ status: 'assigned', hint_id: hintId, assigned_to: tech.id });
