@@ -51,6 +51,8 @@
     // write controls inside the page are behind $isAdmin, matching the backend.
     '/sites':           wrap({ asyncComponent: () => import('./pages/Sites.svelte') }),
     '/alarms':          Alarms,
+    // Any role: the list narrows to own and accessible orders server-side (plan epic 2.3)
+    '/work-orders':     wrap({ asyncComponent: () => import('./pages/WorkOrders.svelte') }),
     // Every role: own notification preferences; the subscriber sections inside are admin-only.
     '/notifications':   wrap({ asyncComponent: () => import('./pages/Notifications.svelte') }),
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),

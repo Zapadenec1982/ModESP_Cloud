@@ -208,6 +208,14 @@ describe('cleanup-aux.js', () => {
        VALUES ($1, $2, 'expired-hash', $3), ($1, $2, 'valid-hash', $4)`,
       [user.id, tenant.id, daysAgo(1), daysAhead(20)]
     );
+    // maintenance_hints: old closed (sweep), old still OPEN (keep), recently closed (keep)
+    await db.query(
+      `INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, opened_at, last_seen_at, closed_at, closed_reason) VALUES
+         ($1, $2, 'cond_temp',         $3, $3, $4,   'resolved'),
+         ($1, $2, 'compressor_starts', $3, $3, NULL, NULL),
+         ($1, $2, 'door_openings',     $5, $5, $6,   'dismissed')`,
+      [tenant.id, device.mqtt_device_id, daysAgo(410), daysAgo(400), daysAgo(6), daysAgo(5)]
+    );
   });
 
   it('dry run reports candidates per table and deletes nothing', async () => {
@@ -216,6 +224,7 @@ describe('cleanup-aux.js', () => {
     expect(r.notification_log.candidates).toBe(1);
     expect(r.alarms.candidates).toBe(1);
     expect(r.refresh_tokens.candidates).toBe(1);
+    expect(r.maintenance_hints.candidates).toBe(1);
     expect(Object.values(r).every(x => x.deleted === 0)).toBe(true);
 
     const { rows } = await db.query('SELECT count(*)::int AS n FROM alarms WHERE tenant_id = $1', [tenant.id]);
@@ -236,13 +245,14 @@ describe('cleanup-aux.js', () => {
     expect(r.notification_log.deleted).toBe(1);
     expect(r.alarms.deleted).toBe(1);
     expect(r.refresh_tokens.deleted).toBe(1);
+    expect(r.maintenance_hints.deleted).toBe(1);
 
     const counts = {};
-    for (const t of ['events', 'notification_log', 'alarms', 'refresh_tokens']) {
+    for (const t of ['events', 'notification_log', 'alarms', 'refresh_tokens', 'maintenance_hints']) {
       const { rows } = await db.query(`SELECT count(*)::int AS n FROM ${t} WHERE tenant_id = $1`, [tenant.id]);
       counts[t] = rows[0].n;
     }
-    expect(counts).toEqual({ events: 1, notification_log: 1, alarms: 2, refresh_tokens: 1 });
+    expect(counts).toEqual({ events: 1, notification_log: 1, alarms: 2, refresh_tokens: 1, maintenance_hints: 2 });
 
     const { rows: alarms } = await db.query(
       'SELECT alarm_code, active FROM alarms WHERE tenant_id = $1 ORDER BY alarm_code', [tenant.id]);

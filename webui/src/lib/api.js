@@ -662,6 +662,102 @@ export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   return request(`/devices/${deviceId}/alarms${qs ? '?' + qs : ''}`);
 }
 
+// ── Work orders (plan epic 2.3) ─────────────────────────
+
+export function getWorkOrders({ status, mine, device_id, site_id, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (mine) params.set('mine', '1');
+  if (device_id) params.set('device_id', device_id);
+  if (site_id) params.set('site_id', site_id);
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  const qs = params.toString();
+  return request(`/work-orders${qs ? '?' + qs : ''}`);
+}
+
+export function getWorkOrder(id) {
+  return request(`/work-orders/${id}`);
+}
+
+export function getWorkOrderStats({ from, to } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const qs = params.toString();
+  return request(`/work-orders/stats${qs ? '?' + qs : ''}`);
+}
+
+export function getWorkOrderAssignees() {
+  return request('/work-orders/assignees');
+}
+
+export function createWorkOrder(data) {
+  return request('/work-orders', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function updateWorkOrder(id, data) {
+  return request(`/work-orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+
+export function assignWorkOrder(id, userId) {
+  return request(`/work-orders/${id}/assign`, { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+}
+
+export function startWorkOrder(id) {
+  return request(`/work-orders/${id}/start`, { method: 'POST' });
+}
+
+export function closeWorkOrder(id, data) {
+  return request(`/work-orders/${id}/close`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export function cancelWorkOrder(id, reason) {
+  return request(`/work-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: reason || null }) });
+}
+
+export function getDeviceWorkOrders(deviceId, { status } = {}) {
+  const qs = status ? `?status=${status}` : '';
+  return request(`/devices/${deviceId}/work-orders${qs}`);
+}
+
+// ── Maintenance hints (plan epic 2.4) ───────────────────
+
+export function getHints({ active, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (active !== undefined) params.set('active', active);
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  const qs = params.toString();
+  return request(`/maintenance/hints${qs ? '?' + qs : ''}`, { quiet: true });
+}
+
+export function getDeviceHints(deviceId, { limit } = {}) {
+  const qs = limit ? `?limit=${limit}` : '';
+  // whole body: { data, feature_enabled } — the tab hides the rules note on plans without the feature
+  return requestFull(`/devices/${deviceId}/hints${qs}`, { quiet: true });
+}
+
+export function ackHint(hintId, note) {
+  return request(`/maintenance/hints/${hintId}/ack`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
+}
+
+export function dismissHint(hintId, note) {
+  return request(`/maintenance/hints/${hintId}/dismiss`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
+}
+
+export function getMaintenanceRules() {
+  return request('/maintenance/rules');
+}
+
+export function putMaintenanceRule(ruleKey, body) {
+  return request(`/maintenance/rules/${ruleKey}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function resetMaintenanceRule(ruleKey) {
+  return request(`/maintenance/rules/${ruleKey}`, { method: 'DELETE' });
+}
+
 // ── Events ──────────────────────────────────────────────
 
 export function getDeviceEvents(deviceId, { event_type, from, to, limit } = {}) {

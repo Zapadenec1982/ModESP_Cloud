@@ -123,6 +123,12 @@ function buildEmail(payload) {
   if (payload.isTest) {
     return buildTestEmail(lang);
   }
+  if (payload.type === 'work_order') {
+    return buildWorkOrderEmail(payload, lang);
+  }
+  if (payload.type === 'hint') {
+    return buildHintEmail(payload, lang);
+  }
   if (payload.type === 'device_offline') {
     return buildOfflineEmail(payload, lang);
   }
@@ -230,6 +236,98 @@ function buildOfflineEmail(payload, lang) {
     </td></tr>
   `);
 
+  return { subject, html };
+}
+
+const HINT_NAMES = {
+  uk: {
+    compressor_starts: 'Часті пуски компресора',
+    compressor_duty:   'Компресор працює майже безперервно',
+    defrost_timeouts:  'Відтайки завершуються по таймауту',
+    door_openings:     'Забагато відкривань дверей',
+    cond_temp:         'Гарячий конденсатор',
+  },
+  en: {
+    compressor_starts: 'Compressor short-cycling',
+    compressor_duty:   'Compressor running almost continuously',
+    defrost_timeouts:  'Defrosts ending on timeout',
+    door_openings:     'Too many door openings',
+    cond_temp:         'Hot condenser',
+  },
+};
+const HINT_ADVICE = {
+  uk: {
+    compressor_starts: 'Перевірте реле, уставку й гістерезис, витік холодоагенту.',
+    compressor_duty:   'Перевірте заправку, ущільнення дверей і чистоту конденсатора.',
+    defrost_timeouts:  'Перевірте ТЕН відтайки і датчик випарника.',
+    door_openings:     'Перевірте ущільнення дверей і дисципліну персоналу.',
+    cond_temp:         'Очистіть конденсатор, перевірте його вентилятор і вентиляцію.',
+  },
+  en: {
+    compressor_starts: 'Check the relay, setpoint and differential; look for a refrigerant leak.',
+    compressor_duty:   'Check the charge, door gaskets and condenser cleanliness.',
+    defrost_timeouts:  'Check the defrost heater and the evaporator sensor.',
+    door_openings:     'Check the door gaskets and staff routine.',
+    cond_temp:         'Clean the condenser, check its fan and the ventilation.',
+  },
+};
+const HINT_UNITS = { compressor_starts: '/год', compressor_duty: ' %', cond_temp: ' °C' };
+
+const PRIORITY_LABELS = { uk: { low: 'низький', normal: 'звичайний', high: 'високий', urgent: 'терміновий' }, en: { low: 'low', normal: 'normal', high: 'high', urgent: 'urgent' } };
+
+// Work order assigned (plan epic 2.3) — the assignee only, see push.notifyWorkOrder()
+function buildWorkOrderEmail(payload, lang) {
+  const prio = (PRIORITY_LABELS[lang] || PRIORITY_LABELS.uk)[payload.priority] || payload.priority || '';
+  const color = payload.priority === 'urgent' ? '#dc2626' : '#3b82f6';
+  const subject = `📋 Наряд #${payload.orderId}: ${payload.title}${payload.siteName ? ' — ' + payload.siteName : ''}`;
+  const html = wrapHtml(`
+    <tr><td style="padding:0;"><div style="background:${color};height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
+    <tr><td style="padding:24px 32px;">
+      <h2 style="margin:0 0 12px;color:${color};font-size:20px;">&#x1F4CB; Вам призначено наряд #${escHtml(String(payload.orderId))}</h2>
+      ${infoRow('Завдання', escHtml(payload.title || ''))}
+      ${infoRow('Пріоритет', escHtml(prio))}
+      ${payload.deviceName || payload.deviceId ? infoRow('Пристрій', escHtml(payload.deviceName || payload.deviceId)) : ''}
+      ${payload.siteName ? infoRow('Точка', escHtml(payload.siteName)) : ''}
+      ${payload.siteAddress ? infoRow('Адреса', escHtml(payload.siteAddress)) : ''}
+      ${payload.scheduledAt ? infoRow('Заплановано на', formatTime(payload.scheduledAt)) : ''}
+      ${payload.mapsUrl ? `
+      <div style="margin-top:20px;">
+        <a href="${escHtml(payload.mapsUrl)}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Маршрут до точки</a>
+      </div>` : ''}
+    </td></tr>
+  `);
+  return { subject, html };
+}
+
+// Maintenance hint (plan epic 2.4) — admins only, see push.notifyHint()
+function buildHintEmail(payload, lang) {
+  const names  = HINT_NAMES[lang] || HINT_NAMES.uk;
+  const advice = HINT_ADVICE[lang] || HINT_ADVICE.uk;
+  const title  = names[payload.ruleKey] || payload.ruleKey;
+  const deviceName = payload.deviceName || payload.deviceId || '—';
+  const location = payload.location || '';
+  const unit = HINT_UNITS[payload.ruleKey] || '';
+  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
+  const reading = payload.value != null
+    ? `${payload.value}${unit}${payload.windowHours ? ` за ${payload.windowHours} год` : ''} (межа ${payload.threshold}${unit})`
+    : null;
+
+  const subject = `🔧 ${title} — ${deviceName}${location ? ' (' + location + ')' : ''}`;
+  const html = wrapHtml(`
+    <tr><td style="padding:0;"><div style="background:#3b82f6;height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
+    <tr><td style="padding:24px 32px;">
+      <h2 style="margin:0 0 12px;color:#3b82f6;font-size:20px;">&#x1F527; ${escHtml(title)}</h2>
+      ${infoRow('Пристрій', escHtml(deviceName))}
+      ${location ? infoRow('Розташування', escHtml(location)) : ''}
+      ${reading ? infoRow('Показник', escHtml(reading)) : ''}
+      ${infoRow('Що зробити', escHtml(advice[payload.ruleKey] || ''))}
+      ${infoRow('Час', formatTime(payload.timestamp))}
+      ${deviceUrl ? `
+      <div style="margin-top:20px;">
+        <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">Відкрити пристрій</a>
+      </div>` : ''}
+    </td></tr>
+  `);
   return { subject, html };
 }
 

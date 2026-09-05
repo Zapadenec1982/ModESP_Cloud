@@ -607,6 +607,127 @@ user_sites`; superadmin — лише з `users.receive_all_tenant_alerts`; на�
 
 ---
 
+## Maintenance hints (plan epic 2.4)
+
+Правила «попередження ремонту» (`services/maintenance.js`) раз на годину (`MAINTENANCE_EVAL_INTERVAL_MIN`,
+0 вимикає) оцінюють кожну організацію з функцією плану `maintenance` (тариф «Обʼєкт» і вище).
+Без функції — `402 plan_feature` на всьому, крім `GET /devices/:id/hints`, який тоді віддає
+`{ data: [], feature_enabled: false }`.
+
+| `rule_key` | Показник | Дефолт | Вікно |
+|---|---|---|---|
+| `compressor_starts` | пусків компресора за годину (середнє по вікну) | 8 | 24 год |
+| `compressor_duty` | частка часу з увімкненим компресором, % | 85 | 24 год |
+| `defrost_timeouts` | `defrost.consecutive_timeouts` з живого стану | 3 | — |
+| `door_openings` | відкривань дверей за вікно | 80 | 24 год |
+| `cond_temp` | середня температура конденсатора (канал `cond`, ≥ 12 зразків), °C | 55 | 24 год |
+
+Підказка відкривається один раз на (пристрій, правило), оновлює `last_seen_at`, поки показник за межею,
+і закривається з `closed_reason = 'resolved'`, щойно показник повертається. Офлайн-пристрій або пристрій
+без даних не оцінюється — відкриту підказку ніколи не закриває тиша. Відхилена підказка може відкритись
+знову наступної години, якщо ознака нікуди не зникла. Відкриття розсилає WebSocket-подію `hint`
+(`{ hint_id, device_id, rule_key, severity, value, threshold, active }`) і сповіщення адміністраторам
+організації (`info`, або `warning` за правилом) у Telegram / пошту / web push з порадою, що перевірити;
+запис у `notification_log` з `alarm_code = hint:<rule_key>`.
+
+### `GET /maintenance/hints`
+Підказки організації (superadmin — усіх). Query: `active=true|false|all` (default `true`),
+`limit` (≤ 200), `offset`. Техніки й глядачі бачать лише свої пристрої (`user_devices ∪ user_sites`).
+Кожен рядок: `id, device_id, device_uuid, device_name, device_model, rule_key, severity, value, threshold,
+window_hours, opened_at, last_seen_at, closed_at, closed_reason, acknowledged_at, acknowledged_by_email, ack_note`.
+
+### `GET /devices/:id/hints`
+Те саме для одного пристрою (uuid або mqtt id), плюс `feature_enabled`.
+
+### `POST /maintenance/hints/:id/ack`
+Взяти в роботу (admin, technician з доступом до пристрою). `{ "note": "..." }` необовʼязково.
+Повторно — `409 already_acknowledged`; закрита — `409 closed`. Підказка лишається відкритою.
+
+### `POST /maintenance/hints/:id/dismiss`
+Закрити як `dismissed` (admin). Розсилає `hint` з `active: false`.
+
+### `GET /maintenance/rules`
+Ефективні правила організації (admin): для кожного `rule_key` — `threshold, window_hours, severity, enabled,
+unit, overridden, default { … }, model_overrides [ … ]`.
+
+### `PUT /maintenance/rules/:key`
+Перевизначення організації (admin): `{ threshold, window_hours?, severity?, enabled?, model? }`;
+`model` — рядок з `devices.model` для правила лише на цю модель. `?global=1` — платформне значення
+(лише superadmin). Невідомий ключ — `404`.
+
+### `DELETE /maintenance/rules/:key[?model=…]`
+Прибрати перевизначення (повернутись до платформного). Немає перевизначення — `404`.
+
+### `POST /maintenance/evaluate`
+Запустити оцінку зараз (superadmin); відповідь — звіт по організаціях
+`{ "<slug>": { opened, refreshed, closed, devices } }`.
+
+---
+
+## Work orders (plan epic 2.3)
+
+Наряд звʼязує аварію чи рекомендацію з техніком, точкою і візитом. Статуси:
+`new → assigned → in_progress → done | cancelled`. Видимість: адмін бачить усі наряди організації,
+технік і глядач — призначені їм і на пристроях, які вони можуть відкрити (`user_devices ∪ user_sites`).
+Кожен рядок: `id, title, description, priority (low|normal|high|urgent), status, device_id (uuid),
+device_mqtt_id, device_name, site_id, site_name, site_city, site_address, maps_url, alarm_id, hint_id,
+assigned_to, assigned_to_email, created_by_email, scheduled_at, assigned_at, started_at, closed_at,
+closed_reason, service_record_id, created_at`.
+
+### `GET /work-orders`
+Query: `status=open|closed|all|<status>` (default `open`), `mine=1`, `device_id`, `site_id`, `limit` (≤ 200), `offset`.
+Сортування: терміновість, потім найновіші.
+
+### `POST /work-orders`
+Створити (admin; technician — лише на пристрої з доступом і лише `assigned_to` = себе).
+```json
+{ "title": "Висока температура — камера №1", "device_id": "WO0001", "alarm_id": 42,
+  "priority": "high", "assigned_to": "<user uuid>", "scheduled_at": "2026-09-06T08:00:00Z" }
+```
+`device_id` — uuid або mqtt id; `site_id` береться з пристрою, якщо не передано; потрібен хоча б один із них.
+`alarm_id` / `hint_id` мають належати організації (і цьому пристрою). Непідтверджена аварія чи
+підказка підтверджується автоматично з приміткою `Наряд #N`. Виконавцю (крім самого себе) надходить
+сповіщення `work_order` з адресою точки і `maps_url`; WebSocket `work_order` (`action: created`).
+
+### `GET /work-orders/:id`
+Деталі + `alarm`, `hint`, `service_record` (або `null`).
+
+### `PATCH /work-orders/:id`
+`title, description, priority, scheduled_at` — admin або виконавець; закритий наряд — `409 closed`.
+
+### `POST /work-orders/:id/assign`
+`{ "user_id": "<uuid>" }` — admin: будь-який активний technician/admin організації; technician: лише
+себе і лише непризначений наряд (`409 already_assigned`). Новий виконавець отримує сповіщення.
+
+### `POST /work-orders/:id/start`
+Виконавець або admin → `in_progress` (`409 already_started`).
+
+### `POST /work-orders/:id/close`
+```json
+{ "work_done": "Замінено пускове реле", "duration_min": 95, "cost": 1450, "cost_currency": "UAH",
+  "parts": [{ "name": "Реле пускове", "qty": 1, "cost": 850 }], "service_date": "2026-09-05", "reason": "…" }
+```
+Виконавець або admin. Пише `service_records` (`user_id`, `work_order_id`, `technician` = e-mail, `reason`
+за замовчуванням — назва наряду) і переводить наряд у `done`; відповідь містить `service_record_id`.
+
+### `POST /work-orders/:id/cancel`
+`{ "reason": "…" }` (admin) → `cancelled`.
+
+### `GET /work-orders/stats`
+`from`, `to` (default 30 днів): `total, new, assigned, in_progress, done, cancelled, from_alarms, from_hints,
+avg_assign_min, avg_start_min, avg_close_min` (admin, technician).
+
+### `GET /work-orders/assignees`
+Активні техніки й адміни організації (admin): `id, email, role, base_address`.
+
+### `GET /devices/:id/work-orders`
+Наряди одного пристрою (`status=open` — лише відкриті), будь-яка роль із доступом до пристрою.
+
+Списки `GET /alarms` і `GET /maintenance/hints` віддають `work_order_id` і `work_order_status`
+останнього наряду, створеного з цієї аварії чи підказки.
+
+---
+
 ## Data Export
 
 Усі export-ендпоінти захищені rate limiter (10 req/min/user). Кожне завантаження (і GET також)

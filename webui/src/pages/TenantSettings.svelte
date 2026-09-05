@@ -3,7 +3,7 @@
   // to change in SQL — time zone, locale, electricity tariff, alarm delays,
   // offline thresholds, acknowledgement escalation.
   import { onMount } from 'svelte'
-  import { getTenantSettings, updateTenantSettings, getTenants } from '../lib/api.js'
+  import { getTenantSettings, updateTenantSettings, getTenants, getMaintenanceRules, putMaintenanceRule, resetMaintenanceRule } from '../lib/api.js'
   import { currentTenant, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
@@ -82,6 +82,37 @@
   }
 
   onMount(load)
+
+  // ── Maintenance hint thresholds (plan epic 2.4) ──
+  let rules = []
+  let rulesAvailable = true
+  let ruleBusy = null
+  let ruleForm = {}
+  async function loadRules() {
+    try {
+      rules = await getMaintenanceRules()
+      rulesAvailable = true
+      ruleForm = Object.fromEntries(rules.map(r => [r.rule_key, { threshold: r.threshold, window_hours: r.window_hours, enabled: r.enabled }]))
+    } catch (e) {
+      // 402: plan without the feature — the section hides itself
+      rulesAvailable = false
+    }
+  }
+  onMount(loadRules)
+  async function saveRule(key) {
+    const f = ruleForm[key]
+    ruleBusy = key
+    try {
+      await putMaintenanceRule(key, { threshold: Number(f.threshold), window_hours: Number(f.window_hours) || 24, enabled: !!f.enabled })
+      toast.success($t('settings.maintenance_saved'))
+      await loadRules()
+    } catch (e) { toast.error(e.message) } finally { ruleBusy = null }
+  }
+  async function resetRule(key) {
+    ruleBusy = key
+    try { await resetMaintenanceRule(key); await loadRules() }
+    catch (e) { toast.error(e.message) } finally { ruleBusy = null }
+  }
 </script>
 
 <div class="settings-page">
@@ -141,6 +172,32 @@
         <Button variant="primary" type="submit" loading={saving} icon="check">{$t('common.save')}</Button>
       </div>
     </form>
+
+    {#if rulesAvailable && rules.length > 0}
+      <section class="section-card">
+        <div class="section-header"><Icon name="wrench" size={16} /><span>{$t('settings.maintenance_title')}</span></div>
+        <p class="hint">{$t('settings.maintenance_hint')}</p>
+        <div class="rules">
+          {#each rules as r (r.rule_key)}
+            <div class="rule-row" class:overridden={r.overridden}>
+              <div class="rule-name">
+                <strong>{$t(`hint.${r.rule_key}`)}</strong>
+                <span class="muted">{$t(`hint.unit_${r.rule_key}`)}{#if r.default} · {r.default.threshold}{/if}</span>
+              </div>
+              <label class="field small"><span>{$t('settings.maintenance_threshold')}</span><input class="input" type="number" min="0" step="0.5" bind:value={ruleForm[r.rule_key].threshold} /></label>
+              <label class="field small"><span>{$t('settings.maintenance_window')}</span><input class="input" type="number" min="1" max="720" bind:value={ruleForm[r.rule_key].window_hours} /></label>
+              <label class="check"><input type="checkbox" bind:checked={ruleForm[r.rule_key].enabled} /> {$t('settings.maintenance_enabled')}</label>
+              <div class="rule-actions">
+                <Button size="sm" variant="secondary" disabled={ruleBusy === r.rule_key} on:click={() => saveRule(r.rule_key)}>{$t('settings.maintenance_save')}</Button>
+                {#if r.overridden}
+                  <Button size="sm" variant="ghost" disabled={ruleBusy === r.rule_key} on:click={() => resetRule(r.rule_key)}>{$t('settings.maintenance_reset')}</Button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
   {/if}
 </div>
 
@@ -155,4 +212,17 @@
   .input { padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-primary); }
   .hint { margin: 0; padding: 0 var(--space-4) var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
   .actions { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-muted); }
+
+  .rules { display: grid; gap: var(--space-2); }
+  .rule-row {
+    display: grid; grid-template-columns: minmax(0, 2fr) 120px 110px auto auto; gap: var(--space-3); align-items: end;
+    padding: var(--space-2) var(--space-3); border: 1px solid var(--border-muted); border-radius: var(--radius-md);
+  }
+  .rule-row.overridden { border-color: var(--accent-blue); }
+  .rule-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .rule-name .muted { color: var(--text-secondary); font-size: var(--text-sm); }
+  .field.small span { font-size: var(--text-xs); }
+  .check { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); padding-bottom: 8px; }
+  .rule-actions { display: flex; gap: var(--space-2); padding-bottom: 2px; }
+  @media (max-width: 860px) { .rule-row { grid-template-columns: 1fr 1fr; } .rule-name { grid-column: 1 / -1; } }
 </style>

@@ -5,6 +5,7 @@
   export let online = 0
   export let total = 0
   export let alarms = 0
+  export let hints = 0     // devices with an open maintenance hint (plan epic 2.4)
 
   $: offlineCount = total - online
 </script>
@@ -53,13 +54,30 @@
     </div>
     <div class="stat-accent" class:alarm={alarms > 0} />
   </div>
+
+  <div class="stat" class:hint-active={hints > 0}>
+    <div class="stat-icon" class:hint={hints > 0}>
+      <Icon name="wrench" size={18} />
+    </div>
+    <div class="stat-content">
+      <span class="stat-value" class:hint-text={hints > 0}>{hints}</span>
+      <span class="stat-label">{$t('dashboard.fleet_hints')}</span>
+    </div>
+    <div class="stat-accent" class:hint={hints > 0} />
+  </div>
 </div>
 
 <style>
   .fleet-bar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: var(--space-3);
+  }
+
+  @media (max-width: 960px) {
+    .fleet-bar {
+      grid-template-columns: repeat(3, 1fr);
+    }
   }
 
   @media (max-width: 640px) {
@@ -164,4 +182,9 @@
     font-weight: 500;
     margin-top: 2px;
   }
+
+  .stat.hint-active { border-color: rgba(74, 158, 255, 0.35); }
+  .stat-icon.hint { background: rgba(74, 158, 255, 0.14); color: var(--accent-blue); }
+  .stat-value.hint-text { color: var(--accent-blue); }
+  .stat-accent.hint { background: var(--accent-blue); }
 </style>

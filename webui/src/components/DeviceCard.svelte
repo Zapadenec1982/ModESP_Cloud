@@ -11,6 +11,7 @@
   $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: statusKey = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
   $: hasAlarm = !!device.alarm_active
+  $: hasHint = (device.hints_open || 0) > 0
   $: doorOpen = !!device.door_open
   $: stripe = hasAlarm ? 'alarm' : statusKey
 
@@ -35,6 +36,11 @@
         <span class="alarm-badge">
           <Icon name="alert-triangle" size={12} />
           {$t('device.alarm_badge')}
+        </span>
+      {/if}
+      {#if hasHint && !hasAlarm}
+        <span class="hint-badge" title={$t('hint.title')}>
+          <Icon name="wrench" size={12} />
         </span>
       {/if}
     </div>
@@ -161,6 +167,16 @@
     letter-spacing: 0.06em;
     animation: pulse 2s ease-in-out infinite;
     flex-shrink: 0;
+  }
+
+  .hint-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(74, 158, 255, 0.12);
+    color: var(--accent-blue);
+    padding: 3px;
+    border-radius: var(--radius-full);
   }
 
   .door-badge {

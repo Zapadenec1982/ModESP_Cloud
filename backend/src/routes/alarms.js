@@ -30,12 +30,14 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
                a.active, a.value, a.limit_value,
                a.triggered_at, a.cleared_at,
                a.acknowledged_at, a.ack_note, a.escalated_at, ack.email AS acknowledged_by_email,
+               wo.id AS work_order_id, wo.status AS work_order_status,
                d.name AS device_name, d.mqtt_device_id,
                t.slug AS tenant_slug, t.name AS tenant_name
         FROM alarms a
         LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
         LEFT JOIN tenants t ON t.id = a.tenant_id
         LEFT JOIN users ack ON ack.id = a.acknowledged_by
+        LEFT JOIN LATERAL (SELECT w.id, w.status FROM work_orders w WHERE w.alarm_id = a.id ORDER BY w.created_at DESC LIMIT 1) wo ON true
         WHERE 1=1
       `;
       params = [];
@@ -46,10 +48,12 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
                a.active, a.value, a.limit_value,
                a.triggered_at, a.cleared_at,
                a.acknowledged_at, a.ack_note, a.escalated_at, ack.email AS acknowledged_by_email,
+               wo.id AS work_order_id, wo.status AS work_order_status,
                d.name AS device_name, d.mqtt_device_id
         FROM alarms a
         LEFT JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
         LEFT JOIN users ack ON ack.id = a.acknowledged_by
+        LEFT JOIN LATERAL (SELECT w.id, w.status FROM work_orders w WHERE w.alarm_id = a.id ORDER BY w.created_at DESC LIMIT 1) wo ON true
         WHERE a.tenant_id = $1
       `;
       params = [req.tenantId];
