@@ -1,6 +1,6 @@
 <script>
   import { location } from 'svelte-spa-router'
-  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen, currentTenant, availableTenants, hasMultipleTenants } from '../../lib/stores.js'
+  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen, currentTenant, availableTenants, hasMultipleTenants, isPartner } from '../../lib/stores.js'
   import { logout, switchTenant } from '../../lib/api.js'
   import { disconnect } from '../../lib/ws.js'
   import { t } from '../../lib/i18n.js'
@@ -39,6 +39,8 @@
     { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
     { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware') },
     { section: $t('nav.sections.admin'), admin: true },
+    // Partner plan (plan epic 2.5): the organisations this one runs
+    ...($isPartner ? [{ path: '/partner', icon: 'layers', label: $t('nav.partner'), admin: true }] : []),
     { path: '/tenants',       icon: 'building', label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
     { path: '/settings',      icon: 'settings', label: $t('nav.settings'), admin: true },

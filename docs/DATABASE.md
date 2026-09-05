@@ -702,6 +702,40 @@ GRANT USAGE, SELECT ON SEQUENCE work_orders_id_seq TO modesp_cloud;
 
 ---
 
+## Партнерський план (migration 036)
+
+```sql
+-- Роль на кожне членство: access-токен несе саме її (routes/auth.js roleFor)
+ALTER TABLE user_tenants ADD COLUMN role VARCHAR(16) NOT NULL DEFAULT 'viewer'
+  CHECK (role IN ('admin', 'technician', 'viewer'));
+-- заповнено з users.role (superadmin → admin); users.role лишається роллю домашньої організації і прапорцем superadmin
+
+CREATE TABLE billing_accounts (            -- хто платить; клієнти партнера поділяють його рахунок
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  legal_name     VARCHAR(256) NOT NULL,
+  tax_id         VARCHAR(32),
+  email          VARCHAR(256),
+  currency       CHAR(3) NOT NULL DEFAULT 'UAH',
+  payment_method VARCHAR(16) NOT NULL DEFAULT 'invoice',   -- invoice | card
+  is_partner     BOOLEAN NOT NULL DEFAULT false,
+  margin_pct     NUMERIC(5,2) NOT NULL DEFAULT 0,
+  created_at, updated_at TIMESTAMPTZ
+);
+ALTER TABLE tenants ADD COLUMN billing_account_id UUID REFERENCES billing_accounts(id) ON DELETE SET NULL;
+ALTER TABLE tenants ADD COLUMN parent_tenant_id  UUID REFERENCES tenants(id) ON DELETE SET NULL;   -- клієнт → партнер, один рівень
+ALTER TABLE tenants ADD CONSTRAINT chk_tenants_parent_not_self CHECK (parent_tenant_id IS NULL OR parent_tenant_id <> id);
+
+ALTER TABLE tenant_settings ADD COLUMN brand_name VARCHAR(128), ADD COLUMN brand_logo_url VARCHAR(512), ADD COLUMN brand_url VARCHAR(512);
+GRANT SELECT, INSERT, UPDATE, DELETE ON billing_accounts TO modesp_cloud;
+```
+
+> `POST /partner/clients` створює організацію з `parent_tenant_id` = партнер, копіює його `timezone`/`locale`
+> у `tenant_settings`, створює (один раз) `billing_accounts` партнера з його `legal_name`/`tax_id`/`billing_email`
+> і прив'язує клієнта до нього; той, хто створив, стає адміном клієнта (`user_tenants.role = 'admin'`).
+> Правило одного рівня перевіряє `PATCH /tenants/:id` (superadmin): батько має функцію плану `partner`,
+> сам не є клієнтом, а організація з клієнтами не може стати клієнтом. Бренд для публічної сторінки
+> і PDF резолвиться як `COALESCE(own.brand_*, parent.brand_*)`.
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,

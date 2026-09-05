@@ -432,6 +432,10 @@ if (AUTH_ENABLED) {
   // /api/users mount, which would 403 a technician editing their home base.
   app.use('/api/profile',  require('./routes/profile'));
 
+  // Partner plan (plan epic 2.5): the caller's organisation must carry the
+  // `partner` feature; the router checks that and the admin role itself.
+  app.use('/api/partner',  require('./routes/partner'));
+
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('./routes/users'));

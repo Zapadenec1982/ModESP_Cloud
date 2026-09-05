@@ -73,23 +73,30 @@ router.get('/', async (req, res) => {
       ));
       // Attach tenant memberships array to each user
       const { rows: memberships } = await db.query(
-        `SELECT ut.user_id, t.id AS tenant_id, t.name, t.slug
+        `SELECT ut.user_id, ut.role, t.id AS tenant_id, t.name, t.slug
            FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
            ORDER BY t.name`
       );
       const memMap = {};
       for (const m of memberships) {
         if (!memMap[m.user_id]) memMap[m.user_id] = [];
-        memMap[m.user_id].push({ id: m.tenant_id, name: m.name, slug: m.slug });
+        memMap[m.user_id].push({ id: m.tenant_id, name: m.name, slug: m.slug, role: m.role });
       }
       for (const u of rows) {
         u.tenants = memMap[u.id] || [{ id: u.tenant_id, name: u.tenant_name, slug: u.tenant_slug }];
       }
     } else {
+      // Members of this organisation with the role they hold HERE
+      // (user_tenants.role, plan epic 2.5): a partner's technician appears in a
+      // client organisation as a technician even though they are an admin at home.
       ({ rows } = await db.query(
-        `SELECT id, email, role, active, created_at, last_login, telegram_id,
-                base_latitude, base_longitude, base_address
-         FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`,
+        `SELECT u.id, u.email, COALESCE(ut.role, u.role) AS role, u.role AS home_role,
+                (u.tenant_id = $1) AS is_home, u.active, u.created_at, u.last_login, u.telegram_id,
+                u.base_latitude, u.base_longitude, u.base_address
+           FROM user_tenants ut
+           JOIN users u ON u.id = ut.user_id
+          WHERE ut.tenant_id = $1 AND u.role <> 'superadmin'
+          ORDER BY u.created_at DESC`,
         [req.tenantId]
       ));
     }
@@ -132,11 +139,11 @@ router.post('/', async (req, res) => {
        RETURNING id, email, role, active, created_at`,
       [targetTenantId, email, hash, role]
     );
-    // Also add to user_tenants junction table
+    // Also add to user_tenants junction table, with the role held there
     await db.query(
-      `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2)
+      `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
-      [rows[0].id, targetTenantId]
+      [rows[0].id, targetTenantId, role]
     );
 
     // Audit: who was created
@@ -321,9 +328,14 @@ router.put('/:id', async (req, res) => {
 
   try {
     // ── Role hierarchy check: fetch target user ──
+    // An admin may edit anyone who is a MEMBER of their organisation (plan epic
+    // 2.5): a partner's technician placed in a client organisation is edited by
+    // that client's admin only as far as the membership role goes (see below).
     const targetQ = isSuperAdmin
-      ? 'SELECT id, email, role FROM users WHERE id = $1'
-      : 'SELECT id, email, role FROM users WHERE id = $1 AND tenant_id = $2';
+      ? 'SELECT u.id, u.email, u.role, u.tenant_id FROM users u WHERE u.id = $1'
+      : `SELECT u.id, u.email, u.role, u.tenant_id
+           FROM users u JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $2
+          WHERE u.id = $1`;
     const targetParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
     const { rows: targetRows } = await db.query(targetQ, targetParams);
 
@@ -346,6 +358,33 @@ router.put('/:id', async (req, res) => {
     // Only superadmin can use tenant_id field
     if (data.tenant_id && !isSuperAdmin) {
       delete data.tenant_id;
+    }
+
+    // The organisation this edit is about: the admin's own, or (superadmin)
+    // the user's home organisation unless tenant_id moves them.
+    const scopeTenantId = isSuperAdmin ? (data.tenant_id || targetUser.tenant_id) : req.tenantId;
+    const isHome = targetUser.tenant_id === scopeTenantId;
+    // A membership-only user (home elsewhere, e.g. partner staff) can have only
+    // their role in THIS organisation changed by its admin — not email, password
+    // or active, which belong to the home organisation.
+    if (!isSuperAdmin && !isHome) {
+      const foreign = Object.keys(data).filter(k => k !== 'role');
+      if (foreign.length) {
+        return res.status(403).json({
+          error: 'forbidden', message: 'This user belongs to another organisation; only their role here can be changed', status: 403,
+        });
+      }
+    }
+
+    if (data.role !== undefined) {
+      await db.query(
+        'UPDATE user_tenants SET role = $1 WHERE user_id = $2 AND tenant_id = $3',
+        [data.role, req.params.id, scopeTenantId]
+      );
+      if (!isHome) {
+        req.auditContext = { entityId: req.params.id, changes: { before: beforeState, after: { email: targetUser.email, role: data.role }, tenant_id: scopeTenantId } };
+        return res.json({ data: { id: targetUser.id, email: targetUser.email, role: data.role, active: true, is_home: false } });
+      }
     }
 
     const sets = [];
@@ -510,7 +549,7 @@ router.get('/:id/tenants', async (req, res) => {
   }
   try {
     const { rows } = await db.query(
-      `SELECT t.id, t.name, t.slug, ut.created_at
+      `SELECT t.id, t.name, t.slug, ut.role, ut.created_at
          FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
          WHERE ut.user_id = $1
          ORDER BY t.name`,
@@ -525,7 +564,10 @@ router.get('/:id/tenants', async (req, res) => {
 
 // ── POST /users/:id/tenants — add to tenant (superadmin) ──
 
-const addTenantSchema = z.object({ tenant_id: z.string().uuid() });
+const addTenantSchema = z.object({
+  tenant_id: z.string().uuid(),
+  role:      z.enum(['admin', 'technician', 'viewer']).optional(),   // role held there (plan epic 2.5); default: the account role
+});
 
 router.post('/:id/tenants', async (req, res) => {
   if (!req.user || req.user.role !== 'superadmin') {
@@ -538,10 +580,10 @@ router.post('/:id/tenants', async (req, res) => {
     });
   }
 
-  const { tenant_id } = parsed.data;
+  const { tenant_id, role } = parsed.data;
   try {
     // Verify user and tenant exist
-    const { rows: uCheck } = await db.query('SELECT id FROM users WHERE id = $1', [req.params.id]);
+    const { rows: uCheck } = await db.query('SELECT id, role FROM users WHERE id = $1', [req.params.id]);
     if (uCheck.length === 0) {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
     }
@@ -550,21 +592,22 @@ router.post('/:id/tenants', async (req, res) => {
       return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
     }
 
+    const memberRole = role || (uCheck[0].role === 'superadmin' ? 'admin' : uCheck[0].role);
     await db.query(
-      `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [req.params.id, tenant_id]
+      `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role`,
+      [req.params.id, tenant_id, memberRole]
     );
 
     // Return updated membership list
     const { rows } = await db.query(
-      `SELECT t.id, t.name, t.slug
+      `SELECT t.id, t.name, t.slug, ut.role
          FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
          WHERE ut.user_id = $1 ORDER BY t.name`,
       [req.params.id]
     );
     // Audit: which tenant was added
-    req.auditContext = { entityId: req.params.id, changes: { tenant_id } };
+    req.auditContext = { entityId: req.params.id, changes: { tenant_id, role: memberRole } };
 
     res.status(201).json({ data: rows });
   } catch (err) {

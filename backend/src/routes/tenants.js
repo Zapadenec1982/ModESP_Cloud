@@ -18,6 +18,8 @@ const TENANT_SELECT = `
   SELECT t.id, t.name, t.slug, t.plan, t.active, t.status, t.created_at,
          t.trial_expires_at, t.suspended_at, t.billing_email, t.legal_name, t.tax_id,
          t.billing_currency, t.contract_started_at,
+         t.parent_tenant_id, parent.name AS parent_name, t.billing_account_id,
+         (SELECT COUNT(*)::int FROM tenants c WHERE c.parent_tenant_id = t.id) AS client_count,
          p.name AS plan_name, p.max_devices, p.max_sites, p.max_users, p.sampling_sec, p.features,
          COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.raw_retention_days,
          (SELECT COUNT(*)::int FROM devices d WHERE d.tenant_id = t.id AND d.status = 'active') AS device_count,
@@ -25,6 +27,7 @@ const TENANT_SELECT = `
          (SELECT COUNT(*)::int FROM sites s WHERE s.tenant_id = t.id) AS site_count,
          (SELECT COUNT(*)::int FROM users u WHERE u.tenant_id = t.id AND u.active = true) AS user_count
     FROM tenants t
+    LEFT JOIN tenants parent ON parent.id = t.parent_tenant_id
     LEFT JOIN plan_limits p ON p.plan = t.plan
     LEFT JOIN tenant_settings s ON s.tenant_id = t.id`;
 
@@ -52,11 +55,17 @@ const updateTenantSchema = z.object({
   tax_id:              z.string().max(32).nullable().optional(),
   billing_currency:    z.string().length(3).toUpperCase().optional(),
   contract_started_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  parent_tenant_id:    z.string().uuid().nullable().optional(),   // the partner that manages this organisation (plan epic 2.5)
 });
 
 const settingsSchema = z.object({
   timezone:                z.string().min(1).max(64).optional(),
   locale:                  z.enum(['uk', 'en', 'pl', 'de']).optional(),
+  // Branding (plan feature `branding`, plan epic 2.5): shown on public status
+  // pages and HACCP PDFs of this organisation and of its clients.
+  brand_name:              z.string().max(128).trim().nullable().optional(),
+  brand_logo_url:          z.string().max(512).trim().url().nullable().optional().or(z.literal('').transform(() => null)),
+  brand_url:               z.string().max(512).trim().url().nullable().optional().or(z.literal('').transform(() => null)),
   electricity_rate:        z.number().min(0).max(1000).nullable().optional(),
   electricity_currency:    z.string().length(3).toUpperCase().optional(),
   door_alarm_delay_ms:     z.number().int().min(0).max(7_200_000).nullable().optional(),
@@ -160,6 +169,7 @@ router.get('/plans', async (_req, res, next) => {
 const SETTINGS_SELECT = `
   SELECT t.id AS tenant_id, t.electricity_rate, t.electricity_currency,
          COALESCE(s.timezone, 'Europe/Kyiv') AS timezone, COALESCE(s.locale, 'uk') AS locale,
+         s.brand_name, s.brand_logo_url, s.brand_url,
          s.door_alarm_delay_ms, s.pulldown_alarm_delay_ms, s.offline_threshold_ms, s.offline_alarm_delay_ms,
          s.ack_escalation_min, s.raw_retention_days,
          COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.updated_at
@@ -222,6 +232,10 @@ router.patch('/:id/settings', async (req, res, next) => {
       try { new Intl.DateTimeFormat('en-GB', { timeZone: d.timezone }); }
       catch { return res.status(400).json({ error: 'validation_failed', message: 'timezone must be an IANA time zone', status: 400 }); }
     }
+    const brandKeys = ['brand_name', 'brand_logo_url', 'brand_url'].filter(k => d[k] !== undefined);
+    if (brandKeys.length && !isSuperAdmin(req) && !(await planMw.hasFeature(id, 'branding'))) {
+      return res.status(402).json({ error: 'plan_feature', message: 'Branding is not included in this plan. Ask for an upgrade.', status: 402, feature: 'branding' });
+    }
 
     const { rows: exists } = await db.query('SELECT id FROM tenants WHERE id = $1', [id]);
     if (exists.length === 0) {
@@ -236,7 +250,8 @@ router.patch('/:id/settings', async (req, res, next) => {
         await client.query('UPDATE tenants SET electricity_currency = $2 WHERE id = $1', [id, d.electricity_currency]);
       }
       const cols = ['timezone', 'locale', 'door_alarm_delay_ms', 'pulldown_alarm_delay_ms',
-                    'offline_threshold_ms', 'offline_alarm_delay_ms', 'ack_escalation_min', 'raw_retention_days'];
+                    'offline_threshold_ms', 'offline_alarm_delay_ms', 'ack_escalation_min', 'raw_retention_days',
+                    'brand_name', 'brand_logo_url', 'brand_url'];
       const present = cols.filter(c => d[c] !== undefined);
       if (present.length) {
         const insertCols = ['tenant_id', ...present, 'updated_at', 'updated_by'];
@@ -333,8 +348,25 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
     if (updates.status !== undefined && updates.active !== undefined) delete updates.active;
 
     // Fetch current state for audit
-    const beforeRes = await db.query('SELECT name, plan, active, status FROM tenants WHERE id = $1', [id]);
+    const beforeRes = await db.query('SELECT name, plan, active, status, parent_tenant_id FROM tenants WHERE id = $1', [id]);
     const beforeTenant = beforeRes.rows[0];
+
+    // A client hangs one level under a partner (plan epic 2.5): the parent must
+    // be on a plan with the `partner` feature, must not be a client itself, and
+    // an organisation that has clients cannot become somebody's client.
+    if (updates.parent_tenant_id) {
+      if (updates.parent_tenant_id === id) {
+        return res.status(400).json({ error: 'validation_failed', message: 'An organisation cannot be its own partner', status: 400 });
+      }
+      const { rows: pr } = await db.query(
+        `SELECT t.id, t.parent_tenant_id, COALESCE(p.features, '[]'::jsonb) ? 'partner' AS is_partner
+           FROM tenants t LEFT JOIN plan_limits p ON p.plan = t.plan WHERE t.id = $1`, [updates.parent_tenant_id]);
+      if (pr.length === 0) return res.status(404).json({ error: 'not_found', message: 'Partner organisation not found', status: 404 });
+      if (!pr[0].is_partner) return res.status(400).json({ error: 'validation_failed', message: 'The parent organisation is not on a partner plan', status: 400 });
+      if (pr[0].parent_tenant_id) return res.status(400).json({ error: 'validation_failed', message: 'A client organisation cannot be a partner', status: 400 });
+      const { rows: kids } = await db.query('SELECT 1 FROM tenants WHERE parent_tenant_id = $1 LIMIT 1', [id]);
+      if (kids.length) return res.status(400).json({ error: 'validation_failed', message: 'An organisation with clients cannot become a client', status: 400 });
+    }
 
     // Build dynamic SET clause
     const setClauses = [];
@@ -352,7 +384,7 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
       `UPDATE tenants SET ${setClauses.join(', ')}
        WHERE id = $${idx}
        RETURNING id, name, slug, plan, active, status, suspended_at, trial_expires_at,
-                 billing_email, legal_name, tax_id, billing_currency, contract_started_at, created_at`,
+                 billing_email, legal_name, tax_id, billing_currency, contract_started_at, parent_tenant_id, created_at`,
       values
     );
     planMw.invalidate(id);

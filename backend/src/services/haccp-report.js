@@ -29,7 +29,7 @@ const HOURLY_RETENTION_DAYS = 1095;
 const STRINGS = {
   uk: {
     title: 'Журнал контролю температури (HACCP)', site_title: 'Журнал контролю температури точки (HACCP)',
-    organisation: 'Організація', tax_id: 'Код ЄДРПОУ/ІПН', site: 'Точка', address: 'Адреса', timezone: 'Часовий пояс',
+    organisation: 'Організація', tax_id: 'Код ЄДРПОУ/ІПН', serviced_by: 'Обслуговує', site: 'Точка', address: 'Адреса', timezone: 'Часовий пояс',
     device: 'Обладнання', device_id: 'Ідентифікатор', serial: 'Серійний номер', model: 'Модель',
     period: 'Період', bucket: 'Інтервал', generated: 'Сформовано', by: 'ким',
     source: 'Джерело даних', source_raw: 'первинні вимірювання', source_hourly: 'погодинний архів (мін/макс/середнє за годину)',
@@ -45,7 +45,7 @@ const STRINGS = {
   },
   en: {
     title: 'HACCP Temperature Compliance Log', site_title: 'HACCP Temperature Compliance Log — site',
-    organisation: 'Organisation', tax_id: 'Tax ID', site: 'Site', address: 'Address', timezone: 'Time zone',
+    organisation: 'Organisation', tax_id: 'Tax ID', serviced_by: 'Serviced by', site: 'Site', address: 'Address', timezone: 'Time zone',
     device: 'Equipment', device_id: 'Identifier', serial: 'Serial number', model: 'Model',
     period: 'Period', bucket: 'Interval', generated: 'Generated', by: 'by',
     source: 'Data source', source_raw: 'raw measurements', source_hourly: 'hourly archive (min/max/avg per hour)',
@@ -61,7 +61,7 @@ const STRINGS = {
   },
   pl: {
     title: 'Dziennik kontroli temperatury (HACCP)', site_title: 'Dziennik kontroli temperatury lokalizacji (HACCP)',
-    organisation: 'Organizacja', tax_id: 'NIP', site: 'Lokalizacja', address: 'Adres', timezone: 'Strefa czasowa',
+    organisation: 'Organizacja', tax_id: 'NIP', serviced_by: 'Obsługuje', site: 'Lokalizacja', address: 'Adres', timezone: 'Strefa czasowa',
     device: 'Urządzenie', device_id: 'Identyfikator', serial: 'Numer seryjny', model: 'Model',
     period: 'Okres', bucket: 'Interwał', generated: 'Wygenerowano', by: 'przez',
     source: 'Źródło danych', source_raw: 'pomiary surowe', source_hourly: 'archiwum godzinowe (min/maks/śr. na godzinę)',
@@ -77,7 +77,7 @@ const STRINGS = {
   },
   de: {
     title: 'Temperaturprotokoll (HACCP)', site_title: 'Temperaturprotokoll des Standorts (HACCP)',
-    organisation: 'Organisation', tax_id: 'Steuernummer', site: 'Standort', address: 'Adresse', timezone: 'Zeitzone',
+    organisation: 'Organisation', tax_id: 'Steuernummer', serviced_by: 'Betreut von', site: 'Standort', address: 'Adresse', timezone: 'Zeitzone',
     device: 'Anlage', device_id: 'Kennung', serial: 'Seriennummer', model: 'Modell',
     period: 'Zeitraum', bucket: 'Intervall', generated: 'Erstellt', by: 'von',
     source: 'Datenquelle', source_raw: 'Rohmessungen', source_hourly: 'Stundenarchiv (Min/Max/Mittel je Stunde)',
@@ -293,6 +293,7 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
         text: [
           { text: `${S.organisation}: `, bold: true }, `${orgName}\n`,
           ...(tenant.tax_id ? [{ text: `${S.tax_id}: `, bold: true }, `${tenant.tax_id}\n`] : []),
+          ...(tenant.brand_name ? [{ text: `${S.serviced_by}: `, bold: true }, `${tenant.brand_name}${tenant.brand_url ? ' · ' + tenant.brand_url : ''}\n`] : []),
           ...(site ? [{ text: `${S.site}: `, bold: true }, `${site.name}\n`, { text: `${S.address}: `, bold: true }, `${address || '—'}\n`] : []),
           { text: `${S.timezone}: `, bold: true }, tz,
         ],
@@ -338,7 +339,7 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
       header: { text: `${orgName} — ${title}`, alignment: 'center', margin: [0, 16, 0, 0], fontSize: 9, bold: true, color: '#555555' },
       footer: (currentPage, pageCount) => ({
         columns: [
-          { text: `${fmtCode(code)} · SHA-256 ${hash.slice(0, 16)}…`, fontSize: 7, color: '#777777' },
+          { text: `${tenant.brand_name ? tenant.brand_name + ' · ' : ''}${fmtCode(code)} · SHA-256 ${hash.slice(0, 16)}…`, fontSize: 7, color: '#777777' },
           { text: `${S.page} ${currentPage} ${S.of} ${pageCount}`, alignment: 'right', fontSize: 7, color: '#777777' },
         ],
         margin: [40, 18, 40, 0],

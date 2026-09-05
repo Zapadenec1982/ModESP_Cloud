@@ -282,9 +282,12 @@ alarmRouter.get('/export.csv', filterDeviceAccess(), async (req, res, next) => {
 async function loadTenant(tenantId) {
   const { rows } = await db.query(
     `SELECT t.id, t.name, t.slug, t.legal_name, t.tax_id, COALESCE(s.timezone, 'Europe/Kyiv') AS timezone,
-            COALESCE(s.raw_retention_days, p.retention_days, 90) AS retention_days
+            COALESCE(s.raw_retention_days, p.retention_days, 90) AS retention_days,
+            COALESCE(s.brand_name, par.brand_name) AS brand_name,
+            COALESCE(s.brand_url, par.brand_url)   AS brand_url
        FROM tenants t
        LEFT JOIN tenant_settings s ON s.tenant_id = t.id
+       LEFT JOIN tenant_settings par ON par.tenant_id = t.parent_tenant_id
        LEFT JOIN plan_limits p ON p.plan = t.plan
       WHERE t.id = $1`,
     [tenantId]

@@ -40,8 +40,14 @@
       offline_alarm_min: toMin(data.offline_alarm_delay_ms),
       ack_min: data.ack_escalation_min ?? '',
       raw_retention_days: data.raw_retention_days ?? '',
+      brand_name: data.brand_name || '',
+      brand_logo_url: data.brand_logo_url || '',
+      brand_url: data.brand_url || '',
     }
   }
+  // Branding (plan feature `branding`, plan epic 2.5) — shown on public status
+  // pages and HACCP PDFs of this organisation and of the clients it runs.
+  $: canBrand = !!tenant && Array.isArray(tenant.features) && tenant.features.includes('branding')
 
   async function load() {
     loading = true
@@ -71,6 +77,7 @@
         offline_alarm_delay_ms: fromMin(form.offline_alarm_min),
         ack_escalation_min: form.ack_min === '' ? null : Number(form.ack_min),
         ...($isSuperAdmin ? { raw_retention_days: form.raw_retention_days === '' ? null : Number(form.raw_retention_days) } : {}),
+        ...(canBrand ? { brand_name: form.brand_name.trim() || null, brand_logo_url: form.brand_logo_url.trim() || null, brand_url: form.brand_url.trim() || null } : {}),
       })
       fill(data)
       toast.success($t('settings.saved'))
@@ -162,6 +169,16 @@
         <label class="field"><span>{$t('settings.offline_alarm_delay')}</span><input class="input" type="number" min="0" max="1440" bind:value={form.offline_alarm_min} placeholder={toMin(settings.defaults.offline_alarm_delay_ms)} /></label>
         <label class="field"><span>{$t('settings.ack_escalation')}</span><input class="input" type="number" min="1" max="1440" bind:value={form.ack_min} placeholder={settings.defaults.ack_escalation_min} /></label>
       </div>
+
+      {#if canBrand}
+        <div class="section-header"><Icon name="layers" size={16} /><span>{$t('settings.brand_title')}</span></div>
+        <p class="hint">{$t('settings.brand_hint')}</p>
+        <div class="form-grid">
+          <label class="field"><span>{$t('settings.brand_name')}</span><input class="input" maxlength="128" bind:value={form.brand_name} placeholder={tenant.name} /></label>
+          <label class="field"><span>{$t('settings.brand_logo_url')}</span><input class="input" type="url" maxlength="512" bind:value={form.brand_logo_url} placeholder="https://…/logo.png" /></label>
+          <label class="field"><span>{$t('settings.brand_url')}</span><input class="input" type="url" maxlength="512" bind:value={form.brand_url} placeholder="https://…" /></label>
+        </div>
+      {/if}
 
       {#if $isSuperAdmin}
         <div class="section-header"><Icon name="clock" size={16} /><span>{$t('settings.retention')}</span></div>
