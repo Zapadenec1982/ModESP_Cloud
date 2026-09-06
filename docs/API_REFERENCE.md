@@ -1983,7 +1983,10 @@ estimate, seller, plan_request, open_invoices[] }`. `estimate` — оцінка 
 ### `POST /billing/admin/run`
 `{ job: snapshot|invoices|dunning|all, period?: 'YYYY-MM', tenant_id?, send?: true }` — запуск завдань вручну
 (ті самі, що виконує щогодинний таймер `BILLING_INTERVAL_MIN`). `invoices` без `period` = попередній місяць;
-незавершений період → `skipped: period_not_over`.
+незавершений період → `skipped: period_not_over`, незаповнені реквізити продавця → `skipped:
+seller_not_configured` (жодного рахунку не створено). `dunning` віддає `{ past_due[], reminded[],
+suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`, які зупинені на стадії «прострочено» і не
+призупиняють організацію, доки їх не надішлють.
 
 ### `GET|PUT /billing/admin/settings`
 Реквізити постачальника і `due_days` (1–90), `invoice_note` — друкуються на кожному рахунку.

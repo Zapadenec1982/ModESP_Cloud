@@ -47,6 +47,13 @@
   const month = (v) => new Date(v).toLocaleDateString(code, { month: 'long', year: 'numeric', timeZone: 'UTC' })
   const invoiceStatus = (i) => i.status === 'issued' && i.overdue ? 'overdue' : i.status
   const statusVariant = (s) => s === 'paid' ? 'success' : s === 'overdue' ? 'danger' : s === 'void' ? 'neutral' : 'info'
+  // Automatic billing is armed by the seller requisites: without a beneficiary
+  // and an IBAN the backend issues nothing (services/billing.js sellerReady).
+  $: sellerMissing = !loading && !((settings.seller_name || '').trim() && (settings.seller_iban || '').trim())
+  // An issued-but-unsent invoice is capped at past_due by the backend; say so where it shows.
+  $: anyHeld = invoices.some(i => i.status === 'issued' && !i.sent_at && i.overdue)
+  const skipLabel = (code) => code === 'seller_not_configured' ? $t('billing.skip_seller_not_configured')
+    : code === 'period_not_over' ? $t('billing.skip_period_not_over') : code
 
   // ── jobs ──
   let period = ''
@@ -57,8 +64,11 @@
       const out = await adminRunBilling({ job, period: job === 'invoices' && period ? period : undefined, send: true })
       const parts = []
       if (out.snapshot) parts.push(`${$t('billing.admin_run_snapshot')}: ${out.snapshot.rows}`)
-      if (out.invoices) parts.push(`${$t('billing.admin_run_invoices')}: ${out.invoices.created.length}${out.invoices.skipped ? ' (' + out.invoices.skipped + ')' : ''}`)
-      if (out.dunning) parts.push(`${$t('billing.admin_run_dunning')}: ${out.dunning.past_due.length}/${out.dunning.reminded.length}/${out.dunning.suspended.length}`)
+      if (out.invoices) parts.push(`${$t('billing.admin_run_invoices')}: ${out.invoices.created.length}${out.invoices.skipped ? ' (' + skipLabel(out.invoices.skipped) + ')' : ''}`)
+      if (out.dunning) {
+        const held = (out.dunning.held || []).length
+        parts.push(`${$t('billing.admin_run_dunning')}: ${out.dunning.past_due.length}/${out.dunning.reminded.length}/${out.dunning.suspended.length}${held ? ' · ' + $t('billing.admin_run_held').replace('{0}', held) : ''}`)
+      }
       toast.success($t('billing.admin_ran').replace('{0}', parts.join(' · ')))
       await load()
     } catch (e) { toast.error(e.message) } finally { running = '' }
@@ -132,6 +142,13 @@
   {:else if error}
     <EmptyState icon="x-circle" title={$t('common.failed_to_load')} message={error} />
   {:else}
+    {#if sellerMissing}
+      <div class="notice warn" role="alert">
+        <Icon name="alert-triangle" size={16} />
+        <span>{$t('billing.admin_seller_missing')}</span>
+      </div>
+    {/if}
+
     <!-- Jobs -->
     <section class="card">
       <div class="card-head"><h2><Icon name="clock" size={18} /> {$t('billing.admin_jobs_title')}</h2></div>
@@ -189,6 +206,7 @@
             </tbody>
           </table>
         </div>
+        {#if anyHeld}<p class="muted small">{$t('billing.held_hint')}</p>{/if}
       {/if}
     </section>
 
@@ -241,6 +259,8 @@
   .card-head h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-lg); flex: 1; }
   .count { font-size: var(--text-xs); padding: 2px 8px; border-radius: var(--radius-full); background: var(--bg-tertiary); color: var(--text-secondary); }
   .filter, .job input { padding: var(--space-1) var(--space-2); background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--text-sm); }
+  .notice { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); font-size: var(--text-sm); }
+  .notice.warn { border: 1px solid rgba(210, 153, 34, 0.5); background: rgba(210, 153, 34, 0.12); }
   .jobs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .job { display: inline-flex; gap: var(--space-2); align-items: center; }
   .job input { width: 90px; font-family: var(--font-mono); }

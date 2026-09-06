@@ -1197,6 +1197,11 @@ export default {
     due_days: 'Payment term, days',
     invoice_note: 'Invoice note (e.g. “VAT exempt”)',
     settings_saved: 'Requisites saved',
+    skip_period_not_over: 'the month is not over yet',
+    skip_seller_not_configured: 'seller requisites are not set',
+    admin_run_held: 'held: {0}',
+    admin_seller_missing: 'Automatic invoicing is off: the seller name and IBAN are empty. An invoice without requisites cannot be paid, so none is issued. Fill the requisites below to arm billing.',
+    held_hint: 'An invoice that was never sent stops at past due and never suspends the organisation.',
   },
 
   tenants: {
