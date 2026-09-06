@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
   import { wrap } from 'svelte-spa-router/wrap'
-  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed } from './lib/stores.js'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed, currentTenant } from './lib/stores.js'
   import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
   import { connect, disconnect, reconnect, on, subscribeGlobal } from './lib/ws.js'
   import { t } from './lib/i18n.js'
@@ -58,6 +58,9 @@
     '/pending':         wrap({ component: PendingDevices, conditions: [isAdminCheck] }),
     '/firmware':        wrap({ component: Firmware, conditions: [canWriteCheck] }),
     '/partner':         wrap({ asyncComponent: () => import('./pages/Partner.svelte'), conditions: [isAdminCheck] }),
+    // Billing (plan epic 2.2): the organisation's admin; the superadmin ledger is separate
+    '/billing':         wrap({ asyncComponent: () => import('./pages/Billing.svelte'), conditions: [isAdminCheck] }),
+    '/admin/billing':   wrap({ asyncComponent: () => import('./pages/BillingAdmin.svelte'), conditions: [isSuperAdminCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/settings':        wrap({ asyncComponent: () => import('./pages/TenantSettings.svelte'), conditions: [isAdminCheck] }),
@@ -199,6 +202,8 @@
     '/pending': 'pages.pending',
     '/firmware': 'pages.firmware',
     '/partner': 'pages.partner',
+    '/billing': 'pages.billing',
+    '/admin/billing': 'pages.billing_admin',
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',
     '/settings': 'pages.settings',
@@ -263,6 +268,13 @@
     <MobileHeader />
 
     <main class="main-content">
+      {#if $isAdmin && $currentTenant?.status === 'past_due'}
+        <!-- Billing (plan epic 2.2): an overdue invoice; day 21 suspends the organisation -->
+        <div class="past-due-banner" role="alert">
+          <span>{$t('billing.past_due_banner')}</span>
+          <a href="#/billing">{$t('billing.past_due_link')}</a>
+        </div>
+      {/if}
       <Router {routes} on:conditionsFailed={conditionsFailed} on:routeLoaded={handleRouteLoaded} />
     </main>
   </div>
@@ -295,6 +307,21 @@
     font-weight: 500;
     letter-spacing: 0.05em;
   }
+
+  .past-due-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid rgba(210, 153, 34, 0.5);
+    border-radius: var(--radius-md);
+    background: rgba(210, 153, 34, 0.12);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+  }
+  .past-due-banner a { color: var(--accent-blue); font-weight: 600; text-decoration: none; white-space: nowrap; }
 
   .app-layout {
     display: flex;

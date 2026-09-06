@@ -17,6 +17,7 @@ const { SUPPORTED_LOCALES } = require('../src/lib/locale');
 const telegram = require('../src/services/telegram');
 const email    = require('../src/services/email');
 const webpush  = require('../src/services/webpush');
+const invoicePdf = require('../src/services/invoice-pdf');
 
 const flatten = (obj, prefix = '', out = new Set()) => {
   for (const [k, v] of Object.entries(obj)) {
@@ -44,5 +45,6 @@ function check(name, dict) {
 check('telegram.STRINGS', telegram.__strings.STRINGS);
 for (const [name, dict] of Object.entries(email.__strings)) check(`email.${name}`, dict);
 for (const [name, dict] of Object.entries(webpush.__strings)) check(`webpush.${name}`, dict);
+check('invoice-pdf.STRINGS', invoicePdf.STRINGS);
 
 process.exit(failed ? 1 : 0);

@@ -44,6 +44,9 @@
     { path: '/tenants',       icon: 'building', label: $t('nav.tenants'),  admin: true },
     { path: '/users',         icon: 'users',    label: $t('nav.users'),    admin: true },
     { path: '/settings',      icon: 'settings', label: $t('nav.settings'), admin: true },
+    // Billing (plan epic 2.2): the organisation's plan, usage, invoices; the superadmin ledger
+    { path: '/billing',       icon: 'credit-card', label: $t('nav.billing'), admin: true },
+    { path: '/admin/billing', icon: 'credit-card', label: $t('nav.billing_admin'), superadmin: true },
     { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), superadmin: true },
   ]
 

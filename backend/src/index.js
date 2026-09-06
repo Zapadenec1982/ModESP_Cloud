@@ -21,6 +21,7 @@ const otaSvc      = require('./services/ota');
 const geocodeSvc  = require('./services/geocode');
 const weatherSvc  = require('./services/weather');
 const maintenanceSvc = require('./services/maintenance');
+const billingSvc  = require('./services/billing');
 const routingSvc  = require('./services/routing');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize, requireSuperadmin } = require('./middleware/auth');
@@ -435,6 +436,8 @@ if (AUTH_ENABLED) {
   // Partner plan (plan epic 2.5): the caller's organisation must carry the
   // `partner` feature; the router checks that and the admin role itself.
   app.use('/api/partner',  require('./routes/partner'));
+  // Billing (plan epic 2.2): an organisation's admin sees its plan, usage and invoices; /admin/* is superadmin.
+  app.use('/api/billing',  authorize('admin'), require('./routes/billing'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -541,6 +544,9 @@ async function main() {
   // 6b. Maintenance hints — hourly repair-prevention rules (plan epic 2.4)
   maintenanceSvc.start(logger);
 
+  // 6c. Billing: hourly usage snapshots, invoices on the 1st, dunning (plan epic 2.2)
+  billingSvc.start(logger);
+
   // 7. HTTP
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
@@ -555,6 +561,7 @@ async function shutdown(signal) {
     otaSvc.shutdown(),
     weatherSvc.shutdown(),
     maintenanceSvc.shutdown(),
+    billingSvc.shutdown(),
     geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),

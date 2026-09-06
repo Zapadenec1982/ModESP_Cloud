@@ -961,6 +961,61 @@ export function getPartnerSites() {
   return request('/partner/sites');
 }
 
+// ── Billing (plan epic 2.2) ─────────────────────────────
+export function getBillingSummary() {
+  return request('/billing/summary');
+}
+export function getBillingUsage(months = 2) {
+  return request(`/billing/usage?months=${months}`);
+}
+export function getBillingInvoices(tenantId) {
+  return request(`/billing/invoices${tenantId ? '?tenant_id=' + encodeURIComponent(tenantId) : ''}`);
+}
+export function getBillingInvoice(id) {
+  return request(`/billing/invoices/${id}`);
+}
+export function downloadInvoicePdf(id, number) {
+  return downloadFile(`/billing/invoices/${id}/pdf`, `${number || 'invoice'}.pdf`);
+}
+export function updateBillingIdentity(data) {
+  return request('/billing/identity', { method: 'PATCH', body: JSON.stringify(data) });
+}
+export function createPlanRequest(plan, message) {
+  return request('/billing/plan-request', { method: 'POST', body: JSON.stringify({ plan, message: message || null }) });
+}
+export function cancelPlanRequest() {
+  return request('/billing/plan-request', { method: 'DELETE' });
+}
+// superadmin
+export function adminGetInvoices(params = {}) {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+  return request(`/billing/admin/invoices${qs ? '?' + qs : ''}`);
+}
+export function adminPayInvoice(id, note) {
+  return request(`/billing/admin/invoices/${id}/pay`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
+}
+export function adminVoidInvoice(id, note) {
+  return request(`/billing/admin/invoices/${id}/void`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
+}
+export function adminSendInvoice(id) {
+  return request(`/billing/admin/invoices/${id}/send`, { method: 'POST' });
+}
+export function adminRunBilling(body) {
+  return request('/billing/admin/run', { method: 'POST', body: JSON.stringify(body || {}) });
+}
+export function adminGetBillingSettings() {
+  return request('/billing/admin/settings');
+}
+export function adminSaveBillingSettings(data) {
+  return request('/billing/admin/settings', { method: 'PUT', body: JSON.stringify(data) });
+}
+export function adminGetPlanRequests(status = 'pending') {
+  return request(`/billing/admin/plan-requests?status=${status}`);
+}
+export function adminResolvePlanRequest(id, decision, note) {
+  return request(`/billing/admin/plan-requests/${id}/${decision}`, { method: 'POST', body: JSON.stringify({ note: note || null }) });
+}
+
 export function getTenants() {
   return request('/tenants');
 }
