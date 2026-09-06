@@ -1197,6 +1197,7 @@ export default {
     due_days: 'Zahlungsfrist, Tage',
     invoice_note: 'Rechnungsvermerk (z. B. „ohne MwSt.“)',
     settings_saved: 'Daten gespeichert',
+    iban_invalid: 'Ungültige IBAN: prüfen Sie Ländercode, Länge und Prüfziffern.',
     skip_period_not_over: 'der Monat ist noch nicht zu Ende',
     skip_seller_not_configured: 'Verkäuferdaten fehlen',
     admin_run_held: 'zurückgehalten: {0}',

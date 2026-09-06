@@ -1197,6 +1197,7 @@ export default {
     due_days: 'Payment term, days',
     invoice_note: 'Invoice note (e.g. “VAT exempt”)',
     settings_saved: 'Requisites saved',
+    iban_invalid: 'Invalid IBAN: check the country code, the length and the check digits.',
     skip_period_not_over: 'the month is not over yet',
     skip_seller_not_configured: 'seller requisites are not set',
     admin_run_held: 'held: {0}',
