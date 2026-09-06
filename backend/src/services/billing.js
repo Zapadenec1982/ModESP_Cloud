@@ -156,6 +156,16 @@ async function loadSettings() {
   return rows[0] || { due_days: 14 };
 }
 
+/**
+ * The seller's requisites double as the on/off switch of automatic billing:
+ * an invoice without a beneficiary and an IBAN cannot be paid, so it must not
+ * be issued at all. A fresh deployment therefore bills nobody until someone
+ * fills the requisites on the billing page deliberately.
+ */
+function sellerReady(settings) {
+  return !!(settings && String(settings.seller_name || '').trim() && String(settings.seller_iban || '').trim());
+}
+
 /** Per-controller price for `qty` controllers: the highest tier reached, else the list price. */
 function tierPrice(plan, qty) {
   let price = plan.price_controller_uah;
@@ -317,6 +327,10 @@ async function generateInvoices({ now = new Date(), period = null, tenantIds = n
   const p = period || previousPeriod(now);
   if (p.end > dayStr(now)) return { period: p, created: [], skipped: 'period_not_over' };
   const [plans, settings, groups] = await Promise.all([loadPlans(), loadSettings(), payerGroups({ tenantIds })]);
+  if (!sellerReady(settings)) {
+    log().warn({ period: p.start }, 'Billing: seller requisites are not set (name and IBAN) — no invoice issued');
+    return { period: p, created: [], skipped: 'seller_not_configured' };
+  }
   const allIds = groups.flatMap(g => g.members.map(m => m.id));
   const usage = allIds.length ? await usageFor(allIds, p) : {};
   const created = [];
@@ -355,7 +369,13 @@ async function generateInvoices({ now = new Date(), period = null, tenantIds = n
       if (!invoice) continue;
       created.push(invoice);
       log().info({ number: invoice.number, tenant: g.payer.slug, amount }, 'Invoice issued');
-      if (send) await sendInvoiceEmail(invoice).catch(err => log().warn({ err, number: invoice.number }, 'Invoice e-mail failed'));
+      if (send) {
+        // A false here is not an error but it is never silent: an invoice
+        // nobody received must be visible in the log, because dunning holds
+        // it back and somebody has to send it by hand.
+        const sent = await sendInvoiceEmail(invoice).catch(err => { log().warn({ err, number: invoice.number }, 'Invoice e-mail failed'); return false; });
+        if (!sent) log().warn({ number: invoice.number, tenant: g.payer.slug }, 'Invoice issued but not sent (e-mail off or no recipient) — dunning will hold it at past_due');
+      }
     } catch (err) {
       log().error({ err, tenant: g.payer.slug }, 'Invoice generation failed');
     }
@@ -451,10 +471,17 @@ async function runDunning({ now = new Date() } = {}) {
   const D = dunningDays();
   const { rows } = await db.query(
     `SELECT i.* FROM invoices i WHERE i.status = 'issued' AND i.due_at < $1 ORDER BY i.due_at`, [now]);
-  const report = { past_due: [], reminded: [], suspended: [] };
+  const report = { past_due: [], reminded: [], suspended: [], held: [] };
   for (const inv of rows) {
     const overdue = Math.floor((now - new Date(inv.due_at)) / 86_400_000);
-    const target = overdue >= D.suspend ? 3 : overdue >= D.reminder ? 2 : overdue >= D.past_due ? 1 : 0;
+    const reached = overdue >= D.suspend ? 3 : overdue >= D.reminder ? 2 : overdue >= D.past_due ? 1 : 0;
+    // Nobody is suspended over a letter that was never sent. An invoice with
+    // no sent_at (e-mail not configured, no recipient, delivery failed) stops
+    // at past_due: the banner and the billing page still show it, the fleet
+    // keeps its broker topics. Sending it (admin "Надіслати") lifts the cap.
+    const cap = inv.sent_at ? 3 : 1;
+    const target = Math.min(reached, cap);
+    if (reached > target) report.held.push(inv.number);
     if (target <= inv.dunning_stage) continue;
     const tenants = coveredTenants(inv);
     try {
@@ -522,8 +549,9 @@ async function runOnce({ now = new Date() } = {}) {
     out.snapshot = await snapshotAll({ now });
     out.invoices = await generateInvoices({ now });
     out.dunning  = await runDunning({ now });
-    log().info({ snapshots: out.snapshot.rows, invoices: out.invoices.created.length,
+    log().info({ snapshots: out.snapshot.rows, invoices: out.invoices.created.length, skipped: out.invoices.skipped || undefined,
       dunning: Object.fromEntries(Object.entries(out.dunning).map(([k, v]) => [k, v.length])) }, 'Billing run');
+    if (out.dunning.held.length) log().warn({ invoices: out.dunning.held }, 'Dunning held at past_due: these invoices were never sent');
   } catch (err) {
     log().error({ err }, 'Billing run failed');
   } finally {
@@ -557,8 +585,8 @@ function shutdown() {
 module.exports = {
   start, shutdown, runOnce,
   snapshotAll, generateInvoices, runDunning, markPaid, voidInvoice, estimate,
-  sendInvoiceEmail, loadSettings, loadPlans, payerGroups,
+  sendInvoiceEmail, loadSettings, loadPlans, payerGroups, sellerReady,
   previousPeriod, currentPeriod, periodFromString, dunningDays,
   BILLABLE_STATUSES,
-  __test: { buildLines, tierPrice, usageFor, recipientsOf, coveredTenants, setLogger(l) { logger = l; } },
+  __test: { buildLines, tierPrice, usageFor, recipientsOf, coveredTenants, sellerReady, setLogger(l) { logger = l; } },
 };

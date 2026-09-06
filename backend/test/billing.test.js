@@ -54,6 +54,10 @@ describe('billing', () => {
     partnerAdmin = await createUser(partnerT.id, { role: 'admin',  email: 'admin@bill-partner.test' });
     superadmin   = await createUser(otherT.id,   { role: 'superadmin', email: 'sa@bill.test' });
 
+    // Automatic invoicing is armed by the seller requisites (services/billing.js
+    // sellerReady); the guard itself is covered by its own test below.
+    await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест', seller_iban = 'UA000000000000000000000000000' WHERE id = 1`);
+
     // Everyone existed before August (the base fee is prorated by creation date)
     await db.query(`UPDATE tenants SET created_at = '2026-06-01T00:00:00Z' WHERE slug LIKE 'bill-%'`);
     await db.query(`UPDATE tenants SET legal_name = 'ТОВ Мережа Про', tax_id = '11112222', billing_email = 'money@bill-pro.test' WHERE id = $1`, [proT.id]);
@@ -94,6 +98,24 @@ describe('billing', () => {
     await billing.snapshotAll({ now: NOW });
     const { rows: again } = await db.query('SELECT COUNT(*)::int AS n FROM usage_snapshots WHERE tenant_id = $1', [proT.id]);
     expect(again[0].n).toBe(2);
+  });
+
+  it('issues nothing while the seller requisites are empty: an invoice nobody can pay is never created', async () => {
+    await db.query(`UPDATE billing_settings SET seller_name = NULL, seller_iban = NULL WHERE id = 1`);
+    expect(billing.__test.sellerReady({ seller_name: 'x', seller_iban: 'UA1' })).toBe(true);
+    expect(billing.__test.sellerReady({ seller_name: '  ', seller_iban: 'UA1' })).toBe(false);
+    expect(billing.__test.sellerReady({ seller_name: 'x' })).toBe(false);
+
+    const r = await billing.generateInvoices({ now: NOW, period: AUG, send: false });
+    expect(r).toMatchObject({ created: [], skipped: 'seller_not_configured' });
+    const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM invoices');
+    expect(rows[0].n).toBe(0);
+
+    // A name without an IBAN is still not payable
+    await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест' WHERE id = 1`);
+    expect((await billing.generateInvoices({ now: NOW, period: AUG, send: false })).skipped).toBe('seller_not_configured');
+
+    await db.query(`UPDATE billing_settings SET seller_iban = 'UA000000000000000000000000000' WHERE id = 1`);
   });
 
   it('generateInvoices bills August from the snapshots: pro per controller + site, partner consolidated, free and enterprise skipped', async () => {
@@ -192,12 +214,16 @@ describe('billing', () => {
   it('dunning: day 7 past_due, day 14 reminder, day 21 suspended — for the partner and its clients too; payment restores', async () => {
     const dueAt = new Date(proInvoice.due_at);
     const at = (days) => new Date(dueAt.getTime() + days * 86_400_000 + 3_600_000);
+    // These two reached the customer; an undelivered invoice is capped at
+    // past_due instead, which the next test covers.
+    await db.query(`UPDATE invoices SET sent_at = issued_at WHERE id = ANY($1::uuid[])`, [[proInvoice.id, partnerInvoice.id]]);
 
-    expect(await billing.runDunning({ now: at(3) })).toEqual({ past_due: [], reminded: [], suspended: [] });
+    expect(await billing.runDunning({ now: at(3) })).toEqual({ past_due: [], reminded: [], suspended: [], held: [] });
     expect(await tenantStatus(proT.id)).toBe('active');
 
     let r = await billing.runDunning({ now: at(7) });
     expect(r.past_due.sort()).toEqual([proInvoice.number, partnerInvoice.number].sort());
+    expect(r.held).toEqual([]);
     expect(await tenantStatus(proT.id)).toBe('past_due');
     expect(await tenantStatus(partnerT.id)).toBe('past_due');
     expect(await tenantStatus(client1.id)).toBe('past_due');
@@ -229,6 +255,41 @@ describe('billing', () => {
     expect(v.status).toBe(200);
     expect(v.body.data.restored.map(t => t.slug).sort()).toEqual(['bill-c1', 'bill-c2', 'bill-partner']);
     expect(await tenantStatus(client1.id)).toBe('active');
+  });
+
+  it('an invoice that was never sent stops at past_due and never suspends; sending it lifts the cap', async () => {
+    const t = await createTenant({ slug: 'bill-unsent', plan: 'basic', name: 'Ніхто не бачив' });
+    const issued = new Date('2026-08-01T00:00:00Z');
+    const { rows } = await db.query(
+      `INSERT INTO invoices (number, tenant_id, period_start, period_end, lines, amount, status, issued_at, due_at)
+       VALUES ('MC-TEST01', $1, '2026-07-01', '2026-08-01', '[]'::jsonb, 500, 'issued', $2, $2) RETURNING *`,
+      [t.id, issued]);
+    const inv = rows[0];
+    expect(inv.sent_at).toBeNull();
+
+    // Far past the suspension threshold, yet the fleet keeps its broker topics
+    const wayLate = new Date(issued.getTime() + 60 * 86_400_000);
+    let r = await billing.runDunning({ now: wayLate });
+    expect(r.past_due).toContain(inv.number);
+    expect(r.suspended).toEqual([]);
+    expect(r.held).toContain(inv.number);
+    expect(await tenantStatus(t.id)).toBe('past_due');
+
+    // Repeated sweeps keep reporting it as held and change nothing
+    r = await billing.runDunning({ now: wayLate });
+    expect(r.held).toContain(inv.number);
+    expect(r.suspended).toEqual([]);
+    expect(await tenantStatus(t.id)).toBe('past_due');
+
+    // Once it has actually been delivered, the ladder runs to the end
+    await db.query('UPDATE invoices SET sent_at = now() WHERE id = $1', [inv.id]);
+    r = await billing.runDunning({ now: wayLate });
+    expect(r.suspended).toContain(inv.number);
+    expect(r.held).toEqual([]);
+    expect(await tenantStatus(t.id)).toBe('suspended');
+
+    await db.query('DELETE FROM invoices WHERE id = $1', [inv.id]);
+    await db.query('DELETE FROM tenants WHERE id = $1', [t.id]);
   });
 
   it('superadmin lists invoices, runs the jobs by hand and keeps the seller requisites', async () => {

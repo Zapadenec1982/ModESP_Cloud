@@ -1197,6 +1197,11 @@ export default {
     due_days: 'Zahlungsfrist, Tage',
     invoice_note: 'Rechnungsvermerk (z. B. „ohne MwSt.“)',
     settings_saved: 'Daten gespeichert',
+    skip_period_not_over: 'der Monat ist noch nicht zu Ende',
+    skip_seller_not_configured: 'Verkäuferdaten fehlen',
+    admin_run_held: 'zurückgehalten: {0}',
+    admin_seller_missing: 'Automatische Rechnungen sind aus: Verkäufername und IBAN fehlen. Eine Rechnung ohne Daten kann nicht bezahlt werden, also wird keine erstellt. Füllen Sie die Daten unten aus, um die Abrechnung zu aktivieren.',
+    held_hint: 'Eine nie versendete Rechnung bleibt bei „überfällig“ und sperrt die Organisation nie.',
   },
 
   tenants: {

@@ -1197,6 +1197,11 @@ export default {
     due_days: 'Termin płatności, dni',
     invoice_note: 'Uwaga na fakturze (np. „zw. z VAT”)',
     settings_saved: 'Dane zapisane',
+    skip_period_not_over: 'miesiąc jeszcze się nie zakończył',
+    skip_seller_not_configured: 'brak danych sprzedawcy',
+    admin_run_held: 'wstrzymano: {0}',
+    admin_seller_missing: 'Automatyczne faktury są wyłączone: brak nazwy sprzedawcy i IBAN. Faktury bez danych nie da się opłacić, więc nie jest wystawiana. Uzupełnij dane poniżej, aby włączyć rozliczenia.',
+    held_hint: 'Faktura, której nie wysłano, zatrzymuje się na statusie „po terminie” i nigdy nie zawiesza organizacji.',
   },
 
   tenants: {
