@@ -38,6 +38,7 @@ const pdfSvc     = require('../services/invoice-pdf');
 const emailSvc   = require('../services/email');
 const { requireSuperadmin } = require('../middleware/auth');
 const { pickLocale } = require('../lib/locale');
+const { normalizeIban, isValidIban, ibanProblem } = require('../lib/iban');
 
 const router = Router();
 
@@ -308,7 +309,14 @@ admin.get('/settings', async (_req, res, next) => {
 const settingsSchema = z.object({
   seller_name:    z.string().max(256).trim().nullable().optional(),
   seller_tax_id:  z.string().max(32).trim().nullable().optional(),
-  seller_iban:    z.string().max(64).trim().regex(/^[A-Z0-9 ]*$/i, 'IBAN: letters and digits only').nullable().optional(),
+  // The IBAN arms automatic billing and is what the customer pays into, so it
+  // is checked like a bank checks it: structure, the length the country
+  // registers, and the MOD 97-10 checksum. Stored without spaces, upper case.
+  seller_iban:    z.string().max(64).nullable().optional()
+                   .transform(v => (v === null || v === undefined ? v : normalizeIban(v)))
+                   .refine(v => v === null || v === undefined || isValidIban(v), v => ({
+                     message: `IBAN is not valid (${ibanProblem(v)})`,
+                   })),
   seller_bank:    z.string().max(128).trim().nullable().optional(),
   seller_address: z.string().max(256).trim().nullable().optional(),
   seller_email:   z.string().email().max(256).nullable().optional().or(z.literal('').transform(() => null)),

@@ -1197,6 +1197,7 @@ export default {
     due_days: 'Termin płatności, dni',
     invoice_note: 'Uwaga na fakturze (np. „zw. z VAT”)',
     settings_saved: 'Dane zapisane',
+    iban_invalid: 'Nieprawidłowy IBAN: sprawdź kod kraju, długość i cyfry kontrolne.',
     skip_period_not_over: 'miesiąc jeszcze się nie zakończył',
     skip_seller_not_configured: 'brak danych sprzedawcy',
     admin_run_held: 'wstrzymano: {0}',

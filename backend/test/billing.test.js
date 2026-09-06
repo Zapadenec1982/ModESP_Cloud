@@ -56,7 +56,7 @@ describe('billing', () => {
 
     // Automatic invoicing is armed by the seller requisites (services/billing.js
     // sellerReady); the guard itself is covered by its own test below.
-    await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест', seller_iban = 'UA000000000000000000000000000' WHERE id = 1`);
+    await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест', seller_iban = 'UA213223130000026007233566001' WHERE id = 1`);
 
     // Everyone existed before August (the base fee is prorated by creation date)
     await db.query(`UPDATE tenants SET created_at = '2026-06-01T00:00:00Z' WHERE slug LIKE 'bill-%'`);
@@ -102,9 +102,12 @@ describe('billing', () => {
 
   it('issues nothing while the seller requisites are empty: an invoice nobody can pay is never created', async () => {
     await db.query(`UPDATE billing_settings SET seller_name = NULL, seller_iban = NULL WHERE id = 1`);
-    expect(billing.__test.sellerReady({ seller_name: 'x', seller_iban: 'UA1' })).toBe(true);
-    expect(billing.__test.sellerReady({ seller_name: '  ', seller_iban: 'UA1' })).toBe(false);
+    expect(billing.__test.sellerReady({ seller_name: 'x', seller_iban: 'UA213223130000026007233566001' })).toBe(true);
+    expect(billing.__test.sellerReady({ seller_name: '  ', seller_iban: 'UA213223130000026007233566001' })).toBe(false);
     expect(billing.__test.sellerReady({ seller_name: 'x' })).toBe(false);
+    // An IBAN that cannot be paid into does not arm billing either, even when
+    // it was written straight into the database
+    expect(billing.__test.sellerReady({ seller_name: 'x', seller_iban: 'UA000000000000000000000000000' })).toBe(false);
 
     const r = await billing.generateInvoices({ now: NOW, period: AUG, send: false });
     expect(r).toMatchObject({ created: [], skipped: 'seller_not_configured' });
@@ -115,7 +118,7 @@ describe('billing', () => {
     await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест' WHERE id = 1`);
     expect((await billing.generateInvoices({ now: NOW, period: AUG, send: false })).skipped).toBe('seller_not_configured');
 
-    await db.query(`UPDATE billing_settings SET seller_iban = 'UA000000000000000000000000000' WHERE id = 1`);
+    await db.query(`UPDATE billing_settings SET seller_iban = 'UA213223130000026007233566001' WHERE id = 1`);
   });
 
   it('generateInvoices bills August from the snapshots: pro per controller + site, partner consolidated, free and enterprise skipped', async () => {
@@ -308,6 +311,16 @@ describe('billing', () => {
     expect(put.status).toBe(200);
     expect(put.body.data).toMatchObject({ seller_name: 'ФОП Теплюк', due_days: 10, invoice_note: 'Без ПДВ' });
     expect((await request(app).put('/api/billing/admin/settings').set(H(proAdmin, proT)).send({ due_days: 5 })).status).toBe(403);
+
+    // The IBAN is checked the way a bank checks it, and stored normalised
+    for (const bad of ['hello world', 'UA00', 'UA213223130000026007233566002', 'DE8937040044053201300']) {
+      const r = await request(app).put('/api/billing/admin/settings').set(H(superadmin, otherT)).send({ seller_iban: bad });
+      expect([r.status, bad]).toEqual([400, bad]);
+    }
+    const norm = await request(app).put('/api/billing/admin/settings').set(H(superadmin, otherT))
+      .send({ seller_iban: 'ua21 3223 1300 0002 6007 2335 6600 1' });
+    expect(norm.status).toBe(200);
+    expect(norm.body.data.seller_iban).toBe('UA213223130000026007233566001');
     // an organisation's admin sees the requisites to pay to
     const s = await request(app).get('/api/billing/summary').set(H(proAdmin, proT));
     expect(s.body.data.seller).toMatchObject({ seller_iban: 'UA213223130000026007233566001', seller_name: 'ФОП Теплюк' });

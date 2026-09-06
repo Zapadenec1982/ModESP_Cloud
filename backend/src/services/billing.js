@@ -32,6 +32,7 @@ const planMw   = require('../middleware/plan');
 const emailSvc = require('./email');
 const pdfSvc   = require('./invoice-pdf');
 const { pickLocale } = require('../lib/locale');
+const { isValidIban } = require('../lib/iban');
 
 let logger = null;
 let poller = null;
@@ -158,12 +159,14 @@ async function loadSettings() {
 
 /**
  * The seller's requisites double as the on/off switch of automatic billing:
- * an invoice without a beneficiary and an IBAN cannot be paid, so it must not
- * be issued at all. A fresh deployment therefore bills nobody until someone
- * fills the requisites on the billing page deliberately.
+ * an invoice without a beneficiary and a payable IBAN cannot be settled, so it
+ * must not be issued at all. A fresh deployment therefore bills nobody until
+ * someone fills the requisites on the billing page deliberately. The IBAN is
+ * validated here too, not only at the API: a value written straight into the
+ * database must not arm billing either.
  */
 function sellerReady(settings) {
-  return !!(settings && String(settings.seller_name || '').trim() && String(settings.seller_iban || '').trim());
+  return !!(settings && String(settings.seller_name || '').trim() && isValidIban(settings.seller_iban));
 }
 
 /** Per-controller price for `qty` controllers: the highest tier reached, else the list price. */
