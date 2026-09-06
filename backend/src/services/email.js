@@ -657,9 +657,182 @@ async function sendPilotRequest({ to, request }) {
   return true;
 }
 
+// ── Billing mail (invoices, dunning — plan epic 2.2) ─────
+
+const BILL = {
+  uk: {
+    invoice_subject:  (n, org) => `Рахунок ${n} для «${org}» — ModESP Cloud`,
+    invoice_title:    'Рахунок за послуги моніторингу',
+    invoice_intro:    (org, period) => `Рахунок для організації «${escHtml(org)}» за період ${period}. PDF у вкладенні.`,
+    number:           'Номер',
+    period:           'Період',
+    amount:           'Сума',
+    due:              'Оплатити до',
+    iban:             'IBAN',
+    recipient:        'Отримувач',
+    purpose:          'Призначення платежу',
+    purpose_text:     (n) => `Оплата за рахунком ${n}, послуги моніторингу ModESP Cloud`,
+    cta:              'Відкрити сторінку оплати',
+    attached:         'Після оплати статус рахунку оновиться протягом робочого дня. Питання щодо рахунку — відповіддю на цей лист.',
+    dunning_subject:  (stage, n) => stage >= 3 ? `Доступ призупинено: рахунок ${n} не оплачено` : `Нагадування: рахунок ${n} прострочено`,
+    dunning_title_1:  'Рахунок прострочено',
+    dunning_title_2:  'Повторне нагадування',
+    dunning_title_3:  'Доступ призупинено',
+    dunning_intro_1:  (org, n, amount) => `Рахунок ${n} для «${escHtml(org)}» на суму ${amount} не оплачено вчасно. Організація переведена у статус «прострочено»; будь ласка, сплатіть рахунок.`,
+    dunning_intro_2:  (org, n, amount) => `Рахунок ${n} для «${escHtml(org)}» на суму ${amount} досі не оплачено. Якщо оплати не буде, доступ до організації буде призупинено.`,
+    dunning_intro_3:  (org, n, amount) => `Доступ до організації «${escHtml(org)}» призупинено через несплату рахунку ${n} на суму ${amount}. Контролери продовжують працювати автономно; після оплати доступ відновиться.`,
+    dunning_note:     'Якщо оплату вже здійснено — проігноруйте цей лист або відповідайте на нього з підтвердженням платежу.',
+  },
+  en: {
+    invoice_subject:  (n, org) => `Invoice ${n} for “${org}” — ModESP Cloud`,
+    invoice_title:    'Invoice for monitoring services',
+    invoice_intro:    (org, period) => `Invoice for the organisation “${escHtml(org)}” for ${period}. The PDF is attached.`,
+    number:           'Number',
+    period:           'Period',
+    amount:           'Amount',
+    due:              'Due by',
+    iban:             'IBAN',
+    recipient:        'Beneficiary',
+    purpose:          'Payment reference',
+    purpose_text:     (n) => `Payment of invoice ${n}, ModESP Cloud monitoring services`,
+    cta:              'Open the billing page',
+    attached:         'The invoice status is updated within one business day of payment. Questions about the invoice — reply to this e-mail.',
+    dunning_subject:  (stage, n) => stage >= 3 ? `Access suspended: invoice ${n} unpaid` : `Reminder: invoice ${n} is overdue`,
+    dunning_title_1:  'Invoice overdue',
+    dunning_title_2:  'Second reminder',
+    dunning_title_3:  'Access suspended',
+    dunning_intro_1:  (org, n, amount) => `Invoice ${n} for “${escHtml(org)}” of ${amount} was not paid on time. The organisation is now marked past due; please settle the invoice.`,
+    dunning_intro_2:  (org, n, amount) => `Invoice ${n} for “${escHtml(org)}” of ${amount} is still unpaid. Without payment, access to the organisation will be suspended.`,
+    dunning_intro_3:  (org, n, amount) => `Access to the organisation “${escHtml(org)}” has been suspended because invoice ${n} of ${amount} is unpaid. Controllers keep running on their own; access is restored on payment.`,
+    dunning_note:     'If you have already paid, ignore this e-mail or reply with the payment confirmation.',
+  },
+  pl: {
+    invoice_subject:  (n, org) => `Faktura ${n} dla „${org}” — ModESP Cloud`,
+    invoice_title:    'Faktura za usługi monitoringu',
+    invoice_intro:    (org, period) => `Faktura dla organizacji „${escHtml(org)}” za okres ${period}. PDF w załączniku.`,
+    number:           'Numer',
+    period:           'Okres',
+    amount:           'Kwota',
+    due:              'Termin płatności',
+    iban:             'IBAN',
+    recipient:        'Odbiorca',
+    purpose:          'Tytuł przelewu',
+    purpose_text:     (n) => `Zapłata za fakturę ${n}, usługi monitoringu ModESP Cloud`,
+    cta:              'Otwórz stronę płatności',
+    attached:         'Status faktury zostanie zaktualizowany w ciągu jednego dnia roboczego od wpłaty. Pytania dotyczące faktury — w odpowiedzi na tę wiadomość.',
+    dunning_subject:  (stage, n) => stage >= 3 ? `Dostęp zawieszony: faktura ${n} nieopłacona` : `Przypomnienie: faktura ${n} po terminie`,
+    dunning_title_1:  'Faktura po terminie',
+    dunning_title_2:  'Ponowne przypomnienie',
+    dunning_title_3:  'Dostęp zawieszony',
+    dunning_intro_1:  (org, n, amount) => `Faktura ${n} dla „${escHtml(org)}” na kwotę ${amount} nie została opłacona w terminie. Organizacja ma status „po terminie”; prosimy o zapłatę.`,
+    dunning_intro_2:  (org, n, amount) => `Faktura ${n} dla „${escHtml(org)}” na kwotę ${amount} nadal nie jest opłacona. Bez zapłaty dostęp do organizacji zostanie zawieszony.`,
+    dunning_intro_3:  (org, n, amount) => `Dostęp do organizacji „${escHtml(org)}” został zawieszony z powodu nieopłaconej faktury ${n} na kwotę ${amount}. Sterowniki pracują dalej samodzielnie; po zapłacie dostęp zostanie przywrócony.`,
+    dunning_note:     'Jeśli płatność została już wykonana, zignoruj tę wiadomość lub odpowiedz na nią z potwierdzeniem.',
+  },
+  de: {
+    invoice_subject:  (n, org) => `Rechnung ${n} für „${org}“ — ModESP Cloud`,
+    invoice_title:    'Rechnung für Überwachungsdienste',
+    invoice_intro:    (org, period) => `Rechnung für die Organisation „${escHtml(org)}“ für den Zeitraum ${period}. Die PDF ist angehängt.`,
+    number:           'Nummer',
+    period:           'Zeitraum',
+    amount:           'Betrag',
+    due:              'Fällig am',
+    iban:             'IBAN',
+    recipient:        'Empfänger',
+    purpose:          'Verwendungszweck',
+    purpose_text:     (n) => `Zahlung der Rechnung ${n}, ModESP Cloud Überwachungsdienste`,
+    cta:              'Zahlungsseite öffnen',
+    attached:         'Der Rechnungsstatus wird innerhalb eines Werktags nach Zahlungseingang aktualisiert. Fragen zur Rechnung — als Antwort auf diese E-Mail.',
+    dunning_subject:  (stage, n) => stage >= 3 ? `Zugang gesperrt: Rechnung ${n} unbezahlt` : `Erinnerung: Rechnung ${n} ist überfällig`,
+    dunning_title_1:  'Rechnung überfällig',
+    dunning_title_2:  'Zweite Erinnerung',
+    dunning_title_3:  'Zugang gesperrt',
+    dunning_intro_1:  (org, n, amount) => `Die Rechnung ${n} für „${escHtml(org)}“ über ${amount} wurde nicht fristgerecht bezahlt. Die Organisation ist jetzt als überfällig markiert; bitte begleichen Sie die Rechnung.`,
+    dunning_intro_2:  (org, n, amount) => `Die Rechnung ${n} für „${escHtml(org)}“ über ${amount} ist weiterhin unbezahlt. Ohne Zahlung wird der Zugang zur Organisation gesperrt.`,
+    dunning_intro_3:  (org, n, amount) => `Der Zugang zur Organisation „${escHtml(org)}“ wurde gesperrt, weil die Rechnung ${n} über ${amount} unbezahlt ist. Die Regler laufen eigenständig weiter; nach Zahlung wird der Zugang wiederhergestellt.`,
+    dunning_note:     'Wenn Sie bereits bezahlt haben, ignorieren Sie diese E-Mail oder antworten Sie mit der Zahlungsbestätigung.',
+  },
+};
+
+function spaLink(path) {
+  return `${String(appUrl || '').replace(/\/+$/, '')}/#/${path}`;
+}
+
+function billingRows(L, invoice, seller, lang, { withIban = true } = {}) {
+  const { formatMoney, formatDate } = require('./invoice-pdf');
+  const end = new Date(invoice.period_end); end.setUTCDate(end.getUTCDate() - 1);
+  let rows =
+    infoRow(L.number, escHtml(invoice.number)) +
+    infoRow(L.period, `${formatDate(invoice.period_start, lang)} – ${formatDate(end, lang)}`) +
+    infoRow(L.amount, escHtml(formatMoney(invoice.amount, invoice.currency, lang))) +
+    infoRow(L.due, formatDate(invoice.due_at, lang));
+  if (withIban && seller) {
+    if (seller.seller_name) rows += infoRow(L.recipient, escHtml(seller.seller_name));
+    if (seller.seller_iban) rows += infoRow(L.iban, `<code style="font-family:monospace;">${escHtml(seller.seller_iban)}</code>`);
+    rows += infoRow(L.purpose, escHtml(L.purpose_text(invoice.number)));
+  }
+  return rows;
+}
+
+/**
+ * The invoice e-mail with the PDF attached. Resolves false when the channel
+ * is not configured.
+ */
+async function sendInvoice({ to, lang, invoice, seller, tenantName, pdf }) {
+  if (!resend) return false;
+  const l = txLang(lang);
+  const L = BILL[l];
+  const { formatDate } = require('./invoice-pdf');
+  const end = new Date(invoice.period_end); end.setUTCDate(end.getUTCDate() - 1);
+  const html = wrapHtml(txBody(
+    L.invoice_title, L.invoice_intro(tenantName, `${formatDate(invoice.period_start, l)} – ${formatDate(end, l)}`),
+    billingRows(L, invoice, seller, l), ctaButton(spaLink('billing'), L.cta), L.attached, ''
+  ), l);
+  const { error } = await resend.emails.send({
+    from: fromAddress, to, subject: L.invoice_subject(invoice.number, tenantName), html,
+    attachments: pdf ? [{ filename: `${invoice.number}.pdf`, content: Buffer.from(pdf).toString('base64') }] : undefined,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** Dunning: stage 1 past due, 2 second reminder, 3 suspended. */
+async function sendDunning({ to, lang, invoice, seller, tenantName, stage }) {
+  if (!resend) return false;
+  const l = txLang(lang);
+  const L = BILL[l];
+  const { formatMoney } = require('./invoice-pdf');
+  const s = Math.min(3, Math.max(1, stage || 1));
+  const amount = formatMoney(invoice.amount, invoice.currency, l);
+  const html = wrapHtml(txBody(
+    L[`dunning_title_${s}`], L[`dunning_intro_${s}`](tenantName, invoice.number, escHtml(amount)),
+    billingRows(L, invoice, seller, l), ctaButton(spaLink('billing'), L.cta), L.dunning_note, ''
+  ), l);
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.dunning_subject(s, invoice.number), html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** A plan-change request from an organisation's admin, to the founder (PILOT_REQUEST_EMAIL). */
+async function sendPlanRequest({ to, request }) {
+  if (!resend || !to) return false;
+  const r = request || {};
+  const rows =
+    infoRow('Організація', `${escHtml(r.tenant_name || '')} <code>${escHtml(r.tenant_slug || '')}</code>`) +
+    infoRow('Поточний план', escHtml(r.current_plan || '—')) +
+    infoRow('Запитаний план', escHtml(r.requested_plan || '')) +
+    infoRow('Хто', escHtml(r.by || '—'));
+  const message = r.message ? `<p style="white-space:pre-wrap;">${escHtml(r.message)}</p>` : '';
+  const html = wrapHtml(`<h2 style="margin:0 0 12px;">Запит на зміну плану</h2><table>${rows}</table>${message}${ctaButton(spaLink('admin/billing'), 'Відкрити білінг')}`);
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: `Зміна плану: ${r.tenant_name || ''} → ${r.requested_plan || ''}`, html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
 module.exports = {
   init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest,
+  sendInvoice, sendDunning, sendPlanRequest,
   // scripts/check-locales.js and test/notification-templates.test.js
-  __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX },
+  __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL },
   __test: { buildEmail },
 };

@@ -736,6 +736,66 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON billing_accounts TO modesp_cloud;
 > сам не є клієнтом, а організація з клієнтами не може стати клієнтом. Бренд для публічної сторінки
 > і PDF резолвиться як `COALESCE(own.brand_*, parent.brand_*)`.
 
+## Білінг без карткових платежів (migration 037)
+
+```sql
+ALTER TABLE plan_limits ADD COLUMN price_tiers_uah JSONB NOT NULL DEFAULT '[]';   -- [{from, price}]: об'ємна ціна за контролер
+-- pro: від 100 → 80, від 500 → 60; partner: від 100 → 80, від 300 → 70 (як на сторінці цін)
+
+CREATE TABLE usage_snapshots (             -- що організація використала кожного дня (UTC); пише services/billing.js щогодини
+  tenant_id          UUID REFERENCES tenants(id) ON DELETE CASCADE,
+  day                DATE,
+  active_devices     INT, sites INT, users INT,
+  telemetry_rows     BIGINT,               -- сума telemetry_hourly.samples за день
+  notifications_sent INT,
+  taken_at           TIMESTAMPTZ,
+  PRIMARY KEY (tenant_id, day)
+);
+
+CREATE TABLE billing_settings (            -- один рядок: реквізити постачальника на кожному рахунку
+  id SMALLINT PRIMARY KEY CHECK (id = 1),
+  seller_name, seller_tax_id, seller_iban, seller_bank, seller_address, seller_email,
+  due_days INT NOT NULL DEFAULT 14, invoice_note TEXT, updated_at TIMESTAMPTZ
+);
+
+CREATE SEQUENCE invoice_number_seq;         -- номери MC-000001, MC-000002, …
+CREATE TABLE invoices (
+  id UUID PRIMARY KEY, number VARCHAR(32) UNIQUE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id),           -- платник: організація або партнер
+  billing_account_id UUID REFERENCES billing_accounts(id),
+  period_start DATE, period_end DATE,                       -- [start, end)
+  lines JSONB,                                              -- [{kind base|controllers|sites, tenant_id, tenant_name, qty, unit_price, amount}]
+  amount NUMERIC(12,2), currency CHAR(3) DEFAULT 'UAH',
+  status VARCHAR(16) CHECK (status IN ('issued', 'paid', 'void')),
+  issued_at, due_at, paid_at, paid_note, voided_at, sent_at,
+  dunning_stage SMALLINT DEFAULT 0,                         -- 0 · 1 past_due · 2 нагадування · 3 suspended
+  dunning_at, buyer JSONB, created_by UUID, created_at, updated_at,
+  UNIQUE (tenant_id, period_start)
+);
+
+CREATE TABLE plan_change_requests (        -- заявка адміна на інший план; вирішує superadmin
+  id UUID PRIMARY KEY, tenant_id UUID, requested_by UUID, current_plan VARCHAR(16),
+  requested_plan VARCHAR(16) REFERENCES plan_limits(plan), message TEXT,
+  status VARCHAR(16) CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+  resolved_by UUID, resolved_at TIMESTAMPTZ, resolution_note VARCHAR(256), created_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX idx_plan_change_one_pending ON plan_change_requests (tenant_id) WHERE status = 'pending';
+```
+
+> **Рахунок** формується 1-го числа за попередній місяць (`services/billing.js generateInvoices`, ідемпотентно —
+> один на платника і період). Кількість у рядку = середньоденне значення знімків за період (device-days ÷ днів
+> у місяці, округлено), тобто організація, що зайшла 20-го, платить третину, а контролер, що працював тиждень, —
+> чверть. Абонплата пропорційна дням існування організації в періоді. Ціна за контролер — за рівнем
+> `price_tiers_uah`, якого досягла загальна кількість платника. Партнер (`billing_accounts.is_partner`) отримує
+> один зведений рахунок: абонплата плану «Партнер» + рядок «контролери» на кожного клієнта за партнерським
+> тарифом (план клієнта на ціну не впливає). Плани без цін (enterprise) і нульові суми (free) рахунків не
+> створюють. Без жодного знімка за період (білінг увімкнули посеред місяця) береться поточний парк.
+>
+> **Дунінг** рахує від `due_at` (`issued_at` + `billing_settings.due_days`): +7 днів → `tenants.status = past_due`
+> для всіх організацій у `lines`, +14 — повторне нагадування, +21 — `suspended`; кожна стадія застосовується
+> один раз (`dunning_stage`). Оплата (`status = paid`) або анулювання повертає `active`, якщо в платника немає
+> інших прострочених рахунків; `suspended` знімається лише тим рахунком, що його спричинив (стадія 3).
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,

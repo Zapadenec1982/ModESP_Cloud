@@ -1942,6 +1942,56 @@ online_count, active_alarms` — крос-тенантна карта.
 `GET /tenants` віддає `parent_tenant_id`, `parent_name`, `billing_account_id`, `client_count`;
 `PATCH /tenants/:id { parent_tenant_id }` (superadmin) з перевіркою одного рівня.
 
+## Білінг (plan epic 2.2)
+
+Усі маршрути під `/api/billing` — роль `admin` поточної організації; `/api/billing/admin/*` — superadmin.
+Карткові платежі (WayForPay / LiqPay, Checkbox) не реалізовані: оплата банківським переказом, статус ставить
+superadmin.
+
+### `GET /billing/summary`
+`{ tenant: { plan, plan_name, status, trial_expires_at, legal_name, tax_id, billing_email, price_* , max_* },
+estimate, seller, plan_request, open_invoices[] }`. `estimate` — оцінка поточного місяця з живого парку:
+`{ period, payer, billed_via_partner, members[], lines[], amount, currency }`; для клієнта партнера — лише
+`{ billed_via_partner: true, payer, period }` (суми партнера він не бачить); `null` — план без рахунків або
+організація поза статусами `active`/`past_due`. `seller` — реквізити постачальника (`seller_name`, `seller_iban`,
+`seller_bank`, `seller_tax_id`, `seller_address`, `seller_email`, `due_days`, `invoice_note`).
+
+### `GET /billing/usage?months=2`
+Денні знімки `usage_snapshots` організації за останні N місяців (superadmin: `&tenant_id=`).
+
+### `GET /billing/invoices` · `GET /billing/invoices/:id` · `GET /billing/invoices/:id/pdf`
+Рахунки платника (поточна організація; superadmin: `?tenant_id=`), `overdue: true` для прострочених. Чужий
+рахунок — `404`. PDF (`application/pdf`, `Content-Disposition: attachment; filename="MC-000012.pdf"`) мовою
+організації або `?lang=`.
+
+### `PATCH /billing/identity`
+`{ legal_name?, tax_id?, billing_email? }` — платіжні дані організації, які друкуються на рахунку; порожній
+`billing_email` = листи адміністраторам.
+
+### `POST /billing/plan-request` · `DELETE /billing/plan-request`
+`{ plan, message? }` → `201` заявка на зміну плану (`400` — той самий або невідомий план, `409` — заявка вже
+є); `DELETE` скасовує очікувану. Лист засновнику на `PILOT_REQUEST_EMAIL`, якщо пошта налаштована.
+
+### `GET /billing/admin/invoices?status=issued|overdue|paid|void&tenant_id=&limit=`
+Усі рахунки з `tenant_name`, `tenant_slug`, `tenant_status`, `dunning_stage`, `sent_at`.
+
+### `POST /billing/admin/invoices/:id/pay` · `…/void` · `…/send`
+`pay { paid_at?, note? }` → `status: paid`, у відповіді `restored[]` — організації, яким повернуто `active`;
+`void { note? }` — анулювати (теж відновлює); `send` — (пере)надіслати лист із PDF (`503` без пошти, `409` без
+одержувача). `409`, якщо рахунок уже не `issued`.
+
+### `POST /billing/admin/run`
+`{ job: snapshot|invoices|dunning|all, period?: 'YYYY-MM', tenant_id?, send?: true }` — запуск завдань вручну
+(ті самі, що виконує щогодинний таймер `BILLING_INTERVAL_MIN`). `invoices` без `period` = попередній місяць;
+незавершений період → `skipped: period_not_over`.
+
+### `GET|PUT /billing/admin/settings`
+Реквізити постачальника і `due_days` (1–90), `invoice_note` — друкуються на кожному рахунку.
+
+### `GET /billing/admin/plan-requests?status=pending` · `POST …/:id/approve` · `POST …/:id/reject`
+Заявки на зміну плану; `approve { note? }` міняє `tenants.plan` (і скидає індивідуальну ретенцію), `reject`
+лише закриває.
+
 ## Тенанти (superadmin / admin)
 
 ### `GET /tenants`
