@@ -266,7 +266,7 @@ async function seedTechnicians(pool, tenants, dryRun) {
 
       // Keep the multi-tenant membership table in sync (migration 010).
       await pool.query(
-        `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1,$2)
+        `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1,$2,'technician')
          ON CONFLICT DO NOTHING`,
         [rows[0].id, tenant.id]
       );
@@ -296,7 +296,7 @@ async function seedShowcase(pool, tenant, dryRun) {
   );
   const viewerId = u[0].id;
   await pool.query(
-    `INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+    `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1,$2,'viewer') ON CONFLICT DO NOTHING`,
     [viewerId, tenant.id]
   );
   await pool.query(

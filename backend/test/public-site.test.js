@@ -138,6 +138,7 @@ const SITE_KEYS = [
   'alarm_count', 'city', 'country', 'device_count', 'devices',
   'generated_at', 'name', 'online_count', 'region',
   'organisation', 'link_expires_at',   // plan epic 1.11: whose page + expiry warning
+  'brand',                             // plan epic 2.5: who services the site (partner brand), or null
 ];
 
 describe('GET /api/public/site', () => {

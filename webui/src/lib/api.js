@@ -294,6 +294,9 @@ export async function switchTenant(tenantId) {
     localStorage.setItem('modesp_last_tenant', data.tenant.id);
   }
   if (data.tenants) availableTenants.set(data.tenants);
+  // The role is per organisation (plan epic 2.5): an admin of the partner may be
+  // a technician at the client just entered.
+  if (data.role) authUser.update(u => u ? { ...u, role: data.role } : u);
   return data;
 }
 
@@ -313,6 +316,7 @@ async function tryRefresh() {
       const { data } = await res.json();
       setTokens(data.access_token, data.refresh_token);
       if (data.tenants) availableTenants.set(data.tenants);
+      if (data.role) authUser.update(u => u ? { ...u, role: data.role } : u);
       return true;
     } catch {
       return false;
@@ -406,7 +410,9 @@ export async function restoreSession() {
   // Fetch user profile
   try {
     const user = await request('/profile');
-    applyUser(user);
+    // The token carries the role held in the organisation it was issued for
+    const jwtNow = accessToken ? parseJwtPayload(accessToken) : null;
+    applyUser(jwtNow?.role ? { ...user, role: jwtNow.role } : user);
 
     // Decode tenantId from JWT to set currentTenant
     if (accessToken) {
@@ -928,6 +934,32 @@ export function generatePasswordReset(userId) {
 }
 
 // ── Tenants (superadmin) ─────────────────────────────────
+
+// ── Partner plan (plan epic 2.5) ────────────────────────
+export function getPartnerOverview() {
+  return request('/partner/overview');
+}
+export function getPartnerClients() {
+  return request('/partner/clients');
+}
+export function createPartnerClient(data) {
+  return request('/partner/clients', { method: 'POST', body: JSON.stringify(data) });
+}
+export function updatePartnerClient(id, data) {
+  return request(`/partner/clients/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+}
+export function getPartnerClientMembers(id) {
+  return request(`/partner/clients/${id}/members`);
+}
+export function addPartnerClientMember(id, userId, role) {
+  return request(`/partner/clients/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId, role }) });
+}
+export function removePartnerClientMember(id, userId) {
+  return request(`/partner/clients/${id}/members/${userId}`, { method: 'DELETE' });
+}
+export function getPartnerSites() {
+  return request('/partner/sites');
+}
 
 export function getTenants() {
   return request('/tenants');

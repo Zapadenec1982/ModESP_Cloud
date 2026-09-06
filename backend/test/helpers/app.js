@@ -103,6 +103,7 @@ function createTestApp() {
   app.use('/api/profile',  require('../../src/routes/profile'));
 
   // Admin-only routes
+  app.use('/api/partner',  require('../../src/routes/partner'));
   app.use('/api/tenants',  authorize('admin'), require('../../src/routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('../../src/routes/users'));
 

@@ -46,11 +46,11 @@ async function createUser(tenantId, overrides = {}) {
   );
   const user = rows[0];
 
-  // Link user to tenant via user_tenants
+  // Link user to tenant via user_tenants — with the role held there (migration 036)
   await db.query(
-    `INSERT INTO user_tenants (user_id, tenant_id)
-     VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-    [user.id, tenantId]
+    `INSERT INTO user_tenants (user_id, tenant_id, role)
+     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+    [user.id, tenantId, role === 'superadmin' ? 'admin' : role]
   );
 
   // Attach plaintext password for test login

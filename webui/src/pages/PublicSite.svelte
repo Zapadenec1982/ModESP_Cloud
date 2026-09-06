@@ -199,6 +199,15 @@
     {:else}
       <header class="head">
         <div class="head-title">
+          {#if site.brand && (site.brand.logo_url || site.brand.name)}
+            <!-- Who services the site (plan epic 2.5): the partner's brand, or the organisation's own -->
+            <p class="head-brand">
+              {#if site.brand.logo_url}<img class="brand-logo" src={site.brand.logo_url} alt={site.brand.name || ''} />{/if}
+              {#if site.brand.name}
+                {#if site.brand.url}<a href={site.brand.url} rel="noopener" target="_blank">{site.brand.name}</a>{:else}<span>{site.brand.name}</span>{/if}
+              {/if}
+            </p>
+          {/if}
           {#if site.organisation}
             <p class="head-org">{site.organisation}</p>
           {/if}
@@ -520,6 +529,9 @@
       font-size: var(--text-lg);
     }
   }
+  .head-brand { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 0.85rem; color: var(--text-secondary); }
+  .head-brand a { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+  .brand-logo { height: 28px; max-width: 140px; object-fit: contain; }
   .head-org {
     margin: 0 0 2px;
     font-size: var(--text-xs);

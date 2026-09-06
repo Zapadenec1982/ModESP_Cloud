@@ -162,9 +162,17 @@ router.get('/site', async (req, res) => {
     // (tenant_id, site_id) already makes a cross-tenant link impossible, so this
     // is belt-and-braces — but it is also what keeps an explicit tenant predicate
     // on every statement in this file, as the codebase requires.
+    // Brand (plan epic 2.5): the organisation's own, else the partner's that
+    // manages it, else nothing — the page then shows only "works on ModESP Cloud".
     const { rows: siteRows } = await db.query(
-      `SELECT s.name, s.city, s.region, s.country, t.name AS organisation
-         FROM sites s JOIN tenants t ON t.id = s.tenant_id
+      `SELECT s.name, s.city, s.region, s.country, t.name AS organisation,
+              COALESCE(own.brand_name, par.brand_name)         AS brand_name,
+              COALESCE(own.brand_logo_url, par.brand_logo_url) AS brand_logo_url,
+              COALESCE(own.brand_url, par.brand_url)           AS brand_url
+         FROM sites s
+         JOIN tenants t ON t.id = s.tenant_id
+         LEFT JOIN tenant_settings own ON own.tenant_id = t.id
+         LEFT JOIN tenant_settings par ON par.tenant_id = t.parent_tenant_id
         WHERE s.id = $1 AND s.tenant_id = $2`,
       [link.site_id, link.tenant_id]
     );
@@ -172,6 +180,9 @@ router.get('/site', async (req, res) => {
     if (siteRows.length === 0) return notFound(res);
 
     const site = siteRows[0];
+    const brand = site.brand_name || site.brand_logo_url
+      ? { name: site.brand_name || null, logo_url: site.brand_logo_url || null, url: site.brand_url || null }
+      : null;
 
     // status = 'active' AND deleted_at IS NULL: a soft-deleted device keeps its
     // site_id and lives for 7 more days, and pending devices exist too — neither
@@ -219,6 +230,7 @@ router.get('/site', async (req, res) => {
       data: {
         name:         site.name,
         organisation: site.organisation,       // whose page this is (plan epic 1.11)
+        brand,                                 // who services it (plan epic 2.5), or null
         city:         site.city,
         region:       site.region,
         country:      site.country,

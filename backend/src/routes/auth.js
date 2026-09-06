@@ -33,9 +33,30 @@ const switchTenantSchema = z.object({
 
 // ── Helpers ─────────────────────────────────────────────
 
+/**
+ * The role a session gets inside one organisation (plan epic 2.5): a
+ * superadmin is a superadmin everywhere; everyone else carries the role of
+ * their membership row (user_tenants.role), falling back to the account role
+ * for a membership created before migration 036.
+ */
+async function roleFor(userId, tenantId) {
+  const { rows } = await db.query(
+    `SELECT u.role AS base_role, ut.role AS member_role
+       FROM users u
+       LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $2
+      WHERE u.id = $1`,
+    [userId, tenantId]
+  );
+  if (rows.length === 0) return null;
+  const { base_role, member_role } = rows[0];
+  if (base_role === 'superadmin') return 'superadmin';
+  return member_role || base_role;
+}
+
 async function issueTokens(user, tenantId) {
+  const role = (await roleFor(user.id, tenantId)) || user.role;
   const accessToken  = authSvc.generateAccessToken({
-    id: user.id, email: user.email, role: user.role, tenantId,
+    id: user.id, email: user.email, role, tenantId,
   });
   const refreshToken = authSvc.generateRefreshToken();
   const tokenHash    = authSvc.hashRefreshToken(refreshToken);
@@ -49,7 +70,7 @@ async function issueTokens(user, tenantId) {
     [user.id, tokenHash, expiresAt, tenantId]
   );
 
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, role };
 }
 
 // Organisations a session may run in: trial, active and past_due. A suspended
@@ -57,15 +78,46 @@ async function issueTokens(user, tenantId) {
 // dropped at token refresh (plan epic 1.8).
 const OPEN_STATUSES = ['trial', 'active', 'past_due'];
 
+// The home organisation (users.tenant_id) counts as a membership even when no
+// user_tenants row exists for it — accounts created by scripts before migration
+// 010 or by seed-admin have none, and must not be locked out of their own
+// organisation. The role there is the account role.
+const MEMBER_TENANTS_SQL = `
+  SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id,
+         COALESCE(ut.role, CASE WHEN u.role = 'superadmin' THEN 'admin' ELSE u.role END) AS role,
+         COALESCE(p.features, '[]'::jsonb) AS features
+    FROM users u
+    JOIN tenants t ON t.id = u.tenant_id OR t.id IN (SELECT m.tenant_id FROM user_tenants m WHERE m.user_id = u.id)
+    LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = t.id
+    LEFT JOIN plan_limits p ON p.plan = t.plan
+   WHERE u.id = $1`;
+
 async function getUserTenants(userId) {
   const { rows } = await db.query(
-    `SELECT t.id, t.name, t.slug, t.status
-       FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
-       WHERE ut.user_id = $1 AND t.status = ANY($2::text[])
-       ORDER BY t.name`,
+    `${MEMBER_TENANTS_SQL} AND t.status = ANY($2::text[]) ORDER BY t.name`,
     [userId, OPEN_STATUSES]
   );
   return rows;
+}
+
+/** Membership test used by select-tenant and switch-tenant: a row, or the home organisation. */
+async function isMember(userId, tenantId) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2
+     UNION SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+    [userId, tenantId]
+  );
+  return rows.length > 0;
+}
+
+/** One organisation as the session sees it (plan and features included, plan epic 2.5). */
+async function tenantSummary(tenantId) {
+  const { rows } = await db.query(
+    `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, COALESCE(p.features, '[]'::jsonb) AS features
+       FROM tenants t LEFT JOIN plan_limits p ON p.plan = t.plan WHERE t.id = $1`,
+    [tenantId]
+  );
+  return rows[0] || null;
 }
 
 function tenantSuspended(res) {
@@ -161,14 +213,15 @@ router.post('/login', async (req, res) => {
       const loginTenant = user.role === 'superadmin'
         ? tenants.find(t => t.id === user.tenant_id) || tenants[0]
         : tenants[0];
-      const { accessToken, refreshToken } = await issueTokens(user, loginTenant.id);
+      const { accessToken, refreshToken, role } = await issueTokens(user, loginTenant.id);
       await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
       return res.json({
         data: {
           access_token:  accessToken,
           refresh_token: refreshToken,
-          user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
+          // role = the role inside loginTenant (user_tenants.role), not the account role
+          user: { id: user.id, email: user.email, role, locale: user.locale || null, timezone: user.timezone || null },
           tenant: loginTenant,
           tenants,
         },
@@ -225,31 +278,24 @@ router.post('/select-tenant', async (req, res) => {
     const user = uRows[0];
 
     // Verify membership
-    const { rows: mRows } = await db.query(
-      'SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2',
-      [user.id, tenant_id]
-    );
-    if (mRows.length === 0) {
+    if (!await isMember(user.id, tenant_id)) {
       return res.status(403).json({
         error: 'forbidden', message: 'Not a member of this tenant', status: 403,
       });
     }
 
-    const { accessToken, refreshToken } = await issueTokens(user, tenant_id);
+    const { accessToken, refreshToken, role } = await issueTokens(user, tenant_id);
     await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
-    // Fetch tenant info
-    const { rows: tRows } = await db.query(
-      'SELECT id, name, slug FROM tenants WHERE id = $1', [tenant_id]
-    );
+    const tenant  = await tenantSummary(tenant_id);
     const tenants = await getUserTenants(user.id);
 
     res.json({
       data: {
         access_token:  accessToken,
         refresh_token: refreshToken,
-        user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
-        tenant: tRows[0] || null,
+        user: { id: user.id, email: user.email, role, locale: user.locale || null, timezone: user.timezone || null },
+        tenant,
         tenants,
       },
     });
@@ -283,33 +329,24 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
 
   try {
     // Superadmin can switch to any tenant; others need membership
-    if (!isSuperAdmin) {
-      const { rows } = await db.query(
-        'SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2',
-        [userId, tenant_id]
-      );
-      if (rows.length === 0) {
-        return res.status(403).json({
-          error: 'forbidden', message: 'Not a member of this tenant', status: 403,
-        });
-      }
+    if (!isSuperAdmin && !await isMember(userId, tenant_id)) {
+      return res.status(403).json({
+        error: 'forbidden', message: 'Not a member of this tenant', status: 403,
+      });
     }
 
     // Verify tenant exists and is open for sessions
-    const { rows: tRows } = await db.query(
-      'SELECT id, name, slug, status FROM tenants WHERE id = $1',
-      [tenant_id]
-    );
-    if (tRows.length === 0) {
+    const tenant = await tenantSummary(tenant_id);
+    if (!tenant) {
       return res.status(404).json({
         error: 'not_found', message: 'Tenant not found', status: 404,
       });
     }
-    if (!OPEN_STATUSES.includes(tRows[0].status)) return tenantSuspended(res);
+    if (!OPEN_STATUSES.includes(tenant.status)) return tenantSuspended(res);
 
-    // Issue new tokens with new tenant context
+    // Issue new tokens with new tenant context — and the role held THERE (plan epic 2.5)
     const user = { id: userId, email: req.user.email, role: req.user.role };
-    const { accessToken, refreshToken } = await issueTokens(user, tenant_id);
+    const { accessToken, refreshToken, role } = await issueTokens(user, tenant_id);
 
     const tenants = await getUserTenants(userId);
 
@@ -317,7 +354,8 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
       data: {
         access_token:  accessToken,
         refresh_token: refreshToken,
-        tenant: tRows[0],
+        role,
+        tenant,
         tenants,
       },
     });
@@ -391,8 +429,9 @@ router.post('/refresh', async (req, res) => {
       [row.id]
     );
 
+    const role = (await roleFor(row.user_id, row.tenant_id)) || row.role;
     const accessToken     = authSvc.generateAccessToken({
-      id: row.user_id, email: row.email, role: row.role, tenantId: row.tenant_id,
+      id: row.user_id, email: row.email, role, tenantId: row.tenant_id,
     });
     const newRefreshToken = authSvc.generateRefreshToken();
     const newTokenHash    = authSvc.hashRefreshToken(newRefreshToken);
@@ -413,6 +452,7 @@ router.post('/refresh', async (req, res) => {
       data: {
         access_token:  accessToken,
         refresh_token: newRefreshToken,
+        role,
         tenants,
       },
     });
@@ -682,11 +722,12 @@ router.post('/invite/:token/accept', async (req, res) => {
         if (!user.active) return { error: 'account_disabled' };
         const ok = await authSvc.comparePassword(password, user.password_hash);
         if (!ok) return { error: 'invalid_password' };
-        // Roles are per account (users.role), not per membership: an existing
-        // account joins with the role it already has.
+        // The role is per membership (plan epic 2.5): an existing account joins
+        // this organisation with the role it was invited for.
         await client.query(
-          'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [user.id, inv.tenant_id]);
+          `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)
+           ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role`,
+          [user.id, inv.tenant_id, inv.role]);
       } else {
         const pw = passwordSchema.safeParse(password);
         if (!pw.success) return { error: 'weak_password', message: pw.error.issues[0].message };
@@ -698,8 +739,8 @@ router.post('/invite/:token/accept', async (req, res) => {
         user = rows[0];
         created = true;
         await client.query(
-          'INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [user.id, inv.tenant_id]);
+          'INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [user.id, inv.tenant_id, inv.role]);
       }
       await client.query(
         'UPDATE invitations SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1', [inv.id, user.id]);
@@ -737,3 +778,5 @@ router.post('/invite/:token/accept', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.roleFor = roleFor;
+module.exports.getUserTenants = getUserTenants;

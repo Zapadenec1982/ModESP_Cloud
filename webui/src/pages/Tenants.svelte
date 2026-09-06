@@ -285,6 +285,11 @@
               {#if tenant.id === SYSTEM_TENANT_ID}
                 <Badge variant="neutral" size="sm">system</Badge>
               {/if}
+              {#if tenant.parent_name}
+                <small class="parent-of" title={$t('tenants.managed_by')}>↳ {tenant.parent_name}</small>
+              {:else if tenant.client_count}
+                <small class="parent-of">{$t('tenants.clients_count', tenant.client_count)}</small>
+              {/if}
             </span>
             <span class="cell cell-slug">
               <code>{tenant.slug}</code>
@@ -663,4 +668,5 @@
     .cell-status { flex: 1; }
     .cell-actions { flex: 1; justify-content: flex-start; }
   }
+  .parent-of { display: block; font-size: var(--text-xs); color: var(--text-muted); }
 </style>

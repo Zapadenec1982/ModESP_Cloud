@@ -73,6 +73,19 @@ export const canWrite = derived(
 export const currentTenant = writable(null);
 
 /**
+ * Derived: does the current organisation run clients (plan feature `partner`,
+ * plan epic 2.5)? The partner page and its nav item show only then, and only
+ * to an admin of the partner organisation.
+ */
+export const isPartner = derived(
+  [authEnabled, currentTenant],
+  ([$enabled, $tenant]) => $enabled && Array.isArray($tenant?.features) && $tenant.features.includes('partner')
+);
+
+/** Derived: does the current organisation's plan carry a feature? */
+export const hasPlanFeature = derived(currentTenant, $tenant => (name) => Array.isArray($tenant?.features) && $tenant.features.includes(name));
+
+/**
  * All tenants the user has access to.
  */
 export const availableTenants = writable([]);

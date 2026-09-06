@@ -1894,6 +1894,54 @@ superadmin, що діє в тенанті A, видав би користува�
 
 ---
 
+## Партнерський план (plan epic 2.5)
+
+Усі маршрути під `/api/partner` вимагають функцію плану `partner` у **поточній** організації
+(інакше `402 plan_feature`) і роль `admin` у ній. Кожен запит обмежений `parent_tenant_id = <партнер>`:
+партнер А не бачить клієнтів партнера Б, адмін клієнта не бачить інших клієнтів.
+
+### `GET /partner/clients`
+Клієнтські організації партнера з лічильниками: `device_count, online_count, site_count, member_count,
+active_alarms, critical_alarms, open_orders, open_hints, my_role` (роль того, хто питає, у клієнті — `null`,
+якщо він там не член).
+
+### `POST /partner/clients`
+`{ name, slug, plan?: free|basic|pro }` → `201`, організація з `parent_tenant_id` = партнер, `status: active`,
+мова й часовий пояс партнера, спільний `billing_account_id`; той, хто створив, стає `admin` клієнта.
+`409` — slug зайнятий, `400` — план `partner`/`enterprise` або зарезервований slug.
+
+### `PATCH /partner/clients/:id`
+`{ name?, plan? }` (лише free/basic/pro). Чужий клієнт — `404`.
+
+### `GET /partner/clients/:id/members` · `POST …/members` · `DELETE …/members/:userId`
+Хто є в організації клієнта (`partner_staff: true` — люди партнера). `POST { user_id, role }` ставить
+активного члена партнерської організації в клієнта з роллю (`400`, якщо це не людина партнера);
+`DELETE` прибирає лише людей партнера разом із їхніми грантами на точки клієнта.
+
+### `GET /partner/overview`
+`{ totals: { clients, devices, online, active_alarms, open_orders, open_hints }, alarms[≤50], work_orders[≤50], hints[≤50] }`
+по всіх клієнтах, кожен рядок із `tenant_id`/`tenant_name`.
+
+### `GET /partner/sites`
+Точки клієнтів із координатами: `id, name, city, latitude, longitude, tenant_id, tenant_name, device_count,
+online_count, active_alarms` — крос-тенантна карта.
+
+### Роль на членство
+`user_tenants.role` — роль, яку людина має в конкретній організації. `POST /auth/login`,
+`/auth/select-tenant`, `/auth/switch-tenant` і `/auth/refresh` видають токен із роллю **тієї організації**
+(`user.role` / `role` у відповіді); список `tenants` у відповідях несе `role`, `plan`, `features`,
+`parent_tenant_id`. `PUT /users/:id { role }` змінює роль у поточній організації (домашню роль теж, якщо
+це домашня організація); для людини з іншої домашньої організації адмін клієнта може змінити лише роль
+(`403` на email/active). `POST /users/:id/tenants { tenant_id, role? }` (superadmin) додає членство з роллю.
+Запрошення дає роль, на яку запрошували, і наявному акаунту.
+
+### Брендування
+`PATCH /tenants/:id/settings { brand_name?, brand_logo_url?, brand_url? }` — лише з функцією плану `branding`
+(`402` інакше; superadmin завжди). `GET /public/site` віддає `brand: { name, logo_url, url } | null` —
+власний бренд організації або бренд партнера, що її обслуговує; HACCP PDF показує «Обслуговує: …».
+`GET /tenants` віддає `parent_tenant_id`, `parent_name`, `billing_account_id`, `client_count`;
+`PATCH /tenants/:id { parent_tenant_id }` (superadmin) з перевіркою одного рівня.
+
 ## Тенанти (superadmin / admin)
 
 ### `GET /tenants`
