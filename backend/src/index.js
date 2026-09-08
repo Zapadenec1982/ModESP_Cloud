@@ -23,6 +23,7 @@ const weatherSvc  = require('./services/weather');
 const maintenanceSvc = require('./services/maintenance');
 const billingSvc  = require('./services/billing');
 const lifecycleSvc = require('./services/tenant-lifecycle');
+const reportSchedulerSvc = require('./services/report-scheduler');
 const registrationSvc = require('./services/registration');
 const routingSvc  = require('./services/routing');
 const tenantMw    = require('./middleware/tenant');
@@ -465,6 +466,8 @@ if (AUTH_ENABLED) {
   app.use('/api/billing',  authorize('admin'), require('./routes/billing'));
   // Getting-started checklist of the organisation (plan epic 2.1)
   app.use('/api/onboarding', authorize('admin'), require('./routes/onboarding'));
+  // Scheduled reports and the report archive (plan epic 2.7); the router gates the schedule routes to admins
+  app.use('/api/reports', require('./routes/reports'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -581,6 +584,8 @@ async function main() {
   }
   logger.info({ mode: registrationMode, trialDays: registrationSvc.trialDays(), emailVerification: emailSvc.isConfigured() }, 'Self-registration');
   lifecycleSvc.start(logger);
+  // Scheduled reports (plan epic 2.7): weekly/monthly PDFs, archived and e-mailed
+  reportSchedulerSvc.start(logger);
 
   // 7. HTTP
   const HOST = process.env.HOST || '127.0.0.1';
@@ -598,6 +603,7 @@ async function shutdown(signal) {
     maintenanceSvc.shutdown(),
     billingSvc.shutdown(),
     lifecycleSvc.shutdown(),
+    reportSchedulerSvc.shutdown(),
     geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),

@@ -367,12 +367,17 @@ async function render(docDefinition) {
   return Buffer.from(buffer);
 }
 
-async function registerExport({ query, code, kind, tenantId, deviceId, siteId, from, to, bucketKey, source, lang, hash, generatedBy }) {
+async function registerExport({ query, code, kind, tenantId, deviceId, siteId, from, to, bucketKey, source, lang, hash, generatedBy, reportType = 'haccp', scheduleId = null }) {
   await query(
-    `INSERT INTO report_exports (code, kind, tenant_id, device_id, site_id, period_from, period_to, bucket, source, lang, sha256, generated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-    [code, kind, tenantId, deviceId || null, siteId || null, from, to, bucketKey, source, lang, hash, generatedBy || null]
+    `INSERT INTO report_exports (code, kind, tenant_id, device_id, site_id, period_from, period_to, bucket, source, lang, sha256, generated_by, report_type, schedule_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [code, kind, tenantId, deviceId || null, siteId || null, from, to, bucketKey, source, lang, hash, generatedBy || null, reportType, scheduleId]
   );
+}
+
+/** Keep a scheduled PDF in its archive row (plan epic 2.7). */
+async function archivePdf({ query, code, buffer, fileName }) {
+  await query('UPDATE report_exports SET pdf = $2, bytes = $3, file_name = $4 WHERE code = $1', [code, buffer, buffer.length, fileName]);
 }
 
 function verifyUrlFor(code) {
@@ -385,7 +390,7 @@ function verifyUrlFor(code) {
  * Generate a report. `devices` are device rows (id, mqtt_device_id, name, serial_number, model).
  * @returns {Promise<{ buffer: Buffer, code: string, hash: string, source: string, bucketKey: string, empty: boolean }>}
  */
-async function generate({ query, kind, tenant, site, devices, channels, from, to, bucketKey, lang, rawRetentionDays, generatedBy, now = new Date() }) {
+async function generate({ query, kind, tenant, site, devices, channels, from, to, bucketKey, lang, rawRetentionDays, generatedBy, scheduleId = null, now = new Date() }) {
   const plan = planSource({ from, to, rawRetentionDays, bucketKey, now });
   const collected = [];
   for (const device of devices) {
@@ -405,12 +410,14 @@ async function generate({ query, kind, tenant, site, devices, channels, from, to
   const buffer = await render(docDefinition);
   await registerExport({
     query, code, kind, tenantId: tenant.id, deviceId: kind === 'device' ? devices[0].mqtt_device_id : null,
-    siteId: site ? site.id : null, from, to, bucketKey: plan.bucketKey, source: plan.source, lang, hash, generatedBy,
+    siteId: site ? site.id : null, from, to, bucketKey: plan.bucketKey, source: plan.source, lang, hash, generatedBy, scheduleId,
   });
   return { buffer, code, hash, source: plan.source, bucketKey: plan.bucketKey, empty: false };
 }
 
 module.exports = {
   generate, strings, pickLang, planSource, fmtCode, localFmt, canonicalData, sha256,
+  // shared with services/period-reports.js (plan epic 2.7)
+  render, registerExport, archivePdf, verifyUrlFor, newCode,
   BUCKETS, RAW_MAX_DAYS, HOURLY_MAX_DAYS, HOURLY_RETENTION_DAYS,
 };

@@ -872,6 +872,100 @@ const BILL = {
   },
 };
 
+// ── Scheduled reports (plan epic 2.7) ─────────────────────
+
+const REPORTS = {
+  uk: {
+    types:      { haccp: 'Звіт HACCP', alarms: 'Звіт про аварії', energy: 'Звіт про енергоспоживання' },
+    cadence:    { weekly: 'щотижневий', monthly: 'щомісячний' },
+    subject:    (typeName, org, period) => `${typeName} — «${org}», ${period}`,
+    intro:      (cadence, org, period) => `Плановий ${cadence} звіт для організації «${escHtml(org)}» за період ${period}. PDF — у вкладенні.`,
+    org:        'Організація',
+    period:     'Період',
+    sites:      'Точки',
+    site_ok:    (name, code) => `${escHtml(name)} — код перевірки ${code}`,
+    site_empty: (name) => `${escHtml(name)} — даних за період немає`,
+    site_error: (name) => `${escHtml(name)} — не вдалося сформувати`,
+    part:       (i, n) => `Частина ${i} з ${n}`,
+    cta:        'Відкрити архів звітів',
+    note:       'Кожен звіт має код перевірки та SHA-256 у нижньому колонтитулі — інспектор може звірити їх на публічній сторінці перевірки. Розклад і одержувачів змінюють на сторінці «Звіти».',
+  },
+  en: {
+    types:      { haccp: 'HACCP report', alarms: 'Alarm report', energy: 'Energy report' },
+    cadence:    { weekly: 'weekly', monthly: 'monthly' },
+    subject:    (typeName, org, period) => `${typeName} — "${org}", ${period}`,
+    intro:      (cadence, org, period) => `The scheduled ${cadence} report for "${escHtml(org)}" covering ${period}. The PDF is attached.`,
+    org:        'Organisation',
+    period:     'Period',
+    sites:      'Sites',
+    site_ok:    (name, code) => `${escHtml(name)} — verification code ${code}`,
+    site_empty: (name) => `${escHtml(name)} — no data for the period`,
+    site_error: (name) => `${escHtml(name)} — could not be generated`,
+    part:       (i, n) => `Part ${i} of ${n}`,
+    cta:        'Open the report archive',
+    note:       'Every report carries a verification code and the SHA-256 of its data in the footer — an inspector can check them on the public verification page. The schedule and recipients are managed on the Reports page.',
+  },
+  pl: {
+    types:      { haccp: 'Raport HACCP', alarms: 'Raport alarmów', energy: 'Raport zużycia energii' },
+    cadence:    { weekly: 'tygodniowy', monthly: 'miesięczny' },
+    subject:    (typeName, org, period) => `${typeName} — „${org}”, ${period}`,
+    intro:      (cadence, org, period) => `Planowy raport ${cadence} dla organizacji „${escHtml(org)}” za okres ${period}. PDF w załączniku.`,
+    org:        'Organizacja',
+    period:     'Okres',
+    sites:      'Lokalizacje',
+    site_ok:    (name, code) => `${escHtml(name)} — kod weryfikacyjny ${code}`,
+    site_empty: (name) => `${escHtml(name)} — brak danych za okres`,
+    site_error: (name) => `${escHtml(name)} — nie udało się wygenerować`,
+    part:       (i, n) => `Część ${i} z ${n}`,
+    cta:        'Otwórz archiwum raportów',
+    note:       'Każdy raport ma kod weryfikacyjny i SHA-256 danych w stopce — inspektor może je sprawdzić na publicznej stronie weryfikacji. Harmonogram i odbiorców zmienia się na stronie „Raporty”.',
+  },
+  de: {
+    types:      { haccp: 'HACCP-Bericht', alarms: 'Alarmbericht', energy: 'Energiebericht' },
+    cadence:    { weekly: 'wöchentliche', monthly: 'monatliche' },
+    subject:    (typeName, org, period) => `${typeName} — „${org}“, ${period}`,
+    intro:      (cadence, org, period) => `Der geplante ${cadence} Bericht für „${escHtml(org)}“ für den Zeitraum ${period}. Das PDF liegt bei.`,
+    org:        'Organisation',
+    period:     'Zeitraum',
+    sites:      'Standorte',
+    site_ok:    (name, code) => `${escHtml(name)} — Prüfcode ${code}`,
+    site_empty: (name) => `${escHtml(name)} — keine Daten für den Zeitraum`,
+    site_error: (name) => `${escHtml(name)} — konnte nicht erstellt werden`,
+    part:       (i, n) => `Teil ${i} von ${n}`,
+    cta:        'Berichtsarchiv öffnen',
+    note:       'Jeder Bericht trägt Prüfcode und SHA-256 seiner Daten in der Fußzeile — ein Prüfer kann sie auf der öffentlichen Prüfseite abgleichen. Zeitplan und Empfänger werden auf der Seite „Berichte“ verwaltet.',
+  },
+};
+
+/**
+ * A scheduled report with its PDFs attached (plan epic 2.7). `sites` lists
+ * every site of the run — with data, without, or failed — so a missing
+ * attachment is explained. Resolves false when the channel is not configured.
+ */
+async function sendScheduledReport({ to, lang, tenantName, type, cadence, periodFrom, periodTo, tz, sites, attachments, part = 1, parts = 1, link }) {
+  if (!resend) return false;
+  const l = txLang(lang);
+  const L = REPORTS[l];
+  const { localFmt } = require('./haccp-report');
+  const lastDay = new Date(new Date(periodTo).getTime() - 1);
+  const period = `${localFmt(periodFrom, tz, false)} – ${localFmt(lastDay, tz, false)}`;
+  const typeName = L.types[type] || type;
+  const siteLines = (sites || []).map(s => s.error ? L.site_error(s.name) : s.empty ? L.site_empty(s.name) : L.site_ok(s.name, s.code)).join('<br>');
+  const rows =
+    infoRow(L.org, escHtml(tenantName)) +
+    infoRow(L.period, escHtml(period)) +
+    (siteLines ? infoRow(L.sites, siteLines) : '') +
+    (parts > 1 ? infoRow('', L.part(part, parts)) : '');
+  const html = wrapHtml(txBody(typeName, L.intro(L.cadence[cadence] || cadence, tenantName, period), rows, ctaButton(link, L.cta), L.note, ''), l);
+  const subject = `${L.subject(typeName, tenantName, period)}${parts > 1 ? ` (${part}/${parts})` : ''}`;
+  const { error } = await resend.emails.send({
+    from: fromAddress, to, subject, html,
+    attachments: attachments && attachments.length ? attachments : undefined,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
 function spaLink(path) {
   return `${String(appUrl || '').replace(/\/+$/, '')}/#/${path}`;
 }
@@ -949,9 +1043,9 @@ async function sendPlanRequest({ to, request }) {
 
 module.exports = {
   init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest,
-  sendInvoice, sendDunning, sendPlanRequest,
+  sendInvoice, sendDunning, sendPlanRequest, sendScheduledReport,
   sendEmailVerification, sendRegistrationApproved, sendTrialEnded, sendRegistrationNotice,
   // scripts/check-locales.js and test/notification-templates.test.js
-  __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL },
+  __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL, REPORTS },
   __test: { buildEmail },
 };
