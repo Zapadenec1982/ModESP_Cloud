@@ -38,7 +38,9 @@ function createAuditMiddleware(logger) {
         const auditCtx = req.auditContext || {};
 
         const record = {
-          tenant_id: user.tenantId || req.tenantId || null,
+          // A route may file the record under another organisation (an
+          // impersonation starts in the target's audit log, plan epic 2.13)
+          tenant_id: auditCtx.tenantId || user.tenantId || req.tenantId || null,
           user_id: user.id || null,
           user_email: user.email || tryExtractEmail(req),
           user_role: user.role || null,
@@ -53,6 +55,9 @@ function createAuditMiddleware(logger) {
           changes: auditCtx.changes || null,
           error: res.statusCode >= 400 ? (res.statusMessage || null) : null,
           duration_ms: duration,
+          // The support engineer behind an impersonated request (plan epic 2.13)
+          impersonator_id:    user.impersonator ? user.impersonator.id    : null,
+          impersonator_email: user.impersonator ? user.impersonator.email : null,
         };
 
         // Fire-and-forget INSERT
@@ -134,8 +139,9 @@ async function insertAuditLog(record) {
   const sql = `
     INSERT INTO audit_log (
       tenant_id, user_id, user_email, user_role, action, entity_type, entity_id,
-      method, endpoint, status_code, ip, user_agent, changes, error, duration_ms
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      method, endpoint, status_code, ip, user_agent, changes, error, duration_ms,
+      impersonator_id, impersonator_email
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
   `;
   const vals = [
     record.tenant_id, record.user_id, record.user_email, record.user_role,
@@ -144,6 +150,7 @@ async function insertAuditLog(record) {
     record.ip, record.user_agent,
     record.changes ? JSON.stringify(record.changes) : null,
     record.error, record.duration_ms,
+    record.impersonator_id, record.impersonator_email,
   ];
   await db.query(sql, vals);
 }

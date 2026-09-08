@@ -2955,6 +2955,97 @@ duration_ms, created_at, delivered_at, payload`.
 
 ---
 
+## Інструменти підтримки (plan epic 2.13)
+
+Чотири речі, без яких підтримка клієнтів робиться «по телефону наосліп»: вхід superadmin'а від імені
+користувача, журнал аудиту для адміністратора організації з експортом CSV, картка організації та форма
+«Підтримка» в сайдбарі.
+
+### `POST /users/:id/impersonate`
+Superadmin. Тіло: `{ "reason": "…" (3–500 символів, обов'язково), "tenant_id"?: uuid }` — організація, в яку
+входити (типово домашня організація користувача; користувач має бути її членом). Відповідь `201`:
+```json
+{ "data": { "access_token": "…", "expires_at": "2026-09-08T23:20:00Z",
+            "user": { "id": "…", "email": "tech@…", "role": "technician", "locale": "uk", "timezone": null },
+            "tenant": { "id": "…", "name": "Морозко", "slug": "morozko", "status": "active", "plan": "partner", "features": [ … ] },
+            "impersonator": { "id": "…", "email": "super@…" }, "reason": "…" } }
+```
+Це **не сесія**: refresh-токена і cookie немає, токен живе `IMPERSONATION_TTL_MIN` (типово 60, 5–240) хвилин
+і не продовжується; у JWT є claim `imp: { id, email }`. Роль у токені — та, яку користувач має в цій організації.
+Помилки: `400 cannot_impersonate_superadmin`, `400 user_inactive`, `404 not_a_member`, `409 tenant_suspended`.
+
+Запис `user.impersonate` лягає в `audit_log` **організації користувача** (не superadmin'а) з `changes`
+`{ email, role, tenant_id, tenant_name, reason, expires_at }`, тож її адміністратор бачить, хто з підтримки
+заходив, коли і навіщо. Кожна подальша дія за таким токеном записується з `user_email` користувача та
+`impersonator_id`/`impersonator_email` інженера.
+
+Заборонена поверхня за токеном імперсонації — `403 impersonation_scope`: усі записи в `/auth/*` (refresh, logout,
+switch-tenant, MFA, сесії), `PUT /profile/password`, `/profile/telegram-link`, `/profile/push-subscription`,
+записи в `/api-keys` і `/webhooks`, `GET /imports/:id/credentials.csv`, `/users/:id/impersonate|password-reset|sessions|mfa`,
+`/tenants/:id/export*`. Читання цих ресурсів лишається відкритим.
+
+### `GET /audit-log`
+Тепер `admin` і `superadmin` (раніше лише superadmin). Адміністратор бачить **лише свою організацію** —
+параметр `tenant_id` для нього ігнорується; superadmin бачить усі організації і може звузити `tenant_id`.
+Фільтри: `entity_type`, `action`, `user_id`, `user_email` (підрядок без урахування регістру), `impersonated=true|false`
+(лише дії підтримки від імені користувачів / без них), `status=ok|error` (2xx–3xx / 4xx–5xx), `from`, `to`
+(ISO 8601 зі зсувом), `page`, `limit` (≤ 200). Відповідь: `{ data: [...], meta: { total, page, limit, scope: "tenant"|"platform" } }`;
+у рядках додано `impersonator_id`, `impersonator_email`.
+
+### `GET /audit-log/facets`
+`{ data: { entity_types: [...], actions: [...] } }` — значення для випадних списків за останні 90 днів у межах області
+(superadmin: `?tenant_id=`).
+
+### `GET /audit-log/export.csv`
+Ті самі фільтри без пагінації, до 50 000 найновіших рядків. `text/csv; charset=utf-8` з BOM, заголовок
+`X-Row-Count`. Колонки: `created_at, user_email, user_role, impersonator_email, action, entity_type, entity_id,
+method, endpoint, status_code, ip, changes, error, duration_ms`. Сам експорт записується в аудит як
+`export.audit_csv` із застосованими фільтрами в `changes`.
+
+### `GET /tenants/:id/card`
+Superadmin. Усе, що варто знати перед відповіддю клієнту, одним запитом:
+```json
+{ "data": {
+  "tenant":   { … як GET /tenants/:id … },
+  "usage":    [ { "day": "2026-09-07", "active_devices": 62, "sites": 13, "users": 8, "telemetry_rows": 1002000, "notifications_sent": 3 }, … ],
+  "latest":   { "devices_active": 62, "devices_online": 60, "devices_seen_24h": 61, "last_seen_at": "…", "firmware_versions": 2,
+                "alarms_active": 8, "alarms_critical": 1, "alarms_7d": 17, "last_alarm_at": "…",
+                "members": 8, "members_active": 8, "members_mfa": 2, "members_telegram": 4, "last_login_at": "…",
+                "last_activity_at": "…", "last_support_at": null, "actions_7d": 14, "errors_7d": 1,
+                "work_orders_open": 2, "hints_open": 1, "last_import_at": "…", "last_report_at": "…" },
+  "channels": { "telegram_subscribers": 0, "fcm_subscribers": 0, "push_subscriptions": 3, "email_recipients": 5, "users_telegram": 4,
+                "webhooks_enabled": 1, "webhooks_disabled": 0, "api_keys": 1, "report_schedules": 2,
+                "last_notification_at": "…", "notifications_7d": 12, "notifications_failed_7d": 0 },
+  "users":    [ { "id": "…", "email": "…", "role": "technician", "active": true, "last_login": "…", "locale": "uk", "mfa": false, "telegram": true, "is_home": true } ],
+  "recent_audit":     [ { "id": 1, "created_at": "…", "user_email": "…", "user_role": "admin", "impersonator_email": null, "action": "…", "entity_type": "…", "entity_id": "…", "method": "POST", "status_code": 201 } ],
+  "support_requests": [ { "id": "…", "created_at": "…", "user_email": "…", "category": "problem", "subject": "…", "status": "new" } ],
+  "billing":  { "open_invoices": 0, "overdue_invoices": 0, "open_amount": 0, "last_invoice_at": "…", "last_paid_at": "…" } } }
+```
+`usage` — 60 днів `usage_snapshots`; `users` — до 200 членів за `user_tenants` без superadmin'ів.
+
+### `GET /support/info`
+Будь-яка роль. `{ data: { email, telegram, docs_url } }` з `SUPPORT_EMAIL` (запасні варіанти —
+`EMAIL_REPLY_TO`, `REGISTRATION_NOTIFY_EMAIL`, `PILOT_REQUEST_EMAIL`), `SUPPORT_TELEGRAM`, `SUPPORT_DOCS_URL`.
+
+### `POST /support/requests`
+Будь-яка роль, і в закритій організації теж (виняток із `423`). Ліміт 10 на годину на користувача. Тіло:
+`{ category?: question|problem|billing|feature|other, subject (3–160), message (10–5000),
+context?: { page?, device_id?, user_agent?, app_version?, locale?, timezone? } }` (інших ключів у `context` не буває — `400`).
+Звернення спочатку зберігається (`support_requests`), потім надсилається на адресу підтримки листом
+із `Reply-To` автора; `emailed: false` без налаштованої пошти — звернення все одно є в системі.
+Від імені користувача (імперсонація) `context.impersonated_by` заповнюється автоматично.
+Відповідь `201 { data: { id, created_at, status: "new", category, subject, emailed } }`; аудит `support.request`.
+
+### `GET /support/requests`
+Superadmin — усі організації (`?status=`, `?tenant_id=`, `?limit=`) і `meta.open` (нових + у роботі);
+адміністратор — своя організація; інші ролі — лише власні звернення. Рядок: `id, tenant_id, tenant_name, tenant_slug,
+user_id, user_email, user_role, category, subject, message, context, status, emailed_at, closed_at, created_at, updated_at`.
+
+### `PATCH /support/requests/:id`
+Superadmin. `{ status: new|open|closed }`; `closed` ставить `closed_at`. Аудит `support.status`.
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Авторизація, пристрої, телеметрія, аварії, користувачі, OTA, WebSocket.
@@ -2985,3 +3076,4 @@ duration_ms, created_at, delivered_at, payload`.
 - 2026-09-08 — OpenAPI 3.1 інтеграційної поверхні: `GET /api/docs` (Swagger UI), `GET /api/docs/openapi.json`, `docs/openapi.json` з перевіркою в CI (`npm run openapi:check`).
 - 2026-09-08 — Прошивки (epic 2.8): платформенна бібліотека (`global`, `visibility`, `PATCH /firmware/:id`), перевірки перед OTA (`409 precheck_failed`, `force`), `GET/POST /ota/rollback`, відкладання в розгортанні, `paused_reason`, `acked_failures`, `kind/forced/actor` у завданнях, безпечне `DELETE /firmware/:id`, вікно оновлень у `tenants/:id/settings` (`ota_window_from/to`).
 - 2026-09-08 — CSV-імпорт мережі (epic 2.12): `POST /devices/pending/batch` → `202` із задачею `imports`, `GET /devices/pending/template.csv`, `GET /imports`, `GET /imports/:id`, `GET /imports/:id/credentials.csv` (один раз), `POST /imports/:id/cancel`; до 2 000 рядків, перевірка плану, геокодування нових точок.
+- 2026-09-08 — Інструменти підтримки (epic 2.13): `POST /users/:id/impersonate` (токен від імені користувача з claim `imp`, `IMPERSONATION_TTL_MIN`, `403 impersonation_scope`, запис в аудит організації користувача), `GET /audit-log` для адміністратора (лише своя організація; фільтри `user_email`, `impersonated`, `status`; `meta.scope`), `GET /audit-log/facets`, `GET /audit-log/export.csv`, `GET /tenants/:id/card`, `GET /support/info`, `GET/POST /support/requests`, `PATCH /support/requests/:id`; колонки `impersonator_id`/`impersonator_email` в `audit_log`.

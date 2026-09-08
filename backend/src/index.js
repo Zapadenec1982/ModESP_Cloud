@@ -188,6 +188,16 @@ const externalLimiter = rateLimit({
   message: { error: 'too_many_requests', message: 'Too many requests, try again later', status: 429 },
 });
 
+// Support form (plan epic 2.13): a person writes a few requests a day; a loop does not.
+const supportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: req => req.user?.id || rateLimit.ipKeyGenerator(req.ip),
+  message: { error: 'too_many_requests', message: 'Too many support requests, try again later', status: 429 },
+});
+
 // ── Health check (no auth / no tenant; /details authenticates itself) ──
 app.use('/api/health', require('./routes/health'));
 
@@ -466,6 +476,9 @@ if (AUTH_ENABLED) {
   // Own profile (any authenticated role) — must stay ABOVE the admin-only
   // /api/users mount, which would 403 a technician editing their home base.
   app.use('/api/profile',  require('./routes/profile'));
+  // Support requests (plan epic 2.13): any role may write to support
+  app.post('/api/support/requests', supportLimiter);
+  app.use('/api/support',  require('./routes/support'));
 
   // Partner plan (plan epic 2.5): the caller's organisation must carry the
   // `partner` feature; the router checks that and the admin role itself.
@@ -487,7 +500,8 @@ if (AUTH_ENABLED) {
   app.use('/api/users',    authorize('admin'), require('./routes/users'));
   app.use('/api/firmware', require('./routes/firmware'));
   app.use('/api/ota',      require('./routes/ota'));
-  app.use('/api/audit-log', requireSuperadmin, require('./routes/audit'));
+  // Audit log (plan epic 2.13): an organisation's admin reads their own trail, a superadmin every organisation's
+  app.use('/api/audit-log', authorize('admin'), require('./routes/audit'));
   app.use('/api/pilot-requests', requireSuperadmin, require('./routes/pilot-requests'));
 } else {
   // Dev fallback: tenant from header

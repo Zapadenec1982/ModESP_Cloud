@@ -9,6 +9,7 @@ const emailSvc    = require('../services/email');
 const { isUuidFormat } = require('../lib/ids');
 const { passwordSchema } = require('../lib/password-policy');
 const planMw = require('../middleware/plan');
+const impersonation = require('../services/impersonation');
 
 const router = Router();
 
@@ -52,6 +53,11 @@ const deviceAccessSchema = z.object({
 
 const siteAccessSchema = z.object({
   site_id: z.string().uuid(),
+});
+
+const impersonateSchema = z.object({
+  tenant_id: z.string().uuid().optional(),           // default: the user's home organisation
+  reason:    z.string().trim().min(3).max(500),      // recorded in the audit log of the organisation
 });
 
 // ── GET /users — list (admin: tenant-scoped, superadmin: all) ─
@@ -1062,6 +1068,74 @@ router.delete('/:id/mfa', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Reset user MFA failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to reset MFA', status: 500 });
+  }
+});
+
+// ── POST /users/:id/impersonate — sign in as the user (superadmin, plan epic 2.13) ──
+//
+// Answers a short-lived access token for the user inside one of their
+// organisations, with the role they hold there. Not a session: no refresh
+// token, no cookie. The record lands in the audit log of THAT organisation,
+// so its administrator sees who from support was inside, when and why.
+router.post('/:id/impersonate', async (req, res) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'forbidden', message: 'Superadmin access required', status: 403 });
+  }
+  const parsed = impersonateSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const { rows } = await db.query(
+      'SELECT id, email, role, active, locale, timezone, tenant_id FROM users WHERE id = $1', [req.params.id]);
+    const target = rows[0];
+    if (!target) return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    if (target.role === 'superadmin') {
+      return res.status(400).json({ error: 'cannot_impersonate_superadmin', message: 'A superadmin cannot be impersonated', status: 400 });
+    }
+    if (!target.active) {
+      return res.status(400).json({ error: 'user_inactive', message: 'The account is disabled', status: 400 });
+    }
+
+    const tenantId = parsed.data.tenant_id || target.tenant_id;
+    const { rows: tRows } = await db.query(
+      `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at, t.closed_at, t.purged_at,
+              COALESCE(p.features, '[]'::jsonb) AS features,
+              COALESCE(ut.role, u.role) AS role
+         FROM tenants t
+         JOIN users u ON u.id = $1
+         LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = t.id
+         LEFT JOIN plan_limits p ON p.plan = t.plan
+        WHERE t.id = $2 AND (u.tenant_id = t.id OR ut.user_id IS NOT NULL)`,
+      [target.id, tenantId]);
+    const tenant = tRows[0];
+    if (!tenant) return res.status(404).json({ error: 'not_a_member', message: 'The user is not a member of this organisation', status: 404 });
+    if (!['trial', 'active', 'past_due', 'closed'].includes(tenant.status)) {
+      return res.status(409).json({ error: 'tenant_suspended', message: 'This organisation is suspended', status: 409 });
+    }
+
+    const { role, ...tenantSummary } = tenant;
+    const { token, expiresAt } = impersonation.issue({
+      target, tenantId, role, impersonator: { id: req.user.id, email: req.user.email },
+    });
+
+    req.auditContext = {
+      action: 'user.impersonate', entityId: target.id, tenantId,
+      changes: { email: target.email, role, tenant_id: tenantId, tenant_name: tenant.name, reason: parsed.data.reason, expires_at: expiresAt.toISOString() },
+    };
+    res.status(201).json({
+      data: {
+        access_token: token,
+        expires_at:   expiresAt.toISOString(),
+        user:         { id: target.id, email: target.email, role, locale: target.locale || null, timezone: target.timezone || null },
+        tenant:       tenantSummary,
+        impersonator: { id: req.user.id, email: req.user.email },
+        reason:       parsed.data.reason,
+      },
+    });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Impersonate failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to sign in as the user', status: 500 });
   }
 });
 

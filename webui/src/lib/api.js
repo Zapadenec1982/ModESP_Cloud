@@ -3,7 +3,7 @@
  * In dev mode, Vite proxies /api → localhost:3000.
  */
 
-import { authUser, authEnabled, currentTenant, availableTenants, navigate } from './stores.js';
+import { authUser, authEnabled, currentTenant, availableTenants, impersonation, navigate } from './stores.js';
 import { get } from 'svelte/store';
 import { setLocale, t } from './i18n.js';
 import { toast } from './toast.js';
@@ -128,7 +128,97 @@ function setSession(access, csrf) {
 }
 
 export function getAccessToken() {
-  return accessToken;
+  return activeToken();
+}
+
+// ── Support impersonation (plan epic 2.13) ───────────────
+//
+// A superadmin signed in as a user holds a second, short-lived token. It is
+// used for every API call instead of the own access token, lives in
+// sessionStorage (this tab only, survives a reload) and never touches the
+// cookie: the engineer's own session keeps refreshing underneath, so leaving
+// impersonation is one reload away. It cannot be refreshed — at `expires_at`
+// the page returns to the engineer's own account by itself.
+
+const IMP_KEY = 'modesp_imp';
+const IMP_ENDED_KEY = 'modesp_imp_ended';
+let impersonationToken = null;
+let impersonationTimer = null;
+
+function activeToken() {
+  return impersonationToken || accessToken;
+}
+
+function readStoredImpersonation() {
+  try {
+    const raw = sessionStorage.getItem(IMP_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec?.access_token || !rec.expires_at || new Date(rec.expires_at).getTime() <= Date.now() + 5000) {
+      sessionStorage.removeItem(IMP_KEY);
+      return null;
+    }
+    return rec;
+  } catch {
+    return null;
+  }
+}
+
+function applyImpersonation(rec) {
+  impersonationToken = rec.access_token;
+  // Not applyUser(): the interface stays in the engineer's language
+  authUser.set({ id: rec.user.id, email: rec.user.email, role: rec.user.role, locale: rec.user.locale || null, timezone: rec.user.timezone || null });
+  currentTenant.set(rec.tenant);
+  availableTenants.set([rec.tenant]);
+  impersonation.set({ user: rec.user, tenant: rec.tenant, impersonator: rec.impersonator, expires_at: rec.expires_at, reason: rec.reason || '' });
+  clearTimeout(impersonationTimer);
+  impersonationTimer = setTimeout(() => endImpersonation('expired'), Math.max(1000, new Date(rec.expires_at).getTime() - Date.now()));
+}
+
+/** Called once the own session is restored: pick a stored impersonation back up if it is still alive. */
+function resumeImpersonation() {
+  const rec = readStoredImpersonation();
+  if (rec) applyImpersonation(rec);
+  return !!rec;
+}
+
+/** POST /users/:id/impersonate, then reload: every store and socket is rebuilt from the stored record. */
+export async function startImpersonation(userId, { tenant_id, reason } = {}) {
+  const data = await request(`/users/${userId}/impersonate`, {
+    method: 'POST', body: JSON.stringify({ tenant_id: tenant_id || undefined, reason }),
+  });
+  try { sessionStorage.setItem(IMP_KEY, JSON.stringify(data)); } catch { /* private mode: the token is lost on reload */ }
+  window.location.hash = '#/';
+  window.location.reload();
+  return data;
+}
+
+/** Back to the engineer's own account (their session never left the cookie). */
+export function endImpersonation(why = 'manual') {
+  const current = get(impersonation);
+  if (!impersonationToken && !current) return;
+  clearTimeout(impersonationTimer);
+  impersonationToken = null;
+  try { sessionStorage.removeItem(IMP_KEY); sessionStorage.setItem(IMP_ENDED_KEY, why); } catch { /* ignore */ }
+  const tenantId = current?.tenant?.id;
+  impersonation.set(null);
+  window.location.hash = tenantId ? `#/tenants/${tenantId}` : '#/tenants';
+  window.location.reload();
+}
+
+/** Why the last impersonation ended — read once by the page that loads after the reload. */
+export function takeImpersonationEndReason() {
+  try {
+    const v = sessionStorage.getItem(IMP_ENDED_KEY);
+    if (v) sessionStorage.removeItem(IMP_ENDED_KEY);
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+export function isImpersonating() {
+  return !!impersonationToken;
 }
 
 // ── Core request helper ─────────────────────────────────
@@ -142,12 +232,19 @@ async function request(path, options = {}) {
     await tryRefresh();
   }
 
-  // Inject Bearer token if available
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+  // Inject Bearer token if available (the impersonation token wins while it lives)
+  const token = activeToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   let res = await fetch(url, { ...options, headers });
+
+  // An impersonation token cannot be refreshed: a 401 means it is over
+  if (res.status === 401 && impersonationToken) {
+    endImpersonation('expired');
+    throw Object.assign(new Error('Impersonation ended'), { status: 401 });
+  }
 
   // Auto-refresh on 401 (safety net — proactive refresh should prevent this)
   if (res.status === 401 && hasSession() && !options._noRetry) {
@@ -172,11 +269,18 @@ async function request(path, options = {}) {
     err.body = body;
     if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
     if (res.status === 423 && !options.quiet) notifyReadOnly();
+    if (res.status === 403 && body.error === 'impersonation_scope' && !options.quiet) notifyImpersonationScope();
     throw err;
   }
 
   const json = await res.json();
   return json.data;
+}
+
+/** 403 impersonation_scope: support signed in as the user may not do this (plan epic 2.13). */
+function notifyImpersonationScope() {
+  try { toast.warning(get(t)('impersonation.not_allowed'), 6000); }
+  catch { toast.warning('Not available while signed in as another user', 6000); }
 }
 
 /**
@@ -206,11 +310,17 @@ async function requestFull(path, options = {}) {
   if (!accessToken && hasSession() && !options._noRetry) {
     await tryRefresh();
   }
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+  const token = activeToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   let res = await fetch(url, { ...options, headers });
+
+  if (res.status === 401 && impersonationToken) {
+    endImpersonation('expired');
+    throw Object.assign(new Error('Impersonation ended'), { status: 401 });
+  }
 
   if (res.status === 401 && hasSession() && !options._noRetry) {
     const refreshed = await tryRefresh();
@@ -353,8 +463,11 @@ async function tryRefresh() {
 
       const { data } = await res.json();
       setSession(data.access_token, data.csrf_token);
-      if (data.tenants) availableTenants.set(data.tenants);
-      if (data.role) authUser.update(u => u ? { ...u, role: data.role } : u);
+      // While signed in as a user the stores describe that user, not the engineer
+      if (!impersonationToken) {
+        if (data.tenants) availableTenants.set(data.tenants);
+        if (data.role) authUser.update(u => u ? { ...u, role: data.role } : u);
+      }
       return true;
     } catch {
       return false;
@@ -462,6 +575,10 @@ export function resendVerification(email, lang) {
 
 function clearAuth() {
   clearTimeout(refreshTimer);
+  clearTimeout(impersonationTimer);
+  impersonationToken = null;
+  try { sessionStorage.removeItem(IMP_KEY); } catch { /* ignore */ }
+  impersonation.set(null);
   setSession(null, null);
   authUser.set(null);
   currentTenant.set(null);
@@ -498,6 +615,8 @@ export async function restoreSession() {
         if (active) currentTenant.set(active);
       }
     }
+    // A superadmin who reloaded while signed in as a user stays that user (plan epic 2.13)
+    resumeImpersonation();
     return true;
   } catch {
     clearAuth();
@@ -1354,6 +1473,49 @@ export async function getAuditLog(params = {}) {
   return requestFull(`/audit-log${query ? '?' + query : ''}`);
 }
 
+/** GET /audit-log/facets → { entity_types, actions } of the scope (last 90 days). */
+export function getAuditFacets(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  const query = qs.toString();
+  return request(`/audit-log/facets${query ? '?' + query : ''}`);
+}
+
+/** GET /audit-log/export.csv — the same filters as the list, as a file. */
+export function exportAuditCsv(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') qs.set(k, v);
+  const query = qs.toString();
+  return downloadFile(`/audit-log/export.csv${query ? '?' + query : ''}`, `audit_${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+// ── Support tools (plan epic 2.13) ───────────────────────
+
+/** GET /tenants/:id/card (superadmin): organisation, usage, latest data, channels, members, recent records. */
+export function getTenantCard(id) {
+  return request(`/tenants/${id}/card`);
+}
+
+export function getSupportInfo() {
+  return request('/support/info');
+}
+
+export function createSupportRequest(body) {
+  return request('/support/requests', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** GET /support/requests → { data, meta } — own, the organisation's or (superadmin) everyone's. */
+export function getSupportRequests(params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+  const query = qs.toString();
+  return requestFull(`/support/requests${query ? '?' + query : ''}`);
+}
+
+export function updateSupportRequest(id, status) {
+  return request(`/support/requests/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+}
+
 // ── Data Export (CSV / PDF) ──────────────────────────────
 
 /**
@@ -1361,9 +1523,10 @@ export async function getAuditLog(params = {}) {
  * Resolves with the response headers so callers can surface report metadata
  * (`X-Report-Code`, `X-Report-Source`) that the server exposes on HACCP PDFs.
  */
-async function downloadFile(path, filename) {
+async function downloadFile(path, filename, options = {}) {
   const headers = {};
-  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+  const token = activeToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, { headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

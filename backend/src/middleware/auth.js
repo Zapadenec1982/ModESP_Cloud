@@ -2,6 +2,7 @@
 
 const { verifyAccessToken } = require('../services/auth');
 const apiKeys = require('../services/api-keys');
+const impersonation = require('../services/impersonation');
 
 /**
  * JWT authentication middleware.
@@ -61,9 +62,10 @@ function authenticate(req, res, next) {
       role:     payload.role,
       tenantId: payload.tenantId,
       sid:      payload.sid || null,   // the session the token belongs to (plan epic 2.9)
+      // A support engineer signed in as this user (plan epic 2.13)
+      impersonator: payload.imp ? { id: payload.imp.id, email: payload.imp.email } : null,
     };
     req.tenantId = payload.tenantId;
-    next();
   } catch (err) {
     const message = err.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token';
     return res.status(401).json({
@@ -72,6 +74,17 @@ function authenticate(req, res, next) {
       status: 401,
     });
   }
+
+  // An impersonated session sees and fixes, but never obtains secrets, changes
+  // the account's own security or takes data out
+  if (req.user.impersonator && impersonation.isDenied(req.method, req.originalUrl || req.url)) {
+    return res.status(403).json({
+      error: 'impersonation_scope',
+      message: 'This action is not available while signed in as another user',
+      status: 403,
+    });
+  }
+  next();
 }
 
 /**

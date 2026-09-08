@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-846-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-863-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 846 tests across 71 test files
+│   ├── test/                        # 863 tests across 72 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -249,12 +249,13 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**846 integration tests** across 71 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**863 integration tests** across 72 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
 | Auth & JWT | ~15 | Login, logout, refresh, RBAC roles, token rejection |
 | Organisation lifecycle | 7 | closed_at trigger, read-only closed organisation (423), data export zip with CSV/PDF and TTL, purge sweep, audit-log pseudonymisation, bulk delete via the shared procedure |
+| Support tools | 16 | Impersonation token, role and audit trail, denied surface, guards, org-scoped audit log with filters and CSV export, tenant card, support requests with e-mail and status flow, pseudonymisation of the impersonator |
 | Scheduled reports | 10 | Local-time periods, schedule CRUD and plan gate, run-now with archived PDF and e-mail, site-scoped archive, due sweep idempotency, purge |
 | Sessions & MFA | 18 | httpOnly refresh cookie + CSRF, single-use tokens with reuse detection, session list/revoke, TOTP setup, backup codes, replay guard |
 | Tenant Isolation | ~12 | Cross-tenant data leak prevention |

@@ -353,6 +353,10 @@
             <span class="cell cell-created">{formatDate(tenant.created_at)}</span>
             <span class="cell cell-actions">
               {#if $isSuperAdmin && tenant.id !== SYSTEM_TENANT_ID}
+                <!-- Support card (plan epic 2.13) -->
+                <a class="icon-btn" href="#/tenants/{tenant.id}" title={$t('tenants.open_card')} aria-label="{$t('tenants.open_card')} {tenant.name}">
+                  <Icon name="info" size={15} />
+                </a>
                 <button class="icon-btn" title={$t('common.edit')} on:click={() => openEdit(tenant)}>
                   <Icon name="edit" size={15} />
                 </button>

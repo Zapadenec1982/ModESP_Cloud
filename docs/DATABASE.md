@@ -1107,6 +1107,37 @@ CREATE INDEX idx_imports_active ON imports (status) WHERE status IN ('pending','
 
 ---
 
+## Інструменти підтримки (migration 045)
+
+```sql
+ALTER TABLE audit_log ADD COLUMN impersonator_id UUID;            -- superadmin, що діяв від імені користувача
+ALTER TABLE audit_log ADD COLUMN impersonator_email VARCHAR(256);
+CREATE INDEX idx_audit_log_impersonated ON audit_log (tenant_id, created_at DESC) WHERE impersonator_id IS NOT NULL;
+
+CREATE TABLE support_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_email VARCHAR(256) NOT NULL, user_role VARCHAR(16),
+  category VARCHAR(16) NOT NULL CHECK (category IN ('question','problem','billing','feature','other')),
+  subject VARCHAR(160) NOT NULL, message TEXT NOT NULL,
+  context JSONB,                    -- сторінка, контролер, браузер, версія — що додала форма
+  status VARCHAR(8) NOT NULL DEFAULT 'new' CHECK (status IN ('new','open','closed')),
+  emailed_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_support_requests_tenant ON support_requests (tenant_id, created_at DESC);
+CREATE INDEX idx_support_requests_status ON support_requests (status, created_at DESC);
+```
+
+> Імперсонація не має рядка в `refresh_tokens`: це короткоживучий access-токен із claim `imp`, а не сесія.
+> Слід лишається в `audit_log`: запис `user.impersonate` в організації користувача та `impersonator_*` на
+> кожній дії за таким токеном. `audit_log_immutable()` дозволяє під час псевдонімізації обнуляти
+> `impersonator_id`, а `audit_log_scrub_user()` ховає і e-mail інженера в рядках, де він діяв від чужого імені.
+> `support_requests` — «спочатку зберегти, потім надіслати»: звернення не губиться без налаштованої пошти.
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Початкова схема.
@@ -1139,3 +1170,5 @@ CREATE INDEX idx_imports_active ON imports (status) WHERE status IN ('pending','
   `kind`, відкладання; `paused_reason`/`acked_failures`; вікно оновлень `tenant_settings.ota_window_*`.
 - 2026-09-08 — Міграція 044: `imports` — CSV-імпорт мережі як фонова задача з прогресом, результатами
   й одноразовими зашифрованими обліковими даними.
+- 2026-09-08 — Міграція 045: `audit_log.impersonator_id/impersonator_email` (дії підтримки від імені користувача,
+  тригер і псевдонімізація знають про них), `support_requests` — звернення з форми «Підтримка».

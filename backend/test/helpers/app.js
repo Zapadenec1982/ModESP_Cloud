@@ -110,6 +110,7 @@ function createTestApp() {
 
   // Own profile (any role) — ABOVE the admin-only /api/users mount, as in index.js
   app.use('/api/profile',  require('../../src/routes/profile'));
+  app.use('/api/support',  require('../../src/routes/support'));
 
   // Admin-only routes
   app.use('/api/partner',  require('../../src/routes/partner'));
@@ -127,7 +128,7 @@ function createTestApp() {
   app.use('/api/ota',      require('../../src/routes/ota'));
 
   // Superadmin-only
-  app.use('/api/audit-log', requireSuperadmin, require('../../src/routes/audit'));
+  app.use('/api/audit-log', authorize('admin'), require('../../src/routes/audit'));
   app.use('/api/pilot-requests', requireSuperadmin, require('../../src/routes/pilot-requests'));
 
   // Routes that all authed users can access

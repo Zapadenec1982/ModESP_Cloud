@@ -321,6 +321,110 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+// ── GET /api/tenants/:id/card — the support card (superadmin, plan epic 2.13) ──
+// Everything a support engineer wants before picking up the phone: the
+// organisation and its limits, 60 days of usage, the latest signs of life,
+// the notification channels that are set up (and whether they deliver), the
+// members (to sign in as one), the last audit records and support requests.
+router.get('/:id/card', requireSuperadmin, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isUuidFormat(id)) return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    const { rows: tRows } = await db.query(`${tenantSelect()} WHERE t.id = $1`, [id]);
+    if (tRows.length === 0) return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+
+    const [usage, devices, alarms, members, activity, channels, users, recentAudit, support, billing, ops] = await Promise.all([
+      db.query(
+        `SELECT day, active_devices, sites, users, telemetry_rows::float AS telemetry_rows, notifications_sent
+           FROM usage_snapshots WHERE tenant_id = $1 AND day >= current_date - 59 ORDER BY day`, [id]),
+      db.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'active')::int AS devices_active,
+                COUNT(*) FILTER (WHERE status = 'active' AND online)::int AS devices_online,
+                COUNT(*) FILTER (WHERE status = 'active' AND last_seen > now() - interval '24 hours')::int AS devices_seen_24h,
+                MAX(last_seen) AS last_seen_at,
+                COUNT(DISTINCT firmware_version) FILTER (WHERE status = 'active')::int AS firmware_versions
+           FROM devices WHERE tenant_id = $1 AND deleted_at IS NULL`, [id]),
+      db.query(
+        `SELECT COUNT(*) FILTER (WHERE active)::int AS alarms_active,
+                COUNT(*) FILTER (WHERE active AND severity = 'critical')::int AS alarms_critical,
+                COUNT(*) FILTER (WHERE triggered_at > now() - interval '7 days')::int AS alarms_7d,
+                MAX(triggered_at) AS last_alarm_at
+           FROM alarms WHERE tenant_id = $1`, [id]),
+      db.query(
+        `SELECT COUNT(*)::int AS members,
+                COUNT(*) FILTER (WHERE u.active)::int AS members_active,
+                COUNT(*) FILTER (WHERE u.mfa_enabled_at IS NOT NULL)::int AS members_mfa,
+                COUNT(*) FILTER (WHERE u.telegram_id IS NOT NULL)::int AS members_telegram,
+                MAX(u.last_login) AS last_login_at
+           FROM user_tenants ut JOIN users u ON u.id = ut.user_id
+          WHERE ut.tenant_id = $1 AND u.role <> 'superadmin'`, [id]),
+      db.query(
+        `SELECT MAX(created_at) FILTER (WHERE impersonator_id IS NULL) AS last_activity_at,
+                MAX(created_at) FILTER (WHERE impersonator_id IS NOT NULL) AS last_support_at,
+                COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS actions_7d,
+                COUNT(*) FILTER (WHERE created_at > now() - interval '7 days' AND status_code >= 400)::int AS errors_7d
+           FROM audit_log WHERE tenant_id = $1`, [id]),
+      db.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM notification_subscribers WHERE tenant_id = $1 AND active AND channel = 'telegram') AS telegram_subscribers,
+           (SELECT COUNT(*)::int FROM notification_subscribers WHERE tenant_id = $1 AND active AND channel = 'fcm')      AS fcm_subscribers,
+           (SELECT COUNT(*)::int FROM push_subscriptions WHERE tenant_id = $1 AND active)                                AS push_subscriptions,
+           (SELECT COUNT(*)::int FROM user_tenants ut JOIN users u ON u.id = ut.user_id
+              JOIN user_notification_prefs p ON p.user_id = u.id
+             WHERE ut.tenant_id = $1 AND p.enabled AND p.email)                                                          AS email_recipients,
+           (SELECT COUNT(*)::int FROM webhooks WHERE tenant_id = $1 AND enabled)                                        AS webhooks_enabled,
+           (SELECT COUNT(*)::int FROM webhooks WHERE tenant_id = $1 AND NOT enabled AND disabled_at IS NOT NULL)        AS webhooks_disabled,
+           (SELECT COUNT(*)::int FROM api_keys WHERE tenant_id = $1 AND revoked_at IS NULL)                             AS api_keys,
+           (SELECT COUNT(*)::int FROM report_schedules WHERE tenant_id = $1 AND enabled)                                AS report_schedules,
+           (SELECT MAX(created_at) FROM notification_log WHERE tenant_id = $1 AND status = 'sent')                      AS last_notification_at,
+           (SELECT COUNT(*)::int FROM notification_log WHERE tenant_id = $1 AND status = 'sent'   AND created_at > now() - interval '7 days') AS notifications_7d,
+           (SELECT COUNT(*)::int FROM notification_log WHERE tenant_id = $1 AND status = 'failed' AND created_at > now() - interval '7 days') AS notifications_failed_7d`,
+        [id]),
+      db.query(
+        `SELECT u.id, u.email, COALESCE(ut.role, u.role) AS role, u.active, u.last_login, u.locale,
+                (u.mfa_enabled_at IS NOT NULL) AS mfa, (u.telegram_id IS NOT NULL) AS telegram, (u.tenant_id = $1) AS is_home
+           FROM user_tenants ut JOIN users u ON u.id = ut.user_id
+          WHERE ut.tenant_id = $1 AND u.role <> 'superadmin'
+          ORDER BY u.last_login DESC NULLS LAST, u.created_at LIMIT 200`, [id]),
+      db.query(
+        `SELECT id, created_at, user_email, user_role, impersonator_email, action, entity_type, entity_id, method, status_code
+           FROM audit_log WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 15`, [id]),
+      db.query(
+        `SELECT id, created_at, user_email, category, subject, status
+           FROM support_requests WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 10`, [id]),
+      db.query(
+        `SELECT COUNT(*) FILTER (WHERE status = 'issued')::int AS open_invoices,
+                COUNT(*) FILTER (WHERE status = 'issued' AND due_at < now())::int AS overdue_invoices,
+                COALESCE(SUM(amount) FILTER (WHERE status = 'issued'), 0)::float AS open_amount,
+                MAX(issued_at) AS last_invoice_at,
+                MAX(paid_at) AS last_paid_at
+           FROM invoices WHERE tenant_id = $1`, [id]),
+      db.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM work_orders WHERE tenant_id = $1 AND closed_at IS NULL)                                  AS work_orders_open,
+           (SELECT COUNT(*)::int FROM maintenance_hints WHERE tenant_id = $1 AND closed_at IS NULL)                           AS hints_open,
+           (SELECT MAX(completed_at) FROM imports WHERE tenant_id = $1 AND status = 'done')                                    AS last_import_at,
+           (SELECT MAX(generated_at) FROM report_exports WHERE tenant_id = $1)                                                 AS last_report_at`,
+        [id]),
+    ]);
+
+    res.json({
+      data: {
+        tenant:   tRows[0],
+        usage:    usage.rows,
+        latest:   { ...devices.rows[0], ...alarms.rows[0], ...members.rows[0], ...activity.rows[0], ...ops.rows[0] },
+        channels: channels.rows[0],
+        users:    users.rows,
+        recent_audit: recentAudit.rows,
+        support_requests: support.rows,
+        billing:  billing.rows[0],
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── PATCH /api/tenants/:id ──────────────────────────────────
 // Update tenant (superadmin only).
 router.patch('/:id', requireSuperadmin, async (req, res, next) => {
