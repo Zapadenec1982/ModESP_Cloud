@@ -807,6 +807,35 @@ CREATE UNIQUE INDEX idx_plan_change_one_pending ON plan_change_requests (tenant_
 > топіки брокера через лист, якого їй не надсилали. Такі рахунки повертаються в `runDunning` як `held`
 > і пишуться в лог; `POST /billing/admin/invoices/:id/send` знімає обмеження.
 
+## Самореєстрація, trial і чек-ліст онбордингу (migration 038)
+
+```sql
+ALTER TABLE users
+  ADD COLUMN email_verified_at    TIMESTAMPTZ DEFAULT now(),  -- NULL лише в самореєстрованого адміна до переходу за посиланням
+  ADD COLUMN email_verify_hash    CHAR(64),                    -- SHA-256 коду з листа; сам код не зберігається
+  ADD COLUMN email_verify_expires TIMESTAMPTZ,                 -- 24 години
+  ADD COLUMN terms_accepted_at    TIMESTAMPTZ;                 -- реєстрація, прийняття запрошення
+
+ALTER TABLE tenants
+  ADD COLUMN registered_at TIMESTAMPTZ,                        -- організація створила себе через POST /auth/register
+  ADD COLUMN registered_ip INET,
+  ADD COLUMN approved_at   TIMESTAMPTZ,                        -- open: одразу; approve: коли superadmin схвалив
+  ADD COLUMN approved_by   UUID REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE tenant_settings ADD COLUMN onboarding JSONB NOT NULL DEFAULT '{}';
+-- {"steps": {"site": "2026-09-08T…", "device": "…"}, "dismissed_at": "…", "dismissed_by": "<uuid>"}
+```
+
+> «Чекає на схвалення» = `registered_at IS NOT NULL AND approved_at IS NULL`; така організація має статус
+> `suspended`, тож усі наявні ворота (логін, refresh, ACL брокера) для неї закриті без нового статусу в
+> `chk_tenants_status`. Схвалення ставить `trial` і `trial_expires_at`; відхилення видаляє організацію тією
+> самою процедурою, що й `DELETE /tenants/:id`. Trial, що минув, `services/tenant-lifecycle.js` щогодини
+> переводить у `past_due` (`TRIAL_SWEEP_INTERVAL_MIN`); нижче `past_due` без рахунку організація не опускається.
+> `email_verified_at DEFAULT now()` — щоб жоден шлях створення користувача (POST /users, seed-admin,
+> seed-demo, прийняття запрошення) не міг випадково заблокувати вхід.
+
+---
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -879,3 +908,6 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 - 2026-09-02 — Міграція 029: `site_public_links.rate_limit_exempt` (showcase-посилання без ліміту переглядів). Права ролі застосунку — `infra/sql/app-grants.sql`, перевірка — `infra/sql/check-grants.sql` (CI, `setup.sh`, `deploy.sh`).
 - 2026-09-02 — Міграція 030: ціни в `plan_limits`, таблиця `pilot_requests`.
 - 2026-09-02 — Міграція 031: функції планів `weather` і `routing` для `pro`/`enterprise`/`partner`.
+- 2026-09-08 — Міграція 038: самореєстрація (`tenants.registered_at/registered_ip/approved_at/approved_by`,
+  `users.email_verified_at/email_verify_hash/email_verify_expires/terms_accepted_at`) і чек-ліст онбордингу
+  (`tenant_settings.onboarding JSONB`).

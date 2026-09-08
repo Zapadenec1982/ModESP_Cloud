@@ -142,6 +142,49 @@ refresh-токени користувача.
 { "password": "…", "accept_terms": true }
 ```
 
+### Самореєстрація (plan epic 2.1)
+
+Організація на плані «Старт» і її перший адміністратор. `REGISTRATION_MODE` вирішує, чи відкрита форма
+(`off` → `403 registration_closed`) і чи потрібне схвалення superadmin'ом (`approve`, типово: організація
+створюється зі статусом `suspended`, trial стартує при схваленні); `open` стартує 14-денний trial одразу
+(`REGISTRATION_TRIAL_DAYS`). З налаштованою поштою (`RESEND_API_KEY`) адреса підтверджується посиланням
+з листа до першого входу; без пошти адреса береться як є. Ліміт: 5 запитів/год з IP на `register` і
+`resend-verification`. Поле `website` — honeypot: заповнене → `201 { received: true }` і нічого не створюється.
+
+#### `GET /auth/registration`
+Публічний. Що показати на сторінці `#/register`.
+
+**Response 200:** `{ "data": { "mode": "approve", "email_verification": true, "trial_days": 14 } }`
+
+#### `POST /auth/register`
+```json
+{ "organisation": "Кафе «Полярний»", "email": "owner@example.com", "password": "…15+ символів…", "accept_terms": true, "lang": "uk" }
+```
+Slug виводиться з назви (транслітерація, `[a-z0-9-]`, унікальність через `-2`, `-3`). `409 email_taken` —
+на адресу вже є акаунт. **Response 201:**
+```json
+{
+  "data": {
+    "tenant": { "id": "…", "name": "Кафе «Полярний»", "slug": "kafe-poliarnyi", "status": "trial", "trial_expires_at": "…" },
+    "verification_required": false,
+    "approval_required": false,
+    "email_sent": false,
+    "access_token": "…", "refresh_token": "…", "user": { "…": "…" }, "tenant": { "…": "…" }, "tenants": []
+  }
+}
+```
+Токени є лише коли нічого не лишилось чекати (`verification_required` і `approval_required` обидва `false`) —
+тоді відповідь така сама, як у `POST /auth/login`. Інакше вхід відповідає `401 email_not_verified` або
+`401 pending_approval`, поки адресу не підтверджено чи організацію не схвалено.
+
+#### `POST /auth/verify-email`
+Посилання з листа (`#/verify?email=…&code=…`). `code` — 64 hex; зберігається лише його SHA-256, дійсний
+24 години. `400 invalid_code | code_expired`. **Response 200:** `{ "verified": true, "approval_required": false, … }`
+плюс токени входу, якщо організація вже відкрита.
+
+#### `POST /auth/resend-verification`
+`{ "email": "…", "lang": "uk" }` — новий лист для непідтвердженої адреси; відповідь однакова для будь-якої адреси.
+
 ---
 
 ## Пристрої
@@ -1999,6 +2042,32 @@ suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`,
 Заявки на зміну плану; `approve { note? }` міняє `tenants.plan` (і скидає індивідуальну ретенцію), `reject`
 лише закриває.
 
+## Онбординг (plan epic 2.1)
+
+Чек-ліст «Перші кроки» на панелі адміністратора організації (роль `admin`). Кроки читаються з даних:
+`site` — є торгова точка; `device` — є активний контролер; `team` — друга людина в організації або
+відкрите запрошення; `telegram` — хтось із членів прив'язав Telegram або є Telegram-підписник; `report` —
+є запис у `report_exports`. Перший раз, коли крок побачено виконаним, його час записується в
+`tenant_settings.onboarding.steps`.
+
+### `GET /onboarding`
+**Response 200:**
+```json
+{
+  "data": {
+    "steps": [ { "key": "site", "done": true, "done_at": "…" }, { "key": "device", "done": false, "done_at": null }, "…" ],
+    "done_count": 2, "total": 5, "completed": false,
+    "dismissed_at": null,
+    "trial": { "status": "trial", "trial_expires_at": "…", "days_left": 9 }
+  }
+}
+```
+
+### `POST /onboarding/dismiss`
+Сховати картку (`tenant_settings.onboarding.dismissed_at`). Відповідь — як `GET`.
+
+---
+
 ## Тенанти (superadmin / admin)
 
 ### `GET /tenants`
@@ -2058,6 +2127,13 @@ suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`,
 ```
 
 Slug змінити не можна якщо є пристрої (`400 Cannot change slug while devices exist`).
+
+### `POST /tenants/:id/approve` · `POST /tenants/:id/reject`
+Superadmin, plan epic 2.1. Організація, що зареєструвалася сама при `REGISTRATION_MODE=approve`, чекає
+зі статусом `suspended` (`GET /tenants` віддає `registered_at`, `approved_at`, `awaiting_approval`).
+`approve` ставить `trial` з `trial_expires_at` через `REGISTRATION_TRIAL_DAYS`, записує `approved_by` і
+пише адміністратору листа; `reject` видаляє організацію разом з її користувачами. Обидва відповідають
+`409 not_awaiting_approval`, якщо організація не чекає на схвалення.
 
 ### `DELETE /tenants/:id`
 Soft-delete тенант. Не можна видалити якщо є пристрої.
@@ -2531,3 +2607,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-09-02 — Епік 1.10: showcase-посилання без ліміту переглядів (`rate_limit_exempt`); `DELETE /tenants/:id` виконує спільну з `purge-demo.js` процедуру (`services/tenant-delete.js`).
 - 2026-09-02 — Епік 1.11: `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `GET /api/public/site` додає `organisation` і `link_expires_at` (сторінка каже, чия вона, і попереджає за тиждень до закінчення посилання).
 - 2026-09-02 — Епік 1.2: `GET /sites/:id/weather`, `GET /sites/:id/weather/history` і `POST /map/route` відповідають `402 plan_feature` поза планами з функціями `weather`/`routing`.
+- 2026-09-08 — Самореєстрація (епік 2.1): `GET /auth/registration`, `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`; `401 email_not_verified | pending_approval` на вході; `POST /tenants/:id/approve | reject` і поля `registered_at/approved_at/awaiting_approval` у `GET /tenants`; чек-ліст `GET /onboarding`, `POST /onboarding/dismiss`; `trial_expires_at` у `tenant` відповідей входу.

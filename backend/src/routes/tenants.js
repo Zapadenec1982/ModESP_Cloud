@@ -7,6 +7,7 @@ const mqttSvc    = require('../services/mqtt');
 const planMw     = require('../middleware/plan');
 const { deleteTenant } = require('../services/tenant-delete');
 const { requireSuperadmin } = require('../middleware/auth');
+const registrationSvc = require('../services/registration');
 
 const router = Router();
 
@@ -19,6 +20,8 @@ const TENANT_SELECT = `
          t.trial_expires_at, t.suspended_at, t.billing_email, t.legal_name, t.tax_id,
          t.billing_currency, t.contract_started_at,
          t.parent_tenant_id, parent.name AS parent_name, t.billing_account_id,
+         t.registered_at, t.approved_at,
+         (t.registered_at IS NOT NULL AND t.approved_at IS NULL) AS awaiting_approval,
          (SELECT COUNT(*)::int FROM tenants c WHERE c.parent_tenant_id = t.id) AS client_count,
          p.name AS plan_name, p.max_devices, p.max_sites, p.max_users, p.sampling_sec, p.features,
          COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.raw_retention_days,
@@ -414,6 +417,38 @@ router.patch('/:id', requireSuperadmin, async (req, res, next) => {
     await mqttSvc.refreshRegistries();
 
     res.json({ data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Self-registration approval (superadmin, plan epic 2.1) ──
+// REGISTRATION_MODE=approve leaves a registered organisation suspended until
+// one of these is called: approve starts its trial and e-mails the
+// administrator, reject removes the organisation with its users.
+
+router.post('/:id/approve', requireSuperadmin, async (req, res, next) => {
+  try {
+    const tenant = await registrationSvc.approve(req.params.id, { approvedBy: req.user.id, log: req.log });
+    if (!tenant) {
+      return res.status(409).json({ error: 'not_awaiting_approval', message: 'This organisation is not awaiting approval', status: 409 });
+    }
+    req.auditContext = { entityId: tenant.id, action: 'tenant.approve', changes: { after: { status: tenant.status, trial_expires_at: tenant.trial_expires_at } } };
+    const { rows } = await db.query(`${TENANT_SELECT} WHERE t.id = $1`, [tenant.id]);
+    res.json({ data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/reject', requireSuperadmin, async (req, res, next) => {
+  try {
+    const result = await registrationSvc.reject(req.params.id, { log: req.log });
+    if (!result) {
+      return res.status(409).json({ error: 'not_awaiting_approval', message: 'This organisation is not awaiting approval', status: 409 });
+    }
+    req.auditContext = { entityId: req.params.id, action: 'tenant.reject', changes: { before: { name: result.name, slug: result.slug } } };
+    res.json({ data: { rejected: true, tenant: result } });
   } catch (err) {
     next(err);
   }

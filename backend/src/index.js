@@ -22,6 +22,8 @@ const geocodeSvc  = require('./services/geocode');
 const weatherSvc  = require('./services/weather');
 const maintenanceSvc = require('./services/maintenance');
 const billingSvc  = require('./services/billing');
+const lifecycleSvc = require('./services/tenant-lifecycle');
+const registrationSvc = require('./services/registration');
 const routingSvc  = require('./services/routing');
 const tenantMw    = require('./middleware/tenant');
 const { authenticate, authorize, requireSuperadmin } = require('./middleware/auth');
@@ -138,6 +140,16 @@ const registerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts', status: 429 },
+});
+// Self-registration (plan epic 2.1): a person registers one organisation; a
+// script that keeps trying is what the limit is for. verify-email shares the
+// reset limiter — it is the same kind of link-in-a-mail flow.
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many registration attempts, try again later', status: 429 },
 });
 // Public site status page — unauthenticated, so the only key available is the IP.
 // Showcase links (site_public_links.rate_limit_exempt) skip it, see routes/public.js.
@@ -418,6 +430,9 @@ if (AUTH_ENABLED) {
   app.use('/api/auth/forgot-password', resetLimiter);
   app.use('/api/auth/reset-password', resetLimiter);
   app.use('/api/auth/invite', inviteLimiter);
+  app.use('/api/auth/register', signupLimiter);
+  app.use('/api/auth/resend-verification', signupLimiter);
+  app.use('/api/auth/verify-email', resetLimiter);
   app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT
@@ -438,6 +453,8 @@ if (AUTH_ENABLED) {
   app.use('/api/partner',  require('./routes/partner'));
   // Billing (plan epic 2.2): an organisation's admin sees its plan, usage and invoices; /admin/* is superadmin.
   app.use('/api/billing',  authorize('admin'), require('./routes/billing'));
+  // Getting-started checklist of the organisation (plan epic 2.1)
+  app.use('/api/onboarding', authorize('admin'), require('./routes/onboarding'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -547,6 +564,14 @@ async function main() {
   // 6c. Billing: hourly usage snapshots, invoices on the 1st, dunning (plan epic 2.2)
   billingSvc.start(logger);
 
+  // 6d. Self-registration and the trial sweep (plan epic 2.1)
+  const registrationMode = registrationSvc.mode();
+  if (registrationMode === 'open' && !emailSvc.isConfigured()) {
+    logger.warn('REGISTRATION_MODE=open without RESEND_API_KEY: registered e-mail addresses cannot be verified');
+  }
+  logger.info({ mode: registrationMode, trialDays: registrationSvc.trialDays(), emailVerification: emailSvc.isConfigured() }, 'Self-registration');
+  lifecycleSvc.start(logger);
+
   // 7. HTTP
   const HOST = process.env.HOST || '127.0.0.1';
   server.listen(PORT, HOST, () => {
@@ -562,6 +587,7 @@ async function shutdown(signal) {
     weatherSvc.shutdown(),
     maintenanceSvc.shutdown(),
     billingSvc.shutdown(),
+    lifecycleSvc.shutdown(),
     geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),

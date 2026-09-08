@@ -521,6 +521,19 @@ const TX = {
     reset_code:      'Код (якщо кнопка не працює)',
     reset_expires:   (m) => `Посилання дійсне ${m} хв. Якщо ви не просили скидання — нічого не робіть, пароль лишиться незмінним.`,
     link_fallback:   'Або скопіюйте посилання у браузер:',
+    verify_subject:  'Підтвердьте e-mail для ModESP Cloud',
+    verify_title:    'Підтвердьте адресу',
+    verify_intro:    (org) => `Ви зареєстрували організацію «${escHtml(org)}» у ModESP Cloud. Натисніть кнопку, щоб підтвердити адресу і увійти.`,
+    verify_cta:      'Підтвердити e-mail',
+    verify_expires:  (h) => `Посилання дійсне ${h} год. Якщо ви не реєструвалися — просто проігноруйте цей лист.`,
+    approved_subject: (org) => `«${org}» підключено до ModESP Cloud`,
+    approved_title:  'Організацію схвалено',
+    approved_intro:  (org, days) => `Організацію «${escHtml(org)}» схвалено. Пробний період триває ${days} дн. — увійдіть, створіть точку і підключіть перший контролер.`,
+    approved_cta:    'Увійти',
+    trial_subject:   (org) => `Пробний період «${org}» завершено`,
+    trial_title:     'Пробний період завершено',
+    trial_intro:     (org) => `Пробний період організації «${escHtml(org)}» завершився. Парк і дані на місці; щоб продовжити роботу, оберіть план на сторінці «Оплата».`,
+    trial_cta:       'Обрати план',
   },
   en: {
     invite_subject:  (org) => `Invitation to “${org}” on ModESP Cloud`,
@@ -538,6 +551,19 @@ const TX = {
     reset_code:      'Code (if the button does not work)',
     reset_expires:   (m) => `The link is valid for ${m} minutes. If you did not request a reset, do nothing — your password stays as it is.`,
     link_fallback:   'Or copy the link into your browser:',
+    verify_subject:  'Confirm your e-mail for ModESP Cloud',
+    verify_title:    'Confirm your address',
+    verify_intro:    (org) => `You registered the organisation “${escHtml(org)}” on ModESP Cloud. Press the button to confirm the address and sign in.`,
+    verify_cta:      'Confirm e-mail',
+    verify_expires:  (h) => `The link is valid for ${h} hours. If you did not register, simply ignore this e-mail.`,
+    approved_subject: (org) => `“${org}” is now on ModESP Cloud`,
+    approved_title:  'Organisation approved',
+    approved_intro:  (org, days) => `The organisation “${escHtml(org)}” has been approved. The trial runs for ${days} days — sign in, create a site and connect the first controller.`,
+    approved_cta:    'Sign in',
+    trial_subject:   (org) => `The trial of “${org}” has ended`,
+    trial_title:     'Trial ended',
+    trial_intro:     (org) => `The trial of the organisation “${escHtml(org)}” is over. The fleet and its data stay in place; choose a plan on the Billing page to carry on.`,
+    trial_cta:       'Choose a plan',
   },
   pl: {
     invite_subject:  (org) => `Zaproszenie do „${org}” w ModESP Cloud`,
@@ -555,6 +581,19 @@ const TX = {
     reset_code:      'Kod (jeśli przycisk nie działa)',
     reset_expires:   (m) => `Link jest ważny ${m} min. Jeśli nie prosiłeś o reset, nic nie rób — hasło pozostanie bez zmian.`,
     link_fallback:   'Lub skopiuj link do przeglądarki:',
+    verify_subject:  'Potwierdź e-mail dla ModESP Cloud',
+    verify_title:    'Potwierdź adres',
+    verify_intro:    (org) => `Zarejestrowałeś organizację „${escHtml(org)}” w ModESP Cloud. Naciśnij przycisk, aby potwierdzić adres i się zalogować.`,
+    verify_cta:      'Potwierdź e-mail',
+    verify_expires:  (h) => `Link jest ważny ${h} godz. Jeśli to nie Ty się rejestrowałeś, po prostu zignoruj tę wiadomość.`,
+    approved_subject: (org) => `„${org}” jest już w ModESP Cloud`,
+    approved_title:  'Organizacja zatwierdzona',
+    approved_intro:  (org, days) => `Organizacja „${escHtml(org)}” została zatwierdzona. Okres próbny trwa ${days} dni — zaloguj się, utwórz punkt i podłącz pierwszy sterownik.`,
+    approved_cta:    'Zaloguj się',
+    trial_subject:   (org) => `Okres próbny „${org}” dobiegł końca`,
+    trial_title:     'Okres próbny zakończony',
+    trial_intro:     (org) => `Okres próbny organizacji „${escHtml(org)}” dobiegł końca. Flota i dane pozostają na miejscu; aby kontynuować, wybierz plan na stronie „Płatności”.`,
+    trial_cta:       'Wybierz plan',
   },
   de: {
     invite_subject:  (org) => `Einladung zu „${org}“ bei ModESP Cloud`,
@@ -572,6 +611,19 @@ const TX = {
     reset_code:      'Code (falls die Schaltfläche nicht funktioniert)',
     reset_expires:   (m) => `Der Link ist ${m} Minuten gültig. Wenn Sie kein Zurücksetzen angefordert haben, tun Sie nichts — Ihr Passwort bleibt unverändert.`,
     link_fallback:   'Oder kopieren Sie den Link in Ihren Browser:',
+    verify_subject:  'Bestätigen Sie Ihre E-Mail für ModESP Cloud',
+    verify_title:    'Adresse bestätigen',
+    verify_intro:    (org) => `Sie haben die Organisation „${escHtml(org)}“ bei ModESP Cloud registriert. Klicken Sie auf die Schaltfläche, um die Adresse zu bestätigen und sich anzumelden.`,
+    verify_cta:      'E-Mail bestätigen',
+    verify_expires:  (h) => `Der Link ist ${h} Stunden gültig. Wenn Sie sich nicht registriert haben, ignorieren Sie diese E-Mail einfach.`,
+    approved_subject: (org) => `„${org}“ ist jetzt bei ModESP Cloud`,
+    approved_title:  'Organisation freigegeben',
+    approved_intro:  (org, days) => `Die Organisation „${escHtml(org)}“ wurde freigegeben. Die Testphase dauert ${days} Tage — melden Sie sich an, legen Sie einen Standort an und verbinden Sie den ersten Regler.`,
+    approved_cta:    'Anmelden',
+    trial_subject:   (org) => `Die Testphase von „${org}“ ist beendet`,
+    trial_title:     'Testphase beendet',
+    trial_intro:     (org) => `Die Testphase der Organisation „${escHtml(org)}“ ist abgelaufen. Flotte und Daten bleiben erhalten; wählen Sie auf der Seite „Abrechnung“ einen Tarif, um weiterzuarbeiten.`,
+    trial_cta:       'Tarif wählen',
   },
 };
 
@@ -652,6 +704,72 @@ async function sendPilotRequest({ to, request }) {
   const { error } = await resend.emails.send({
     from: fromAddress, to, replyTo: r.email || undefined,
     subject: `Запит на пілот: ${r.company || r.name || 'з лендінгу'}`, html,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+// ── Self-registration (plan epic 2.1) ─────────────────────
+
+/** Address confirmation after self-registration. Resolves false when not configured. */
+async function sendEmailVerification({ to, link, tenantName, lang, expiresHours = 24 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const html = wrapHtml(txBody(
+    L.verify_title, L.verify_intro(tenantName), infoRow(L.org, escHtml(tenantName)),
+    ctaButton(link, L.verify_cta), L.verify_expires(expiresHours),
+    `${L.link_fallback}<br>${escHtml(link)}`
+  ), txLang(lang));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.verify_subject, html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** REGISTRATION_MODE=approve: the superadmin approved the organisation, its trial has started. */
+async function sendRegistrationApproved({ to, link, tenantName, lang, trialDays = 14 }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const html = wrapHtml(txBody(
+    L.approved_title, L.approved_intro(tenantName, trialDays), infoRow(L.org, escHtml(tenantName)),
+    ctaButton(link, L.approved_cta), '', ''
+  ), txLang(lang));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.approved_subject(tenantName), html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/** The trial ended and the organisation is past_due (services/tenant-lifecycle.js). */
+async function sendTrialEnded({ to, link, tenantName, lang }) {
+  if (!resend) return false;
+  const L = TX[txLang(lang)];
+  const html = wrapHtml(txBody(
+    L.trial_title, L.trial_intro(tenantName), infoRow(L.org, escHtml(tenantName)),
+    ctaButton(link, L.trial_cta), '', ''
+  ), txLang(lang));
+  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.trial_subject(tenantName), html });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
+/**
+ * A new registration, to the founder (REGISTRATION_NOTIFY_EMAIL). Resolves
+ * false when e-mail or the recipient is not configured — the organisation is
+ * already in the database by then.
+ */
+async function sendRegistrationNotice({ to, tenant, email, mode, ip, link }) {
+  if (!resend || !to) return false;
+  const t = tenant || {};
+  const rows =
+    infoRow('Організація', escHtml(t.name || '')) +
+    infoRow('Slug', escHtml(t.slug || '')) +
+    infoRow('E-mail', escHtml(email || '')) +
+    infoRow('Режим', mode === 'approve' ? 'потрібне схвалення' : 'відкрита реєстрація') +
+    infoRow('IP', escHtml(ip || '—'));
+  const cta = mode === 'approve' && link ? ctaButton(link, 'Відкрити організації') : '';
+  const html = wrapHtml(`<h2 style="margin:0 0 12px;">Нова реєстрація</h2><table>${rows}</table>${cta}<p style="color:#888;font-size:12px;">id ${escHtml(String(t.id || ''))}</p>`);
+  const { error } = await resend.emails.send({
+    from: fromAddress, to, replyTo: email || undefined,
+    subject: `Нова реєстрація: ${t.name || email || ''}${mode === 'approve' ? ' — потрібне схвалення' : ''}`, html,
   });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
@@ -832,6 +950,7 @@ async function sendPlanRequest({ to, request }) {
 module.exports = {
   init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest,
   sendInvoice, sendDunning, sendPlanRequest,
+  sendEmailVerification, sendRegistrationApproved, sendTrialEnded, sendRegistrationNotice,
   // scripts/check-locales.js and test/notification-templates.test.js
   __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL },
   __test: { buildEmail },

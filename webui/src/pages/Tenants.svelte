@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { getTenants, createTenant, updateTenant, deleteTenant } from '../lib/api.js'
+  import { getTenants, createTenant, updateTenant, deleteTenant, approveTenant, rejectTenant } from '../lib/api.js'
   import { isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
@@ -197,6 +197,31 @@
     }
   }
 
+  // ── Self-registration approval (plan epic 2.1) ──
+
+  $: awaitingCount = tenants.filter(t => t.awaiting_approval).length
+
+  async function handleApprove(tenant) {
+    try {
+      await approveTenant(tenant.id)
+      toast.success($t('tenants.approved', tenant.name))
+      await loadTenants()
+    } catch (err) {
+      toast.error(err.message)
+    }
+  }
+
+  async function handleReject(tenant) {
+    if (!confirm($t('tenants.reject_confirm', tenant.name))) return
+    try {
+      await rejectTenant(tenant.id)
+      toast.success($t('tenants.rejected', tenant.name))
+      await loadTenants()
+    } catch (err) {
+      toast.error(err.message)
+    }
+  }
+
   let editStatus = 'active'
   let editBilling = {}
 
@@ -251,6 +276,12 @@
     {/if}
   </PageHeader>
 
+  {#if !loading && awaitingCount > 0}
+    <div class="awaiting-note" role="status">
+      <Icon name="clock" size={16} /> {$t('tenants.awaiting_count', awaitingCount)}
+    </div>
+  {/if}
+
   {#if loading}
     <Skeleton height="400px" />
   {:else if error}
@@ -289,6 +320,8 @@
                 <small class="parent-of" title={$t('tenants.managed_by')}>↳ {tenant.parent_name}</small>
               {:else if tenant.client_count}
                 <small class="parent-of">{$t('tenants.clients_count', tenant.client_count)}</small>
+              {:else if tenant.registered_at}
+                <small class="parent-of">{$t('tenants.registered_self')} · {formatDate(tenant.registered_at)}</small>
               {/if}
             </span>
             <span class="cell cell-slug">
@@ -302,9 +335,13 @@
             </span>
             <span class="cell cell-users" class:over={tenant.max_users && tenant.user_count >= tenant.max_users}>{usage(tenant.user_count, tenant.max_users)}</span>
             <span class="cell cell-status">
-              <Badge variant={statusColor(tenant.status || (tenant.active ? 'active' : 'suspended'))} size="sm">
-                {$t('tenants.status_' + (tenant.status || (tenant.active ? 'active' : 'suspended')))}
-              </Badge>
+              {#if tenant.awaiting_approval}
+                <Badge variant="warning" size="sm">{$t('tenants.status_awaiting')}</Badge>
+              {:else}
+                <Badge variant={statusColor(tenant.status || (tenant.active ? 'active' : 'suspended'))} size="sm">
+                  {$t('tenants.status_' + (tenant.status || (tenant.active ? 'active' : 'suspended')))}
+                </Badge>
+              {/if}
             </span>
             <span class="cell cell-created">{formatDate(tenant.created_at)}</span>
             <span class="cell cell-actions">
@@ -312,7 +349,14 @@
                 <button class="icon-btn" title={$t('common.edit')} on:click={() => openEdit(tenant)}>
                   <Icon name="edit" size={15} />
                 </button>
-                {#if tenant.active}
+                {#if tenant.awaiting_approval}
+                  <button class="icon-btn success" title={$t('tenants.approve')} on:click={() => handleApprove(tenant)}>
+                    <Icon name="check-circle" size={15} />
+                  </button>
+                  <button class="icon-btn danger" title={$t('tenants.reject')} on:click={() => handleReject(tenant)}>
+                    <Icon name="x-circle" size={15} />
+                  </button>
+                {:else if tenant.active}
                   <button class="icon-btn danger" title={$t('common.delete')} on:click={() => handleDelete(tenant)}>
                     <Icon name="x-circle" size={15} />
                   </button>
@@ -465,6 +509,19 @@
     color: var(--text-primary);
     margin: 0;
     flex: 1;
+  }
+
+  .awaiting-note {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid rgba(210, 153, 34, 0.5);
+    border-radius: var(--radius-md);
+    background: rgba(210, 153, 34, 0.12);
+    color: var(--text-primary);
+    font-size: var(--text-sm);
   }
 
   .count-badge {

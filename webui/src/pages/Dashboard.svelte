@@ -6,6 +6,7 @@
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
+  import OnboardingChecklist from '../components/dashboard/OnboardingChecklist.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
   import DeviceCard from '../components/DeviceCard.svelte'
   import DeviceListRow from '../components/dashboard/DeviceListRow.svelte'
@@ -243,6 +244,11 @@
     alarms={alarmCount}
     hints={hintCount}
   />
+
+  {#if $isAdmin && !$isSuperAdmin}
+    <!-- Getting-started checklist of the organisation (plan epic 2.1); dismissable -->
+    <OnboardingChecklist />
+  {/if}
 
   <DeviceFilter bind:search bind:filter bind:view />
 

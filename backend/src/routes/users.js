@@ -134,8 +134,8 @@ router.post('/', async (req, res) => {
 
     const hash = await authSvc.hashPassword(password);
     const { rows } = await db.query(
-      `INSERT INTO users (tenant_id, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (tenant_id, email, password_hash, role, email_verified_at)
+       VALUES ($1, $2, $3, $4, now())
        RETURNING id, email, role, active, created_at`,
       [targetTenantId, email, hash, role]
     );

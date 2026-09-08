@@ -234,7 +234,11 @@ export async function login(email, password) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || `HTTP ${res.status}`);
+    const err = new Error(body.message || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.code = body.error;     // email_not_verified | pending_approval | … (plan epic 2.1)
+    err.body = body;
+    throw err;
   }
 
   const { data } = await res.json();
@@ -386,6 +390,40 @@ export async function acceptInvite(token, password, acceptTerms) {
   return data;
 }
 
+// ── Self-registration (public, #/register and #/verify — plan epic 2.1) ──
+
+/** GET /auth/registration → { mode: 'off'|'open'|'approve', email_verification, trial_days } */
+export function getRegistrationInfo() {
+  return requestRaw('/auth/registration');
+}
+
+/** Signs the session in when the answer carries tokens (nothing left to verify or approve). */
+function adoptSession(data) {
+  if (!data?.access_token) return data;
+  setTokens(data.access_token, data.refresh_token);
+  applyUser(data.user);
+  if (data.tenant) {
+    currentTenant.set(data.tenant);
+    localStorage.setItem('modesp_last_tenant', data.tenant.id);
+  }
+  if (data.tenants) availableTenants.set(data.tenants);
+  return data;
+}
+
+/** POST /auth/register → { tenant, verification_required, approval_required, email_sent, access_token? … } */
+export async function register(body) {
+  return adoptSession(await requestRaw('/auth/register', { method: 'POST', body: JSON.stringify(body) }));
+}
+
+/** POST /auth/verify-email → { verified, approval_required, access_token? … } */
+export async function verifyEmail(email, code) {
+  return adoptSession(await requestRaw('/auth/verify-email', { method: 'POST', body: JSON.stringify({ email, code }) }));
+}
+
+export function resendVerification(email, lang) {
+  return requestRaw('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email, lang }) });
+}
+
 function clearAuth() {
   clearTimeout(refreshTimer);
   setTokens(null, null);
@@ -450,6 +488,16 @@ export async function checkAuthEnabled() {
     authEnabled.set(false);
     return false;
   }
+}
+
+// ── Onboarding checklist (admin of the organisation, plan epic 2.1) ──
+
+export function getOnboarding() {
+  return request('/onboarding');
+}
+
+export function dismissOnboarding() {
+  return request('/onboarding/dismiss', { method: 'POST' });
 }
 
 // ── WebSocket ────────────────────────────────────────────
@@ -1025,6 +1073,15 @@ export function createTenant({ name, slug, plan }) {
     method: 'POST',
     body: JSON.stringify({ name, slug, plan }),
   });
+}
+
+/** Superadmin: a self-registered organisation awaiting approval (plan epic 2.1) */
+export function approveTenant(id) {
+  return request(`/tenants/${id}/approve`, { method: 'POST' });
+}
+
+export function rejectTenant(id) {
+  return request(`/tenants/${id}/reject`, { method: 'POST' });
 }
 
 export function updateTenant(id, data) {
