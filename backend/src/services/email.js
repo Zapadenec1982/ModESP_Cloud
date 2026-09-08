@@ -5,6 +5,7 @@ const { Resend } = require('resend');
 let resend = null;
 let logger = null;
 let fromAddress = null;
+let replyToAddress = null;   // EMAIL_REPLY_TO: where a reply to any platform e-mail lands
 let appUrl = null;
 
 // ── Dictionaries (uk / en / pl / de — plan epic 2.11) ─────
@@ -244,11 +245,12 @@ function init(log) {
   }
 
   fromAddress = process.env.EMAIL_FROM || 'alerts@modesp.com.ua';
+  replyToAddress = (process.env.EMAIL_REPLY_TO || '').trim() || null;
   appUrl = process.env.EMAIL_APP_URL || process.env.CORS_ORIGIN || 'https://modesp.com.ua';
 
   try {
     resend = new Resend(apiKey);
-    logger.info({ from: fromAddress }, 'Email (Resend) initialized');
+    logger.info({ from: fromAddress, replyTo: replyToAddress }, 'Email (Resend) initialized');
     return { send };
   } catch (err) {
     logger.error({ err }, 'Email initialization failed');
@@ -264,6 +266,17 @@ function shutdown() {
 // ── Send ──────────────────────────────────────────────────
 
 /**
+ * Every outgoing message goes through here. The sending domain usually has
+ * no mailbox behind it, so the configured Reply-To is added unless the caller
+ * set one of its own (a pilot request replies to the person who asked).
+ */
+function dispatch(payload) {
+  const msg = { ...payload };
+  if (!msg.replyTo && replyToAddress) msg.replyTo = replyToAddress;
+  return resend.emails.send(msg);
+}
+
+/**
  * Send email notification.
  * @param {string} emailAddress — recipient email
  * @param {object} payload — notification payload (same structure as telegram/fcm)
@@ -273,7 +286,7 @@ async function send(emailAddress, payload) {
 
   const { subject, html } = buildEmail(payload);
 
-  const { error } = await resend.emails.send({
+  const { error } = await dispatch({
     from: fromAddress,
     to: emailAddress,
     subject,
@@ -662,7 +675,7 @@ async function sendInvitation({ to, link, tenantName, role, invitedBy, lang, exp
     ctaButton(link, L.invite_cta), L.invite_expires(expiresHours),
     `${L.link_fallback}<br>${escHtml(link)}`
   ), txLang(lang));
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.invite_subject(tenantName), html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.invite_subject(tenantName), html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -677,7 +690,7 @@ async function sendPasswordReset({ to, link, code, lang, expiresMinutes = 30 }) 
     ctaButton(link, L.reset_cta), L.reset_expires(expiresMinutes),
     `${L.link_fallback}<br>${escHtml(link)}`
   ), txLang(lang));
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.reset_subject, html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.reset_subject, html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -701,7 +714,7 @@ async function sendPilotRequest({ to, request }) {
     infoRow('Мова', escHtml(r.lang || 'uk'));
   const message = r.message ? `<p style="white-space:pre-wrap;">${escHtml(r.message)}</p>` : '';
   const html = wrapHtml(`<h2 style="margin:0 0 12px;">Запит на пілот</h2><table>${rows}</table>${message}<p style="color:#888;font-size:12px;">id ${escHtml(String(r.id || ''))}</p>`);
-  const { error } = await resend.emails.send({
+  const { error } = await dispatch({
     from: fromAddress, to, replyTo: r.email || undefined,
     subject: `Запит на пілот: ${r.company || r.name || 'з лендінгу'}`, html,
   });
@@ -720,7 +733,7 @@ async function sendEmailVerification({ to, link, tenantName, lang, expiresHours 
     ctaButton(link, L.verify_cta), L.verify_expires(expiresHours),
     `${L.link_fallback}<br>${escHtml(link)}`
   ), txLang(lang));
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.verify_subject, html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.verify_subject, html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -733,7 +746,7 @@ async function sendRegistrationApproved({ to, link, tenantName, lang, trialDays 
     L.approved_title, L.approved_intro(tenantName, trialDays), infoRow(L.org, escHtml(tenantName)),
     ctaButton(link, L.approved_cta), '', ''
   ), txLang(lang));
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.approved_subject(tenantName), html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.approved_subject(tenantName), html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -746,7 +759,7 @@ async function sendTrialEnded({ to, link, tenantName, lang }) {
     L.trial_title, L.trial_intro(tenantName), infoRow(L.org, escHtml(tenantName)),
     ctaButton(link, L.trial_cta), '', ''
   ), txLang(lang));
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.trial_subject(tenantName), html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.trial_subject(tenantName), html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -767,7 +780,7 @@ async function sendRegistrationNotice({ to, tenant, email, mode, ip, link }) {
     infoRow('IP', escHtml(ip || '—'));
   const cta = mode === 'approve' && link ? ctaButton(link, 'Відкрити організації') : '';
   const html = wrapHtml(`<h2 style="margin:0 0 12px;">Нова реєстрація</h2><table>${rows}</table>${cta}<p style="color:#888;font-size:12px;">id ${escHtml(String(t.id || ''))}</p>`);
-  const { error } = await resend.emails.send({
+  const { error } = await dispatch({
     from: fromAddress, to, replyTo: email || undefined,
     subject: `Нова реєстрація: ${t.name || email || ''}${mode === 'approve' ? ' — потрібне схвалення' : ''}`, html,
   });
@@ -958,7 +971,7 @@ async function sendScheduledReport({ to, lang, tenantName, type, cadence, period
     (parts > 1 ? infoRow('', L.part(part, parts)) : '');
   const html = wrapHtml(txBody(typeName, L.intro(L.cadence[cadence] || cadence, tenantName, period), rows, ctaButton(link, L.cta), L.note, ''), l);
   const subject = `${L.subject(typeName, tenantName, period)}${parts > 1 ? ` (${part}/${parts})` : ''}`;
-  const { error } = await resend.emails.send({
+  const { error } = await dispatch({
     from: fromAddress, to, subject, html,
     attachments: attachments && attachments.length ? attachments : undefined,
   });
@@ -1000,7 +1013,7 @@ async function sendInvoice({ to, lang, invoice, seller, tenantName, pdf }) {
     L.invoice_title, L.invoice_intro(tenantName, `${formatDate(invoice.period_start, l)} – ${formatDate(end, l)}`),
     billingRows(L, invoice, seller, l), ctaButton(spaLink('billing'), L.cta), L.attached, ''
   ), l);
-  const { error } = await resend.emails.send({
+  const { error } = await dispatch({
     from: fromAddress, to, subject: L.invoice_subject(invoice.number, tenantName), html,
     attachments: pdf ? [{ filename: `${invoice.number}.pdf`, content: Buffer.from(pdf).toString('base64') }] : undefined,
   });
@@ -1020,7 +1033,7 @@ async function sendDunning({ to, lang, invoice, seller, tenantName, stage }) {
     L[`dunning_title_${s}`], L[`dunning_intro_${s}`](tenantName, invoice.number, escHtml(amount)),
     billingRows(L, invoice, seller, l), ctaButton(spaLink('billing'), L.cta), L.dunning_note, ''
   ), l);
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: L.dunning_subject(s, invoice.number), html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: L.dunning_subject(s, invoice.number), html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -1036,7 +1049,7 @@ async function sendPlanRequest({ to, request }) {
     infoRow('Хто', escHtml(r.by || '—'));
   const message = r.message ? `<p style="white-space:pre-wrap;">${escHtml(r.message)}</p>` : '';
   const html = wrapHtml(`<h2 style="margin:0 0 12px;">Запит на зміну плану</h2><table>${rows}</table>${message}${ctaButton(spaLink('admin/billing'), 'Відкрити білінг')}`);
-  const { error } = await resend.emails.send({ from: fromAddress, to, subject: `Зміна плану: ${r.tenant_name || ''} → ${r.requested_plan || ''}`, html });
+  const { error } = await dispatch({ from: fromAddress, to, subject: `Зміна плану: ${r.tenant_name || ''} → ${r.requested_plan || ''}`, html });
   if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
   return true;
 }
@@ -1047,5 +1060,11 @@ module.exports = {
   sendEmailVerification, sendRegistrationApproved, sendTrialEnded, sendRegistrationNotice,
   // scripts/check-locales.js and test/notification-templates.test.js
   __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL, REPORTS },
-  __test: { buildEmail },
+  __test: {
+    buildEmail,
+    /** Inject a fake Resend client (tests): { emails: { send } }, with the from/reply-to the env would set. */
+    setClient(client, { from = 'alerts@test.local', replyTo = null } = {}) {
+      resend = client; fromAddress = from; replyToAddress = replyTo;
+    },
+  },
 };
