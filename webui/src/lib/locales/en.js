@@ -718,6 +718,12 @@ export default {
     model_placeholder: 'e.g. ModESP-4R',
     comment_placeholder: 'Notes about this device...',
     manufactured_at: 'Manufactured',
+    haccp_section: 'HACCP: critical limits',
+    haccp_product: 'Product / purpose',
+    haccp_product_placeholder: 'e.g. frozen semi-finished goods',
+    haccp_min: 'Lower limit, °C',
+    haccp_max: 'Upper limit, °C',
+    haccp_hint: 'The temperature-control journal flags every interval where the air temperature leaves these limits as a deviation. Empty: the controller\'s own alarm limits are used.',
     manufactured_placeholder: 'YYYY-MM-DD',
     // Service records
     tab_service: 'Service',

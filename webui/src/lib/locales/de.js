@@ -718,6 +718,12 @@ export default {
     model_placeholder: 'z.B. ModESP-4R',
     comment_placeholder: 'Anmerkungen zu diesem Gerät...',
     manufactured_at: 'Hergestellt',
+    haccp_section: 'HACCP: kritische Grenzwerte',
+    haccp_product: 'Produkt / Zweck',
+    haccp_product_placeholder: 'z. B. tiefgekühlte Halbfertigware',
+    haccp_min: 'Untere Grenze, °C',
+    haccp_max: 'Obere Grenze, °C',
+    haccp_hint: 'Das Temperaturkontrollprotokoll kennzeichnet jedes Intervall, in dem die Lufttemperatur diese Grenzen verlässt, als Abweichung. Leer: die Alarmgrenzen des Reglers selbst gelten.',
     manufactured_placeholder: 'JJJJ-MM-TT',
     // Service records
     tab_service: 'Wartung',

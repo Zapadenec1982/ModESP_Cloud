@@ -143,7 +143,7 @@ async function loadSites(tenantId, siteId = null) {
 
 async function loadDevices(tenantId, siteId) {
   const { rows } = await db.query(
-    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model
+    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
        FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
     [siteId, tenantId]);
   return rows;

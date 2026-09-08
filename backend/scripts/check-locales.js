@@ -19,6 +19,7 @@ const email    = require('../src/services/email');
 const webpush  = require('../src/services/webpush');
 const invoicePdf = require('../src/services/invoice-pdf');
 const periodReports = require('../src/services/period-reports');
+const haccpReport = require('../src/services/haccp-report');
 
 const flatten = (obj, prefix = '', out = new Set()) => {
   for (const [k, v] of Object.entries(obj)) {
@@ -48,5 +49,6 @@ for (const [name, dict] of Object.entries(email.__strings)) check(`email.${name}
 for (const [name, dict] of Object.entries(webpush.__strings)) check(`webpush.${name}`, dict);
 check('invoice-pdf.STRINGS', invoicePdf.STRINGS);
 check('period-reports.STRINGS', periodReports.STRINGS);
+check('haccp-report.STRINGS', haccpReport.STRINGS);
 
 process.exit(failed ? 1 : 0);

@@ -172,6 +172,30 @@
             ],
             "example": "2025-03-01"
           },
+          "haccp_min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "HACCP lower critical limit, °C (null: the controller's own limit is used in the journal)",
+            "example": -18
+          },
+          "haccp_max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "HACCP upper critical limit, °C",
+            "example": -15
+          },
+          "haccp_product": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the equipment stores, printed in the HACCP journal",
+            "example": "frozen semi-finished goods"
+          },
           "firmware_version": {
             "type": [
               "string",
@@ -290,6 +314,9 @@
           "model",
           "comment",
           "manufactured_at",
+          "haccp_min",
+          "haccp_max",
+          "haccp_product",
           "firmware_version",
           "online",
           "status",
@@ -362,6 +389,30 @@
               "null"
             ],
             "example": "2025-03-01"
+          },
+          "haccp_min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "HACCP lower critical limit, °C (null: the controller's own limit is used in the journal)",
+            "example": -18
+          },
+          "haccp_max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "HACCP upper critical limit, °C",
+            "example": -15
+          },
+          "haccp_product": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the equipment stores, printed in the HACCP journal",
+            "example": "frozen semi-finished goods"
           },
           "firmware_version": {
             "type": [
@@ -560,6 +611,9 @@
           "model",
           "comment",
           "manufactured_at",
+          "haccp_min",
+          "haccp_max",
+          "haccp_product",
           "firmware_version",
           "online",
           "status",
@@ -2236,6 +2290,32 @@
                     "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "example": "2025-03-01"
                   },
+                  "haccp_min": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": -99,
+                    "maximum": 99,
+                    "description": "HACCP lower critical limit, °C; must stay below haccp_max"
+                  },
+                  "haccp_max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": -99,
+                    "maximum": 99,
+                    "description": "HACCP upper critical limit, °C"
+                  },
+                  "haccp_product": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 96,
+                    "description": "What the equipment stores"
+                  },
                   "model_id": {
                     "type": [
                       "string",
@@ -2400,6 +2480,30 @@
                           "format": "date-time",
                           "example": "2026-09-08T20:53:29.427Z"
                         },
+                        "haccp_min": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "HACCP lower critical limit, °C (null: the controller's own limit is used in the journal)",
+                          "example": -18
+                        },
+                        "haccp_max": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "HACCP upper critical limit, °C",
+                          "example": -15
+                        },
+                        "haccp_product": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "description": "What the equipment stores, printed in the HACCP journal",
+                          "example": "frozen semi-finished goods"
+                        },
                         "latitude": {
                           "type": [
                             "number",
@@ -2433,6 +2537,9 @@
                         "firmware_version",
                         "status",
                         "created_at",
+                        "haccp_min",
+                        "haccp_max",
+                        "haccp_product",
                         "latitude",
                         "longitude",
                         "site_id"
