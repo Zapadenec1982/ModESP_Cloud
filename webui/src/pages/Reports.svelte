@@ -1,0 +1,385 @@
+<script>
+  // Reports (plan epic 2.7): the organisation's standing report orders and
+  // the archive of everything generated for it. Any role reaches the page;
+  // the archive narrows to the caller's sites server-side and the schedule
+  // section shows for administrators only.
+  import { onMount } from 'svelte'
+  import {
+    getReportSchedules, createReportSchedule, updateReportSchedule, deleteReportSchedule, runReportSchedule,
+    getReports, downloadReport, getSites,
+  } from '../lib/api.js'
+  import { isAdmin } from '../lib/stores.js'
+  import { t, locale } from '../lib/i18n.js'
+  import { toast } from '../lib/toast.js'
+  import { formatDate } from '../lib/format.js'
+  import PageHeader from '../components/layout/PageHeader.svelte'
+  import Button from '../components/ui/Button.svelte'
+  import Badge from '../components/ui/Badge.svelte'
+  import Icon from '../components/ui/Icon.svelte'
+  import Skeleton from '../components/ui/Skeleton.svelte'
+
+  const TYPES = ['haccp', 'alarms', 'energy']
+  const CADENCES = ['monthly', 'weekly']
+  const LANGS = ['uk', 'en', 'pl', 'de']
+  const PAGE = 50
+
+  let loading = true
+  let schedules = []
+  let sites = []
+  let reports = []
+  let total = 0
+  let filterType = ''
+  let filterSite = ''
+  let onlyScheduled = false
+
+  let editing = null        // null | { id? } — the schedule being edited, {} for a new one
+  let form = blank()
+  let saving = false
+  let running = null
+  let downloading = null
+
+  $: localeCode = $t('time.locale_code')
+  const day = (d) => (d ? new Date(d).toLocaleDateString(localeCode, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—')
+  // period_to is the exclusive end (midnight after the last day)
+  const periodText = (r) => `${day(r.period_from)} — ${day(new Date(new Date(r.period_to).getTime() - 1))}`
+
+  function blank() {
+    return { site_id: '', type: 'haccp', cadence: 'monthly', recipients: '', lang: $locale || 'uk', enabled: true }
+  }
+
+  function filters() {
+    return { type: filterType, site_id: filterSite, scheduled: onlyScheduled ? 'true' : '' }
+  }
+
+  async function load() {
+    loading = true
+    try {
+      const [rep, sch, st] = await Promise.all([
+        getReports({ limit: PAGE, ...filters() }),
+        $isAdmin ? getReportSchedules() : Promise.resolve([]),
+        getSites().catch(() => []),
+      ])
+      reports = rep.data || []
+      total = rep.meta?.total ?? reports.length
+      schedules = sch || []
+      sites = Array.isArray(st) ? st : (st?.data || [])
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      loading = false
+    }
+  }
+
+  async function loadMore() {
+    try {
+      const rep = await getReports({ limit: PAGE, offset: reports.length, ...filters() })
+      reports = [...reports, ...(rep.data || [])]
+      total = rep.meta?.total ?? total
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  onMount(load)
+
+  // ── Schedules ──
+
+  function openNew() {
+    form = blank()
+    editing = {}
+  }
+
+  function edit(s) {
+    form = { site_id: s.site_id || '', type: s.type, cadence: s.cadence, recipients: s.recipients.join(', '), lang: s.lang, enabled: s.enabled }
+    editing = s
+  }
+
+  async function save() {
+    const recipients = form.recipients.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
+    if (recipients.length === 0) { toast.error($t('reports.recipients_required')); return }
+    saving = true
+    try {
+      const body = { site_id: form.site_id || null, type: form.type, cadence: form.cadence, recipients, lang: form.lang, enabled: form.enabled }
+      if (editing && editing.id) await updateReportSchedule(editing.id, body)
+      else await createReportSchedule(body)
+      toast.success($t('reports.saved'))
+      editing = null
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      saving = false
+    }
+  }
+
+  async function toggle(s) {
+    try {
+      await updateReportSchedule(s.id, { enabled: !s.enabled })
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function runNow(s) {
+    if (!confirm($t('reports.run_confirm'))) return
+    running = s.id
+    try {
+      const res = await runReportSchedule(s.id)
+      const sent = (res.reports || []).filter(r => r.code)
+      if (res.status === 'ok') toast.success($t('reports.run_done', sent.map(r => `${r.site} (${r.code})`).join(', ')), 10000)
+      else if (res.status === 'empty') toast.info($t('reports.run_empty'), 8000)
+      else toast.error($t('reports.run_error', (res.reports || []).find(r => r.error)?.error || res.status))
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      running = null
+    }
+  }
+
+  async function remove(s) {
+    if (!confirm($t('reports.delete_confirm'))) return
+    try {
+      await deleteReportSchedule(s.id)
+      toast.success($t('reports.deleted'))
+      await load()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const statusVariant = (st) => (st === 'ok' ? 'success' : st === 'error' ? 'danger' : 'neutral')
+
+  // ── Archive ──
+
+  async function download(r) {
+    downloading = r.code
+    try {
+      await downloadReport(r.code, r.file_name)
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      downloading = null
+    }
+  }
+</script>
+
+<div class="reports">
+  <PageHeader title={$t('pages.reports')} subtitle={$t('pages.reports_sub')}>
+    <Button variant="secondary" size="sm" on:click={load}><Icon name="refresh" size={14} /> {$t('common.refresh')}</Button>
+    {#if $isAdmin}
+      <Button size="sm" on:click={openNew}><Icon name="plus" size={14} /> {$t('reports.new_schedule')}</Button>
+    {/if}
+  </PageHeader>
+
+  {#if $isAdmin}
+    <section class="card">
+      <div class="card-head">
+        <h2><Icon name="clock" size={18} /> {$t('reports.schedules_title')}</h2>
+        <span class="count">{schedules.length}</span>
+      </div>
+      <p class="muted">{$t('reports.schedules_intro')}</p>
+
+      {#if editing}
+        <form class="sched-form" on:submit|preventDefault={save}>
+          <label>
+            <span>{$t('reports.site')}</span>
+            <select bind:value={form.site_id} disabled={saving}>
+              <option value="">{$t('reports.all_sites')}</option>
+              {#each sites as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>{$t('reports.type')}</span>
+            <select bind:value={form.type} disabled={saving}>
+              {#each TYPES as ty}<option value={ty}>{$t('reports.type_' + ty)}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>{$t('reports.cadence')}</span>
+            <select bind:value={form.cadence} disabled={saving}>
+              {#each CADENCES as c}<option value={c}>{$t('reports.cadence_' + c)}</option>{/each}
+            </select>
+          </label>
+          <label>
+            <span>{$t('reports.lang')}</span>
+            <select bind:value={form.lang} disabled={saving}>
+              {#each LANGS as l}<option value={l}>{l.toUpperCase()}</option>{/each}
+            </select>
+          </label>
+          <label class="wide">
+            <span>{$t('reports.recipients')} <small class="muted-inline">({$t('reports.recipients_hint')})</small></span>
+            <textarea rows="2" bind:value={form.recipients} placeholder="haccp@company.ua, owner@company.ua" disabled={saving}></textarea>
+          </label>
+          <label class="check">
+            <input type="checkbox" bind:checked={form.enabled} disabled={saving} /> {$t('reports.enabled')}
+          </label>
+          <div class="row">
+            <Button size="sm" type="submit" disabled={saving}>{editing.id ? $t('reports.save') : $t('reports.create')}</Button>
+            <Button size="sm" variant="ghost" type="button" on:click={() => (editing = null)} disabled={saving}>{$t('common.cancel')}</Button>
+          </div>
+          <p class="muted small">{$t('reports.form_hint')}</p>
+        </form>
+      {/if}
+
+      {#if schedules.length === 0}
+        {#if !editing}<p class="muted">{$t('reports.no_schedules')}</p>{/if}
+      {:else}
+        <div class="table">
+          <div class="thead sched">
+            <span>{$t('reports.col_schedule')}</span>
+            <span>{$t('reports.col_recipients')}</span>
+            <span>{$t('reports.col_next')}</span>
+            <span>{$t('reports.col_last')}</span>
+            <span></span>
+          </div>
+          {#each schedules as s (s.id)}
+            <div class="trow sched" class:off={!s.enabled}>
+              <span class="cell">
+                <strong>{s.site_name || $t('reports.all_sites')}</strong>
+                <small>{$t('reports.type_' + s.type)} · {$t('reports.cadence_' + s.cadence)} · {s.lang.toUpperCase()}{#if !s.enabled} · {$t('reports.paused')}{/if}</small>
+              </span>
+              <span class="cell recipients">{s.recipients.join(', ')}</span>
+              <span class="cell">{s.enabled ? formatDate(s.next_run_at) : '—'}</span>
+              <span class="cell">
+                {#if s.last_run_at}
+                  {formatDate(s.last_run_at)}
+                  <Badge variant={statusVariant(s.last_status)} size="sm">{$t('reports.status_' + (s.last_status || 'ok'))}</Badge>
+                  {#if s.last_error}<small class="err" title={s.last_error}>{s.last_error}</small>{/if}
+                {:else}
+                  —
+                {/if}
+              </span>
+              <span class="cell actions">
+                <Button size="sm" variant="secondary" disabled={running === s.id} on:click={() => runNow(s)}>
+                  {running === s.id ? $t('reports.running') : $t('reports.run_now')}
+                </Button>
+                <Button size="sm" variant="ghost" on:click={() => toggle(s)}>{s.enabled ? $t('reports.pause') : $t('reports.resume')}</Button>
+                <Button size="sm" variant="ghost" on:click={() => edit(s)} title={$t('reports.edit_schedule')}><Icon name="edit" size={14} /></Button>
+                <Button size="sm" variant="ghost" on:click={() => remove(s)} title={$t('common.delete')}><Icon name="trash" size={14} /></Button>
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="card">
+    <div class="card-head">
+      <h2><Icon name="file-text" size={18} /> {$t('reports.archive_title')}</h2>
+      <span class="count">{total}</span>
+    </div>
+    <p class="muted">{$t('reports.archive_intro')}</p>
+
+    <div class="filters">
+      <select bind:value={filterType} on:change={load}>
+        <option value="">{$t('reports.all_types')}</option>
+        {#each TYPES as ty}<option value={ty}>{$t('reports.type_' + ty)}</option>{/each}
+      </select>
+      <select bind:value={filterSite} on:change={load}>
+        <option value="">{$t('reports.all_sites')}</option>
+        {#each sites as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+      </select>
+      <label class="check"><input type="checkbox" bind:checked={onlyScheduled} on:change={load} /> {$t('reports.only_scheduled')}</label>
+    </div>
+
+    {#if loading && reports.length === 0}
+      <Skeleton height="120px" />
+    {:else if reports.length === 0}
+      <p class="muted">{$t('reports.no_reports')}</p>
+    {:else}
+      <div class="table">
+        <div class="thead arch">
+          <span>{$t('reports.col_date')}</span>
+          <span>{$t('reports.col_report')}</span>
+          <span>{$t('reports.col_object')}</span>
+          <span>{$t('reports.col_period')}</span>
+          <span>{$t('reports.col_code')}</span>
+          <span></span>
+        </div>
+        {#each reports as r (r.code)}
+          <div class="trow arch">
+            <span class="cell">{formatDate(r.generated_at)}</span>
+            <span class="cell">
+              <strong>{$t('reports.type_' + r.report_type)}</strong>
+              <small>{r.schedule_id ? $t('reports.scheduled') : $t('reports.manual')} · {(r.lang || 'uk').toUpperCase()}{#if r.source === 'hourly'} · {$t('reports.hourly')}{/if}</small>
+            </span>
+            <span class="cell">{r.site_name || r.device_name || r.device_id || '—'}</span>
+            <span class="cell">{periodText(r)}</span>
+            <span class="cell mono">{r.code}</span>
+            <span class="cell actions">
+              {#if r.archived}
+                <Button size="sm" variant="secondary" disabled={downloading === r.code} on:click={() => download(r)}>
+                  <Icon name="download" size={14} /> {$t('reports.download')}
+                </Button>
+              {:else}
+                <small class="muted-inline">{$t('reports.not_archived')}</small>
+              {/if}
+            </span>
+          </div>
+        {/each}
+      </div>
+      {#if reports.length < total}
+        <div class="row"><Button size="sm" variant="secondary" on:click={loadMore}>{$t('reports.load_more')} ({total - reports.length})</Button></div>
+      {/if}
+    {/if}
+  </section>
+</div>
+
+<style>
+  .reports { display: flex; flex-direction: column; gap: var(--space-4); }
+  .card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
+  .card-head h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--text-primary); }
+  .count { font-size: var(--text-xs); color: var(--text-muted); background: var(--bg-tertiary); border-radius: 999px; padding: 2px 8px; }
+  .muted { color: var(--text-muted); font-size: var(--text-sm); margin: 0 0 var(--space-3); line-height: 1.5; }
+  .muted.small { font-size: var(--text-xs); margin: var(--space-2) 0 0; }
+  .muted-inline { color: var(--text-muted); font-size: var(--text-xs); font-weight: 400; }
+  .row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+
+  .sched-form {
+    display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: var(--space-3);
+    padding: var(--space-3); margin-bottom: var(--space-3);
+    background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  }
+  .sched-form label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-muted); }
+  .sched-form label.wide { grid-column: 1 / -1; }
+  .sched-form label.check { flex-direction: row; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); grid-column: 1 / -1; }
+  .sched-form .row { grid-column: 1 / -1; margin-top: 0; }
+  .sched-form .muted { grid-column: 1 / -1; }
+  .sched-form select, .sched-form textarea, .filters select {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+    color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm);
+  }
+  .sched-form textarea { resize: vertical; min-height: 44px; }
+
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+  .filters .check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); }
+
+  .table { display: flex; flex-direction: column; font-size: var(--text-sm); overflow-x: auto; }
+  .thead, .trow { display: grid; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; }
+  .thead.sched, .trow.sched { grid-template-columns: 1.6fr 1.6fr 1fr 1.4fr auto; min-width: 860px; }
+  .thead.arch, .trow.arch { grid-template-columns: 1fr 1.3fr 1.3fr 1.3fr 1fr auto; min-width: 860px; }
+  .thead { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-bottom: 1px solid var(--border-default); }
+  .trow { border-bottom: 1px solid var(--border-muted); }
+  .trow.off { opacity: 0.6; }
+  .cell { color: var(--text-secondary); word-break: break-word; }
+  .cell strong { color: var(--text-primary); font-weight: 600; display: block; }
+  .cell small { display: block; color: var(--text-muted); font-size: var(--text-xs); }
+  .cell small.err { color: var(--accent-red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+  .cell.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+  .cell.recipients { font-size: var(--text-xs); }
+  .cell.actions { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+
+  @media (max-width: 900px) {
+    .sched-form { grid-template-columns: 1fr 1fr; }
+  }
+</style>

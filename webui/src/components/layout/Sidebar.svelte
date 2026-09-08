@@ -37,6 +37,8 @@
     // Any authenticated role: GET /api/sites narrows by RBAC rather than by role,
     // and the page hides its own write controls from a non-admin.
     { path: '/sites',         icon: 'building', label: $t('nav.sites') },
+    // Reports (plan epic 2.7): the archive narrows by site access; the schedules inside are admin-only
+    { path: '/reports',       icon: 'file-text', label: $t('nav.reports') },
     { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
     { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware') },
     { section: $t('nav.sections.admin'), admin: true },

@@ -18,6 +18,7 @@ const telegram = require('../src/services/telegram');
 const email    = require('../src/services/email');
 const webpush  = require('../src/services/webpush');
 const invoicePdf = require('../src/services/invoice-pdf');
+const periodReports = require('../src/services/period-reports');
 
 const flatten = (obj, prefix = '', out = new Set()) => {
   for (const [k, v] of Object.entries(obj)) {
@@ -46,5 +47,6 @@ check('telegram.STRINGS', telegram.__strings.STRINGS);
 for (const [name, dict] of Object.entries(email.__strings)) check(`email.${name}`, dict);
 for (const [name, dict] of Object.entries(webpush.__strings)) check(`webpush.${name}`, dict);
 check('invoice-pdf.STRINGS', invoicePdf.STRINGS);
+check('period-reports.STRINGS', periodReports.STRINGS);
 
 process.exit(failed ? 1 : 0);

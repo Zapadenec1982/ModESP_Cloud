@@ -922,6 +922,68 @@ CSV export алармів.
 пристрій. Admin бачить усі точки організації; technician/viewer — лише з грантом у
 `user_sites` (інакше `403`). Параметри й заголовки — як у пристрою.
 
+### Планові звіти (plan epic 2.7)
+
+Розклад (`report_schedules`) — «стояче замовлення»: щотижня або щомісяця звіт однієї точки (або кожної
+точки організації) формується за період, що щойно завершився, зберігається в архіві і йде одержувачам
+листом із PDF у вкладенні. Періоди — цілі місцеві тижні (пн–нд) і місяці в часовому поясі точки
+(організації — для розкладу «усі точки»); відправка о 06:00 місцевого часу 1-го числа або в понеділок
+(`REPORT_SCHEDULE_INTERVAL_MIN`, типово щогодинна перевірка). Період ніколи не йде двічі: розклад
+пам'ятає кінець останнього доставленого періоду, ручний запуск теж рахується. Три типи: `haccp` —
+той самий документ, що й `GET /sites/:id/export.pdf`; `alarms` — аварії точки за період (підсумок за
+важливістю й обладнанням, час до підтвердження, журнал; тиждень без аварій — теж документ); `energy` —
+кВт·год з каналу `energy` на кожен пристрій, години роботи компресора з подій, вартість за тарифом
+організації (потребує функції плану `energy`). Функція плану `reports` потрібна для всього розділу.
+
+#### `GET /reports/schedules` · `POST /reports/schedules`
+**Ролі:** admin. Body створення:
+```json
+{ "site_id": "uuid | null", "type": "haccp | alarms | energy", "cadence": "monthly | weekly",
+  "recipients": ["haccp@company.ua"], "lang": "uk", "bucket": "1h", "enabled": true }
+```
+`site_id: null` — усі точки організації (один лист, окремий PDF на точку, до 10 вкладень на лист).
+`recipients` — 1–10 адрес. До 50 розкладів на організацію (`409 limit_reached`). **Response 201:**
+```json
+{ "data": { "id": "uuid", "site_id": "uuid", "site_name": "Магазин №1", "type": "haccp", "cadence": "monthly",
+  "recipients": ["haccp@company.ua"], "lang": "uk", "bucket": "1h", "enabled": true,
+  "next_run_at": "2026-10-01T03:00:00Z", "last_run_at": null, "last_period_to": null, "last_status": null, "last_error": null,
+  "created_by": "admin@company.ua", "created_at": "…", "updated_at": "…" } }
+```
+`last_status`: `ok` (надіслано з вкладенням) | `empty` (даних не було, лист без вкладення) | `error` (`last_error`
+пояснює: `plan_feature`, помилка пошти чи генерації). `402 plan_feature` без функції `reports` (або `energy`
+для цього типу).
+
+#### `PATCH /reports/schedules/:id` · `DELETE /reports/schedules/:id`
+**Ролі:** admin. Ті самі поля, всі необов'язкові; зміна періодичності або точки перераховує `next_run_at`.
+Видалення розкладу не чіпає сформованих звітів (`report_exports.schedule_id` стає NULL).
+
+#### `POST /reports/schedules/:id/run`
+**Ролі:** admin. Сформувати й надіслати звіт за останній цілий період зараз (повторно — теж, якщо вже йшов).
+```json
+{ "data": { "status": "ok", "emailed": true, "period": { "from": "…", "to": "…" }, "tz": "Europe/Kyiv", "next_run_at": "…",
+  "reports": [ { "site_id": "uuid", "site": "Магазин №1", "code": "ABCD-EFGH-JKLM", "file_name": "haccp_Магазин_1_2026-08-01_2026-08-31.pdf",
+                 "empty": false, "error": null, "source": "raw" } ] } }
+```
+
+#### `GET /reports`
+Архів організації — усе з `report_exports`, найновіше зверху. **Ролі:** будь-яка; технік і переглядач бачать
+лише звіти своїх точок і пристроїв. Query: `type=haccp|alarms|energy`, `site_id`, `scheduled=true`,
+`limit` (≤200), `offset`.
+```json
+{ "data": [ { "code": "ABCD-EFGH-JKLM", "kind": "site", "report_type": "haccp", "device_id": null, "device_name": null,
+              "site_id": "uuid", "site_name": "Магазин №1", "period_from": "…", "period_to": "…", "bucket": "1h", "source": "raw",
+              "lang": "uk", "generated_by": "schedule", "generated_at": "…", "schedule_id": "uuid",
+              "file_name": "haccp_….pdf", "bytes": 48213, "archived": true } ],
+  "meta": { "total": 1, "limit": 50, "offset": 0 } }
+```
+`archived: true` — PDF збережено і його можна завантажити; разові експорти реєструють лише код і хеш.
+`REPORT_ARCHIVE_DAYS` (типово 3 роки) — після цього PDF видаляється, код і SHA-256 лишаються для перевірки.
+
+#### `GET /reports/:code/download`
+PDF планового звіту з архіву (`Content-Type: application/pdf`, заголовки `X-Report-Code`, `X-Report-Sha256`,
+`X-Report-Source`, ім'я файла за RFC 5987). `404`, якщо звіту немає, він не з архіву або точка недоступна.
+
+
 ### `GET /api/public/report/:code`
 Перевірка справжності звіту. **Без автентифікації**, лімітер `/api/public`. Код із футера
 (дефіси й регістр не важливі). Повертає лише те, що вже надруковано у звіті:
@@ -2706,3 +2768,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-09-02 — Епік 1.2: `GET /sites/:id/weather`, `GET /sites/:id/weather/history` і `POST /map/route` відповідають `402 plan_feature` поза планами з функціями `weather`/`routing`.
 - 2026-09-08 — Самореєстрація (епік 2.1): `GET /auth/registration`, `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`; `401 email_not_verified | pending_approval` на вході; `POST /tenants/:id/approve | reject` і поля `registered_at/approved_at/awaiting_approval` у `GET /tenants`; чек-ліст `GET /onboarding`, `POST /onboarding/dismiss`; `trial_expires_at` у `tenant` відповідей входу.
 - 2026-09-08 — Сесії і другий фактор (епік 2.9): refresh-токен у httpOnly-cookie `modesp_rt` + `csrf_token`/`X-CSRF-Token` для браузера (тіло `refresh_token` для API-клієнтів лишається), одноразові refresh-токени з `401 token_reused`, `sid` у access-токені; `POST /auth/mfa/verify`, `GET /auth/mfa`, `POST /auth/mfa/setup | enable | disable | backup-codes`; `GET/DELETE /auth/sessions`, `DELETE /auth/sessions/:id`; `DELETE /users/:id/sessions`, `DELETE /users/:id/mfa`.
+- 2026-09-08 — Планові звіти (епік 2.7): `GET/POST /reports/schedules`, `PATCH/DELETE /reports/schedules/:id`, `POST /reports/schedules/:id/run`; архів `GET /reports` і `GET /reports/:code/download`; типи `haccp | alarms | energy`, щотижня/щомісяця, лист з PDF у вкладенні.

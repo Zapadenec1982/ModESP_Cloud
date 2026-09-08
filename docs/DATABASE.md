@@ -863,6 +863,48 @@ ALTER TABLE users
 
 ---
 
+## Планові звіти (migration 040)
+
+```sql
+CREATE TABLE report_schedules (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  site_id        UUID REFERENCES sites(id) ON DELETE CASCADE,       -- NULL = усі точки організації
+  type           VARCHAR(8) NOT NULL CHECK (type IN ('haccp', 'alarms', 'energy')),
+  cadence        VARCHAR(8) NOT NULL CHECK (cadence IN ('weekly', 'monthly')),
+  recipients     TEXT[] NOT NULL,
+  lang           VARCHAR(2) NOT NULL DEFAULT 'uk',
+  bucket         VARCHAR(4) NOT NULL DEFAULT '1h',
+  enabled        BOOLEAN NOT NULL DEFAULT true,
+  next_run_at    TIMESTAMPTZ NOT NULL,                              -- 06:00 місцевого часу 1-го числа / понеділка
+  last_run_at    TIMESTAMPTZ,
+  last_period_to TIMESTAMPTZ,                                       -- кінець останнього доставленого періоду: двічі не йде
+  last_status    VARCHAR(8),                                        -- ok | empty | error
+  last_error     TEXT,
+  created_by     UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_report_schedules_due ON report_schedules (next_run_at) WHERE enabled;
+
+ALTER TABLE report_exports
+  ADD COLUMN report_type VARCHAR(8) NOT NULL DEFAULT 'haccp',      -- haccp | alarms | energy
+  ADD COLUMN schedule_id UUID REFERENCES report_schedules(id) ON DELETE SET NULL,
+  ADD COLUMN file_name   VARCHAR(160),
+  ADD COLUMN bytes       INT,
+  ADD COLUMN pdf         BYTEA;                                     -- лише планові звіти
+```
+
+> `services/report-scheduler.js` раз на годину (`REPORT_SCHEDULE_INTERVAL_MIN`) бере розклади з
+> `next_run_at <= now()` у відкритих організаціях, ріже період у часовому поясі точки (цілий минулий
+> місяць або тиждень пн–нд), формує PDF на кожну точку (`haccp-report.js`, `period-reports.js`), кладе
+> його в `report_exports.pdf` і надсилає лист. Разові експорти PDF не зберігають — лише код і хеш.
+> `REPORT_ARCHIVE_DAYS` (типово 1095) обнуляє `pdf` старих рядків; метадані лишаються, тож
+> `GET /api/public/report/:code` працює далі. `report_exports` для організації видаляється в
+> `tenant-delete.js`; `report_schedules` каскадом від `tenants`.
+
+---
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -940,3 +982,5 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
   (`tenant_settings.onboarding JSONB`).
 - 2026-09-08 — Міграція 039: сесії (`refresh_tokens.family_id/user_agent/ip/last_used_at`) і другий фактор
   (`users.mfa_secret/mfa_pending_secret/mfa_enabled_at/mfa_backup_codes/mfa_last_step`).
+- 2026-09-08 — Міграція 040: планові звіти (`report_schedules`) і архів PDF
+  (`report_exports.report_type/schedule_id/file_name/bytes/pdf`).

@@ -1734,3 +1734,38 @@ export function updateProfile(data) {
     body: JSON.stringify(data),
   });
 }
+
+// ── Scheduled reports and the report archive (plan epic 2.7) ──
+
+/** GET /api/reports/schedules — the organisation's standing report orders (admin). */
+export function getReportSchedules() {
+  return request('/reports/schedules');
+}
+
+export function createReportSchedule(body) {
+  return request('/reports/schedules', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateReportSchedule(id, body) {
+  return request(`/reports/schedules/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteReportSchedule(id) {
+  return request(`/reports/schedules/${id}`, { method: 'DELETE' });
+}
+
+/** POST /api/reports/schedules/:id/run — generate and e-mail the last whole period now. */
+export function runReportSchedule(id) {
+  return request(`/reports/schedules/${id}/run`, { method: 'POST' });
+}
+
+/** GET /api/reports — the archive: { data, meta: { total, limit, offset } }. Non-admins see their sites only. */
+export function getReports(params = {}) {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+  return requestFull(`/reports${qs ? '?' + qs : ''}`);
+}
+
+/** GET /api/reports/:code/download — the archived PDF of a scheduled report. */
+export function downloadReport(code, fileName) {
+  return downloadFile(`/reports/${encodeURIComponent(code)}/download`, fileName || `report_${code}.pdf`);
+}
