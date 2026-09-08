@@ -45,6 +45,7 @@ const BATCH = 50;
 let logger  = null;
 let timer   = null;
 let running = false;
+let rerun = false;      // work arrived while a pass was running: run once more when it ends
 let attached = false;
 
 function log() { return logger || { info() {}, warn() {}, error() {}, debug() {} }; }
@@ -158,26 +159,37 @@ async function recordAttempt(delivery, hook, result, now) {
 
 /** Send every pending delivery whose time has come. Resolves the number attempted. */
 async function deliverDue({ now = new Date() } = {}) {
-  if (running) return 0;
+  // One pass at a time; a delivery queued while a pass runs is not lost — the
+  // pass repeats once it is through (the timer alone would delay it by a whole
+  // WEBHOOK_INTERVAL_SEC, or forever in tests that disable the timer).
+  if (running) { rerun = true; return 0; }
   running = true;
+  let total = 0;
+  let at = now;
   try {
-    const { rows } = await db.query(
-      `SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret, w.tenant_id, w.enabled
-         FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-        WHERE d.status = 'pending' AND d.next_attempt_at <= $1
-        ORDER BY d.next_attempt_at LIMIT ${BATCH}`, [now]);
-    for (const d of rows) {
-      const hook = { id: d.webhook_id, tenant_id: d.tenant_id, url: d.url, enabled: d.enabled };
-      if (!hook.enabled) {
-        await db.query(`UPDATE webhook_deliveries SET status = 'dead', error = 'webhook disabled' WHERE id = $1`, [d.id]);
-        continue;
+    do {
+      rerun = false;
+      const { rows } = await db.query(
+        `SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret, w.tenant_id, w.enabled
+           FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
+          WHERE d.status = 'pending' AND d.next_attempt_at <= $1
+          ORDER BY d.next_attempt_at LIMIT ${BATCH}`, [at]);
+      for (const d of rows) {
+        const hook = { id: d.webhook_id, tenant_id: d.tenant_id, url: d.url, enabled: d.enabled };
+        if (!hook.enabled) {
+          await db.query(`UPDATE webhook_deliveries SET status = 'dead', error = 'webhook disabled' WHERE id = $1`, [d.id]);
+          continue;
+        }
+        const result = await post(hook.url, decryptSecret(d.secret), { id: d.id, event: d.event, payload: d.payload });
+        await recordAttempt(d, hook, result, at);
       }
-      const result = await post(hook.url, decryptSecret(d.secret), { id: d.id, event: d.event, payload: d.payload });
-      await recordAttempt(d, hook, result, now);
-    }
-    return rows.length;
+      total += rows.length;
+      at = new Date();
+    } while (rerun);
+    return total;
   } finally {
     running = false;
+    rerun = false;
   }
 }
 
