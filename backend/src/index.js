@@ -25,6 +25,7 @@ const billingSvc  = require('./services/billing');
 const lifecycleSvc = require('./services/tenant-lifecycle');
 const tenantExportSvc = require('./services/tenant-export');
 const webhooksSvc = require('./services/webhooks');
+const importSvc = require('./services/device-import');
 const { readOnlyWhenClosed } = require('./middleware/tenant-status');
 const reportSchedulerSvc = require('./services/report-scheduler');
 const registrationSvc = require('./services/registration');
@@ -478,6 +479,8 @@ if (AUTH_ENABLED) {
   // Integrations (plan epic 2.6): the organisation's API keys and webhooks
   app.use('/api/api-keys', authorize('admin'), require('./routes/api-keys'));
   app.use('/api/webhooks', authorize('admin'), require('./routes/webhooks'));
+  // CSV import jobs (plan epic 2.12); the upload lives at POST /api/devices/pending/batch
+  app.use('/api/imports',  authorize('admin'), require('./routes/imports'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -518,6 +521,7 @@ app.use('/api/map/route',             externalLimiter);
 app.use('/api/map/isochrones',        externalLimiter);
 app.use('/api/sites/:id/weather',     externalLimiter);
 app.use('/api/sites/geocode-pending', externalLimiter);
+app.use('/api/devices/pending/batch', externalLimiter);   // an import geocodes its new sites
 
 app.use('/api/sites',    require('./routes/sites'));       // trade points (торгові точки)
 app.use('/api/geo',      require('./routes/geo'));         // geocoder proxy
@@ -597,6 +601,8 @@ async function main() {
   tenantExportSvc.init(logger);
   // Webhooks (plan epic 2.6): signed deliveries of alarms, presence, work orders and hints
   webhooksSvc.start(logger);
+  // CSV imports (plan epic 2.12): pick up jobs a restart left pending
+  importSvc.init(logger);
   // Scheduled reports (plan epic 2.7): weekly/monthly PDFs, archived and e-mailed
   reportSchedulerSvc.start(logger);
 

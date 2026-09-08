@@ -1,9 +1,12 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getPendingDevices, assignDevice, deletePendingDevice, batchRegisterDevices, getTenants, claimDevice } from '../lib/api.js'
+  import {
+    getPendingDevices, assignDevice, deletePendingDevice, batchRegisterDevices, getTenants, claimDevice,
+    getImports, getImport, downloadImportCredentials, cancelImport, downloadImportTemplate,
+  } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { isSuperAdmin, navigate } from '../lib/stores.js'
-  import { timeAgo } from '../lib/format.js'
+  import { timeAgo, formatDate } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
@@ -64,9 +67,15 @@
   let batchFile = null
   let batchFileName = ''
   let batchUploading = false
-  let batchResults = null
   let batchTenantId = ''
   let fileInput
+  // The import runs as a background job (plan epic 2.12): the modal polls it
+  let batchJob = null
+  let batchPollTimer = null
+  let credsBusy = false
+  let cancelling = false
+  let imports = []
+  let importsMax = 2000
 
   function closeCredsModal() {
     credsResult = null
@@ -198,7 +207,7 @@
     batchModalOpen = true
     batchFile = null
     batchFileName = ''
-    batchResults = null
+    batchJob = null
     if ($isSuperAdmin && !tenantsLoaded) {
       getTenants().then(all => {
         tenantsList = all.filter(t =>
@@ -216,11 +225,68 @@
     batchModalOpen = false
     batchFile = null
     batchFileName = ''
-    if (batchResults) {
+    clearTimeout(batchPollTimer)
+    if (batchJob) {
       load()  // Refresh list after batch
+      loadImports()
     }
-    batchResults = null
+    batchJob = null
   }
+
+  // ── Import jobs ──
+  const jobActive = (j) => !!j && (j.status === 'pending' || j.status === 'running')
+
+  async function pollJob() {
+    if (!batchJob) return
+    try {
+      batchJob = await getImport(batchJob.id)
+    } catch (e) {
+      toast.error(e.message)
+      return
+    }
+    clearTimeout(batchPollTimer)
+    if (jobActive(batchJob)) {
+      batchPollTimer = setTimeout(pollJob, 2000)
+    } else {
+      load()
+      loadImports()
+      if (batchJob.status === 'failed') toast.error($t('pending.batch_status_failed_msg', batchJob.error || ''))
+      else if (batchJob.status === 'cancelled') toast.info($t('pending.batch_cancelled'))
+      else toast.success($t('pending.batch_success'))
+    }
+  }
+
+  async function loadImports() {
+    try {
+      const res = await getImports()
+      imports = res.data || []
+      importsMax = res.meta?.max_rows ?? importsMax
+    } catch { imports = [] }
+  }
+
+  async function openImport(job) {
+    try {
+      batchJob = await getImport(job.id)
+      batchFile = null
+      batchFileName = ''
+      batchModalOpen = true
+      if (jobActive(batchJob)) { clearTimeout(batchPollTimer); batchPollTimer = setTimeout(pollJob, 2000) }
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function cancelBatch() {
+    if (!batchJob) return
+    cancelling = true
+    try { await cancelImport(batchJob.id); await pollJob() }
+    catch (e) { toast.error(e.message) }
+    finally { cancelling = false }
+  }
+
+  const jobVariant = (st) => (st === 'done' ? 'success' : st === 'failed' ? 'danger' : st === 'cancelled' ? 'neutral' : st === 'running' ? 'info' : 'warning')
+  const rowVariant = (st) => (st === 'assigned' ? 'success' : st === 'pre_registered' ? 'info' : st === 'failed' ? 'danger' : 'neutral')
+  $: jobPct = batchJob && batchJob.total_rows ? Math.round((batchJob.processed_rows / batchJob.total_rows) * 100) : 0
 
   function handleBatchKey(e) {
     if (e.key === 'Escape') closeBatchModal()
@@ -255,47 +321,37 @@
     batchUploading = true
     try {
       const tenantId = ($isSuperAdmin && batchTenantId) ? batchTenantId : undefined
-      batchResults = await batchRegisterDevices(batchFile, tenantId)
-      toast.success($t('pending.batch_success'))
+      batchJob = await batchRegisterDevices(batchFile, tenantId)
+      toast.success($t('pending.batch_queued', batchJob.total_rows))
+      batchFile = null
+      batchFileName = ''
+      clearTimeout(batchPollTimer)
+      batchPollTimer = setTimeout(pollJob, 1000)
     } catch (e) {
-      toast.error(e.message)
+      toast.error(e.message, 10000)
     } finally {
       batchUploading = false
     }
   }
 
-  function downloadTemplate() {
-    const template = 'mqtt_device_id,name,serial_number,location,model,comment,manufactured_at\n'
-    const blob = new Blob([template], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'batch_register_template.csv'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+  async function downloadTemplate() {
+    try { await downloadImportTemplate() } catch (e) { toast.error(e.message) }
   }
 
-  function downloadCredentialsCsv() {
-    if (!batchResults?.results) return
-    const assigned = batchResults.results.filter(r => r.status === 'assigned' && r.credentials)
-    if (!assigned.length) return
-    const BOM = '\uFEFF'
-    let csv = BOM + 'mqtt_device_id,name,username,password\n'
-    for (const r of assigned) {
-      const name = r.name?.includes(',') ? `"${r.name}"` : (r.name || '')
-      csv += `${r.mqtt_device_id},${name},${r.credentials.username},${r.credentials.password}\n`
+  async function downloadCredentialsCsv() {
+    if (!batchJob) return
+    credsBusy = true
+    try {
+      await downloadImportCredentials(batchJob.id)
+      batchJob = { ...batchJob, credentials_available: false, credentials_downloaded_at: new Date().toISOString() }
+      toast.success($t('pending.batch_creds_downloaded'), 8000)
+      loadImports()
+    } catch (e) {
+      if (e.status === 410) { toast.warning($t('pending.batch_creds_gone')); batchJob = { ...batchJob, credentials_available: false } }
+      else toast.error(e.message)
+    } finally {
+      credsBusy = false
     }
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `credentials_${new Date().toISOString().slice(0, 10)}.csv`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
   }
 
   let wsUnsub
@@ -303,6 +359,9 @@
 
   onMount(() => {
     load()
+    loadImports()
+    // "Import CSV" from the Sites page lands here with the modal open
+    if (typeof window !== 'undefined' && /[?&]import=1/.test(window.location.hash)) openBatchModal()
     wsUnsub = on('pending_device', () => load())
     // Poll every 15s as fallback — pending devices are rare, WS may miss restarts
     pollInterval = setInterval(load, 15000)
@@ -311,6 +370,7 @@
   onDestroy(() => {
     wsUnsub?.()
     clearInterval(pollInterval)
+    clearTimeout(batchPollTimer)
   })
 </script>
 
@@ -390,6 +450,35 @@
       {/each}
     </div>
   {/if}
+
+  <section class="imports-card">
+    <div class="imports-head"><Icon name="clipboard" size={16} /><span>{$t('pending.batch_history')}</span></div>
+    {#if imports.length === 0}
+      <p class="imports-none">{$t('pending.batch_history_none')}</p>
+    {:else}
+      <div class="imports-table">
+        <div class="imports-row head">
+          <span>{$t('common.created')}</span><span>{$t('pending.batch_col_file')}</span><span>{$t('pending.batch_col_rows')}</span>
+          <span>{$t('pending.batch_col_result')}</span><span>{$t('pending.batch_col_who')}</span><span></span>
+        </div>
+        {#each imports as j (j.id)}
+          <div class="imports-row">
+            <span>{formatDate(j.created_at)}</span>
+            <span class="imports-file">{j.file_name || '—'}</span>
+            <span>{j.processed_rows}/{j.total_rows}</span>
+            <span class="imports-result">
+              <Badge variant={jobVariant(j.status)} size="sm">{$t('pending.batch_status_' + j.status)}</Badge>
+              {#if j.assigned > 0}<small>{j.assigned} {$t('pending.batch_assigned')}</small>{/if}
+              {#if j.failed_rows > 0}<small class="err">{j.failed_rows} {$t('pending.batch_failed_rows')}</small>{/if}
+              {#if j.credentials_available}<small class="warn">{$t('pending.batch_download_creds')}</small>{/if}
+            </span>
+            <span class="imports-who">{j.requested_by_email || '—'}</span>
+            <span class="imports-actions"><Button variant="ghost" size="sm" on:click={() => openImport(j)}>{$t('pending.batch_view')}</Button></span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
 </div>
 
 <!-- Assign Modal -->
@@ -549,53 +638,72 @@
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
     <div class="modal batch-modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
-        <h3>{batchResults ? $t('pending.batch_results_title') : $t('pending.batch_upload_title')}</h3>
+        <h3>{batchJob ? (jobActive(batchJob) ? $t('pending.batch_progress_title') : $t('pending.batch_results_title')) : $t('pending.batch_upload_title')}</h3>
         <button class="close-btn" on:click={closeBatchModal} aria-label="Close">
           <Icon name="x" size={18} />
         </button>
       </div>
 
-      {#if batchResults}
-        <!-- Results view -->
+      {#if batchJob}
+        <!-- Job view: progress while it runs, results when it is over -->
         <div class="modal-body">
+          <div class="job-head">
+            <Badge variant={jobVariant(batchJob.status)} size="sm">{$t('pending.batch_status_' + batchJob.status)}</Badge>
+            <span class="job-file">{batchJob.file_name || ''}</span>
+            <span class="job-progress-text">{$t('pending.batch_progress', batchJob.processed_rows, batchJob.total_rows)}</span>
+          </div>
+          <div class="progress" role="progressbar" aria-valuenow={jobPct} aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar" class:done={batchJob.status === 'done'} class:failed={batchJob.status === 'failed'} style="width: {jobPct}%"></div>
+          </div>
+          {#if batchJob.forecast && jobActive(batchJob) && batchJob.processed_rows === 0}
+            <p class="job-hint">{$t('pending.batch_forecast', batchJob.forecast.assign, batchJob.forecast.pre_register, batchJob.forecast.skip, batchJob.forecast.new_sites)}</p>
+          {/if}
+          {#if batchJob.status === 'failed' && batchJob.error}
+            <div class="creds-warning"><Icon name="alert-triangle" size={16} /><span>{batchJob.error}</span></div>
+          {/if}
+
           <div class="batch-summary">
-            {#if batchResults.summary.assigned > 0}
-              <Badge variant="success" size="sm">{batchResults.summary.assigned} {$t('pending.batch_assigned')}</Badge>
-            {/if}
-            {#if batchResults.summary.pre_registered > 0}
-              <Badge variant="info" size="sm">{batchResults.summary.pre_registered} {$t('pending.batch_pre_registered')}</Badge>
-            {/if}
-            {#if batchResults.summary.skipped > 0}
-              <Badge variant="neutral" size="sm">{batchResults.summary.skipped} {$t('pending.batch_skipped')}</Badge>
+            {#if batchJob.assigned > 0}<Badge variant="success" size="sm">{batchJob.assigned} {$t('pending.batch_assigned')}</Badge>{/if}
+            {#if batchJob.pre_registered > 0}<Badge variant="info" size="sm">{batchJob.pre_registered} {$t('pending.batch_pre_registered')}</Badge>{/if}
+            {#if batchJob.skipped > 0}<Badge variant="neutral" size="sm">{batchJob.skipped} {$t('pending.batch_skipped')}</Badge>{/if}
+            {#if batchJob.failed_rows > 0}<Badge variant="danger" size="sm">{batchJob.failed_rows} {$t('pending.batch_failed_rows')}</Badge>{/if}
+            {#if batchJob.sites_created > 0}<Badge variant="info" size="sm">{batchJob.sites_created} {$t('pending.batch_sites_created')}</Badge>{/if}
+            {#if batchJob.geocode_queued > 0}
+              <Badge variant={batchJob.geocode_failed > 0 ? 'warning' : 'neutral'} size="sm">{$t('pending.batch_geocoded', batchJob.geocoded, batchJob.geocode_queued)}</Badge>
             {/if}
           </div>
 
-          <div class="batch-results-table">
-            {#each batchResults.results as r (r.row)}
-              <div class="batch-result-row" class:result-assigned={r.status === 'assigned'} class:result-pre={r.status === 'pre_registered'} class:result-skip={r.status === 'skipped'}>
-                <span class="result-id font-mono">{r.mqtt_device_id}</span>
-                <span class="result-name">{r.name || ''}</span>
-                <Badge variant={r.status === 'assigned' ? 'success' : r.status === 'pre_registered' ? 'info' : 'neutral'} size="sm">
-                  {$t(`pending.batch_${r.status === 'pre_registered' ? 'pre_registered' : r.status}`)}
-                </Badge>
-                {#if r.error}
-                  <span class="result-error">{r.error}</span>
-                {/if}
-              </div>
-            {/each}
-          </div>
+          {#if Array.isArray(batchJob.results) && batchJob.results.length > 0}
+            <div class="batch-results-table">
+              {#each batchJob.results as r (r.row)}
+                <div class="batch-result-row" class:result-assigned={r.status === 'assigned'} class:result-pre={r.status === 'pre_registered'} class:result-skip={r.status === 'skipped' || r.status === 'failed'}>
+                  <span class="result-id font-mono">{r.mqtt_device_id}</span>
+                  <span class="result-name">{r.name || ''}{#if r.site_name} · {r.site_name}{/if}</span>
+                  <Badge variant={rowVariant(r.status)} size="sm">
+                    {r.status === 'failed' ? $t('pending.batch_failed_rows') : $t(`pending.batch_${r.status}`)}
+                  </Badge>
+                  {#if r.error}<span class="result-error">{r.error}</span>{/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
 
-          {#if batchResults.summary.assigned > 0}
+          {#if batchJob.credentials_available}
             <div class="creds-warning">
               <Icon name="alert-triangle" size={16} />
               <span>{$t('pending.batch_download_creds_hint')}</span>
             </div>
+          {:else if batchJob.credentials_downloaded_at}
+            <p class="job-hint">{$t('pending.batch_creds_gone')}</p>
           {/if}
         </div>
 
         <div class="modal-actions">
-          {#if batchResults.summary.assigned > 0}
-            <Button variant="secondary" icon="download" on:click={downloadCredentialsCsv}>
+          {#if jobActive(batchJob)}
+            <Button variant="danger" on:click={cancelBatch} loading={cancelling}>{$t('pending.batch_cancel')}</Button>
+          {/if}
+          {#if batchJob.credentials_available}
+            <Button variant="secondary" icon="download" on:click={downloadCredentialsCsv} loading={credsBusy}>
               {$t('pending.batch_download_creds')}
             </Button>
           {/if}
@@ -617,7 +725,7 @@
           </div>
 
           <div class="batch-format-hint">
-            <span class="format-label">{$t('pending.batch_csv_format')}</span>
+            <span class="format-label">{$t('pending.batch_csv_format')} {$t('pending.batch_max_rows', importsMax)}</span>
             <button class="template-link" on:click|stopPropagation={downloadTemplate}>
               <Icon name="download" size={12} />
               {$t('pending.batch_template')}
@@ -946,6 +1054,35 @@
   .batch-modal {
     max-width: 560px;
   }
+  .job-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--text-sm); color: var(--text-secondary); }
+  .job-file { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job-progress-text { font-size: var(--text-xs); color: var(--text-muted); }
+  .job-hint { margin: 0; font-size: var(--text-xs); color: var(--text-muted); line-height: 1.5; }
+  .progress { height: 8px; border-radius: 999px; background: var(--bg-tertiary); overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--accent-blue); transition: width 0.4s ease; }
+  .progress-bar.done { background: var(--accent-green); }
+  .progress-bar.failed { background: var(--accent-red); }
+
+  /* Import history */
+  .imports-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: var(--space-3) var(--space-4);
+  }
+  .imports-head { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: var(--space-2); }
+  .imports-none { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+  .imports-table { display: flex; flex-direction: column; overflow-x: auto; font-size: var(--text-sm); }
+  .imports-row { display: grid; grid-template-columns: 1.1fr 1.3fr 0.6fr 1.6fr 1.2fr auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); min-width: 760px; color: var(--text-secondary); }
+  .imports-row.head { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-bottom: 1px solid var(--border-default); }
+  .imports-row:last-child { border-bottom: none; }
+  .imports-file { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imports-result { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .imports-result small { font-size: var(--text-xs); color: var(--text-muted); }
+  .imports-result small.err { color: var(--accent-red); }
+  .imports-result small.warn { color: var(--accent-yellow, #f59e0b); }
+  .imports-who { font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imports-actions { display: flex; justify-content: flex-end; }
 
   .hidden-file {
     position: absolute;

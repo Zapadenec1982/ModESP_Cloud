@@ -42,6 +42,10 @@ otaSvc.pauseRollout = async () => ({ status: 'paused' });
 otaSvc.resumeRollout = async () => ({ status: 'running' });
 otaSvc.cancelRollout = async () => ({ status: 'cancelled' });
 
+// CSV imports run only when a test calls importSvc.run(id) itself
+const importSvc = require('../../src/services/device-import');
+importSvc.__test.setAutoRun(false);
+
 // Stub push service
 const pushSvc = require('../../src/services/push');
 pushSvc.testSend = async () => ({ ok: true, message: 'test stub' });
@@ -114,6 +118,7 @@ function createTestApp() {
   app.use('/api/reports',  require('../../src/routes/reports'));
   app.use('/api/api-keys', authorize('admin'), require('../../src/routes/api-keys'));
   app.use('/api/webhooks', authorize('admin'), require('../../src/routes/webhooks'));
+  app.use('/api/imports',  authorize('admin'), require('../../src/routes/imports'));
   app.use('/api/tenants',  authorize('admin'), require('../../src/routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('../../src/routes/users'));
 

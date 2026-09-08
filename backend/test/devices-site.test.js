@@ -9,6 +9,17 @@ const {
 } = require('./helpers/factories');
 
 const app = createTestApp();
+const importSvc = require('../src/services/device-import');
+
+// POST /devices/pending/batch answers 202 with a job (plan epic 2.12): run it
+// here and shape the outcome like the old synchronous answer.
+async function completed(res, header) {
+  if (res.status !== 202) return res;
+  await importSvc.run(res.body.data.id);
+  const job = await request(app).get(`/api/imports/${res.body.data.id}`).set(header);
+  const d = job.body.data;
+  return { status: d.status === 'done' ? 200 : 500, body: { data: { summary: d.summary, results: d.results, job: d } } };
+}
 
 // ── Local factories ───────────────────────────────────────
 // sites arrives with migration 021 and helpers/factories.js is shared with every
@@ -444,13 +455,13 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name', 'country', 'region', 'city', 'address_line'],
           [mqttId, 'Import 1', 'Новий Магазин', 'UA', 'Одеська область', 'Одеса', 'Дерибасівська 12'],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(200);
       expect(res.body.data.summary.assigned).toBe(1);
@@ -483,14 +494,14 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name', 'country'],
           [mqttId, 'Import country', 'Точка Країна', 'Україна'],
-        ), 'devices.csv')
-        .expect(200);
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
+      expect(res.status).toBe(200);
 
       const { rows } = await db.query(
         `SELECT country_code, country FROM sites WHERE tenant_id = $1 AND name = $2`,
@@ -506,14 +517,14 @@ describe('Devices ↔ sites', () => {
       await createPendingDevice(idA);
       await createPendingDevice(idB);
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name', 'city'],
           [idA, 'Shared 1', 'Spar Central', 'Kyiv'],
           [idB, 'Shared 2', '  spar CENTRAL ', 'Kyiv'],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(200);
       expect(res.body.data.summary.assigned).toBe(2);
@@ -545,13 +556,13 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name', 'city', 'address_line'],
           [mqttId, 'Existing site', 'AUCHAN prospekt', 'Львів', 'зовсім інша вулиця'],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(200);
       expect(res.body.data.summary.sites_created).toBe(0);
@@ -576,13 +587,13 @@ describe('Devices ↔ sites', () => {
     it('never gives a pre-registered device a site (it stays in the system tenant)', async () => {
       const mqttId = nextMqttId();   // deliberately NOT created — forces pre_register
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name', 'city'],
           [mqttId, 'Pre reg', 'Точка Пререг', 'Харків'],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(200);
       expect(res.body.data.summary.pre_registered).toBe(1);
@@ -605,14 +616,14 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(adminB, tenantB.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name'],
           [mqttId, 'Tenant B import', 'Tenant B Store'],
-        ), 'devices.csv')
-        .expect(200);
+        ), 'devices.csv'), authHeader(adminB, tenantB.id));
+      expect(res.status).toBe(200);
 
       const { rows } = await db.query(
         `SELECT tenant_id FROM sites WHERE name = $1`, ['Tenant B Store']
@@ -625,13 +636,13 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'site_name'],
           [mqttId, 'Too long', 'x'.repeat(257)],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('validation_failed');
@@ -642,13 +653,13 @@ describe('Devices ↔ sites', () => {
       const mqttId = nextMqttId();
       await createPendingDevice(mqttId);
 
-      const res = await request(app)
+      const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
         .set(authHeader(admin, tenantA.id))
         .attach('file', csvBuffer(
           ['mqtt_device_id', 'name', 'location'],
           [mqttId, 'Plain import', 'Зал, ряд 3'],
-        ), 'devices.csv');
+        ), 'devices.csv'), authHeader(admin, tenantA.id));
 
       expect(res.status).toBe(200);
       expect(res.body.data.summary.assigned).toBe(1);
