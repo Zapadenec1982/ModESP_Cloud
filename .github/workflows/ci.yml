@@ -57,6 +57,12 @@ jobs:
         run: node scripts/check-locales.js
         working-directory: backend
 
+      # docs/openapi.json is generated from backend/src/openapi; a stale copy
+      # would mislead an integrator, so the committed file must match the code.
+      - name: OpenAPI document is current (docs/openapi.json)
+        run: node scripts/openapi-export.js --check
+        working-directory: backend
+
       - name: Build webui
         run: npm run build
         working-directory: webui

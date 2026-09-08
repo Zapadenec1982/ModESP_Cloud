@@ -12,9 +12,12 @@
     "test:legacy": "node test/test_mqtt_logic.js",
     "test:all": "npm run test:legacy && npm run test",
     "migrate": "node src/scripts/migrate.js",
-    "check:locales": "node scripts/check-locales.js"
+    "check:locales": "node scripts/check-locales.js",
+    "openapi:export": "node scripts/openapi-export.js",
+    "openapi:check": "node scripts/openapi-export.js --check"
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.3.4",
     "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.6",
@@ -35,6 +38,7 @@
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
     "resend": "^6.9.4",
+    "swagger-ui-dist": "^5.32.15",
     "web-push": "^3.6.7",
     "ws": "^8.18.0",
     "zod": "^3.24.2"

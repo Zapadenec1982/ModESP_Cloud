@@ -1533,6 +1533,7 @@ export default {
     keys_title: 'API keys',
     keys_intro: 'A key lets an external system (CMMS, BI, ERP, your own script) reach the organisation\'s REST API without a person\'s account. Pass it in the Authorization: Bearer header. A key sees every device of the organisation but never users, settings or billing.',
     keys_none: 'No keys yet.',
+    docs_link: 'API documentation (OpenAPI)',
     keys_hint: 'API base URL:',
     key_new: 'New key',
     key_name: 'Name (what for)',

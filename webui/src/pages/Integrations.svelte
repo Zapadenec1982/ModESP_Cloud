@@ -331,7 +331,7 @@
         {/each}
       </div>
     {/if}
-    <p class="muted small">{$t('integrations.keys_hint')} <code class="inline">{API_BASE}</code></p>
+    <p class="muted small">{$t('integrations.keys_hint')} <code class="inline">{API_BASE}</code> · <a href="/api/docs" target="_blank" rel="noopener">{$t('integrations.docs_link')}</a></p>
   </section>
 
   <!-- ── Webhooks ── -->
@@ -541,6 +541,8 @@
   }
   .payload { max-height: 320px; overflow: auto; }
   code.inline { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-secondary); }
+  .muted a { color: var(--accent-blue, #3b82f6); text-decoration: none; }
+  .muted a:hover { text-decoration: underline; }
 
   .inline-form {
     display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: var(--space-3);
