@@ -4,12 +4,11 @@ const { Router } = require('express');
 const path       = require('path');
 const { z }      = require('zod');
 const multer     = require('multer');
-const { parse: parseCsv } = require('csv-parse/sync');
 const bcrypt     = require('bcrypt');
 const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const mqttAuth   = require('../services/mqtt-auth');
-const geocodeSvc = require('../services/geocode');
+const importSvc  = require('../services/device-import');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess, checkDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
@@ -801,11 +800,12 @@ router.post('/pending/:mqttId/assign', maybeAuthorize('admin'), async (req, res,
 });
 
 // ── POST /api/devices/pending/batch ─────────────────────────
-// Batch registration via CSV file upload.
-// Assigns pending devices immediately; pre-registers unknown ones.
+// CSV import of devices and sites as a background job (plan epic 2.12):
+// the request validates the file and checks the plan, the job does the rest
+// (services/device-import.js); progress and results at /api/imports/:id.
 const csvUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 64 * 1024 },
+  limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (ext !== '.csv') return cb(new Error('Only .csv files are accepted'));
@@ -813,527 +813,76 @@ const csvUpload = multer({
   },
 });
 
-// Header aliases: export format → internal name
-// (unlisted headers are lower-cased with spaces → underscores, so "Site Name"
-//  already normalizes to site_name and needs no alias)
-const CSV_HEADER_ALIASES = {
-  'device id':       'mqtt_device_id',
-  'device_id':       'mqtt_device_id',
-  'serial':          'serial_number',
-  'manufactured':    'manufactured_at',
-  'manufacture date':'manufactured_at',
-  'manufactured at': 'manufactured_at',
-  'site':            'site_name',
-  'address':         'address_line',
-};
+// GET /api/devices/pending/template.csv — every column with one example row
+router.get('/pending/template.csv', maybeAuthorize('admin'), (_req, res) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="modesp_import_template.csv"');
+  res.send(importSvc.template());
+});
 
-// maxLen for the site columns mirrors the sites DDL in 021_sites.sql — a longer
-// value must fail CSV validation, not blow up mid-import with a 22001.
-const CSV_FIELDS = {
-  mqtt_device_id:   { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
-  name:             { required: true,  maxLen: 100 },
-  serial_number:    { required: false, maxLen: 100 },
-  location:         { required: false, maxLen: 200 },
-  model:            { required: false, maxLen: 100 },
-  comment:          { required: false, maxLen: 500 },
-  manufactured_at:  { required: false, pattern: /^(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})$/, maxLen: 10 },
-  // Site (торгова точка) columns — all optional, all ignored unless site_name is set
-  site_name:        { required: false, maxLen: 256 },
-  country:          { required: false, maxLen: 64 },
-  region:           { required: false, maxLen: 128 },
-  city:             { required: false, maxLen: 128 },
-  address_line:     { required: false, maxLen: 256 },
-};
-
-const MAX_BATCH_ROWS = 200;
-
-function parseCsvBuffer(buffer) {
-  // Strip UTF-8 BOM if present (export adds BOM for Excel Cyrillic compat)
-  let text = buffer.toString('utf-8');
-  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-
-  const records = parseCsv(text, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-    relax_column_count: true,
+router.post('/pending/batch', maybeAuthorize('admin'), (req, res, next) => {
+  csvUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'file_too_large', message: 'CSV file must be ≤ 2 MB', status: 400 });
+    if (err.message && err.message.includes('Only .csv')) return res.status(400).json({ error: 'invalid_file_type', message: err.message, status: 400 });
+    next(err);
   });
-
-  // Normalize headers via aliases
-  return records.map((row, i) => {
-    const normalized = { _line: i + 2 };  // +2: 1-indexed + header row
-    for (const [key, val] of Object.entries(row)) {
-      const normKey = CSV_HEADER_ALIASES[key.toLowerCase()] || key.toLowerCase().replace(/\s+/g, '_');
-      normalized[normKey] = val;
-    }
-    return normalized;
-  });
-}
-
-function validateCsvRows(rows) {
-  const errors = [];
-  const seenIds = new Set();
-
-  // Check required headers from first row
-  if (rows.length > 0) {
-    const firstRow = rows[0];
-    for (const [field, rule] of Object.entries(CSV_FIELDS)) {
-      if (rule.required && !(field in firstRow)) {
-        errors.push({ row: 1, field, message: `Missing required column: ${field}` });
-      }
-    }
-    if (errors.length > 0) return errors;
-  }
-
-  for (const row of rows) {
-    const line = row._line;
-    for (const [field, rule] of Object.entries(CSV_FIELDS)) {
-      const val = (row[field] || '').trim();
-      if (rule.required && !val) {
-        errors.push({ row: line, field, message: `${field} is required` });
-        continue;
-      }
-      if (val && rule.pattern && !rule.pattern.test(val)) {
-        errors.push({ row: line, field, message: `${field} has invalid format` });
-      }
-      if (val && rule.maxLen && val.length > rule.maxLen) {
-        errors.push({ row: line, field, message: `${field} exceeds ${rule.maxLen} chars` });
-      }
-    }
-
-    // Duplicate check within CSV
-    const devId = (row.mqtt_device_id || '').trim().toUpperCase();
-    if (devId) {
-      if (seenIds.has(devId)) {
-        errors.push({ row: line, field: 'mqtt_device_id', message: `Duplicate device ID: ${devId}` });
-      }
-      seenIds.add(devId);
-    }
-  }
-
-  return errors;
-}
-
-// ── CSV import: sites (торгові точки) ─────────────────────
-// Optional site_name / country / region / city / address_line columns. A row whose
-// site_name is unknown creates the site; geocoding is fire-and-forget so a 200-row
-// import never waits on a 1 req/s geocoder.
-
-// geo_source flips to 'failed' after this many fruitless attempts (mirrors routes/sites.js)
-const GEO_FAIL_AFTER_ATTEMPTS = 3;
-
-// Columns read back from `sites` whenever the import touches one
-const IMPORT_SITE_COLUMNS = `id, tenant_id, name, country_code, country, region, city,
-                             address_line, postal_code, latitude, longitude, geo_source`;
-
-function csvField(row, field) {
-  return (row[field] || '').trim() || null;
-}
-
-function truncate(value, maxLen) {
-  const s = (value === undefined || value === null) ? '' : String(value).trim();
-  if (!s) return null;
-  return s.slice(0, maxLen);
-}
-
-/**
- * Split the free-text `country` column: a bare 2-letter value is an ISO 3166-1
- * alpha-2 code ("UA"), anything longer is a country name ("Україна", "Poland").
- * The code matters — geocode.js refuses a result whose country contradicts it.
- */
-function splitCountry(value) {
-  if (!value) return { country_code: null, country: null };
-  return /^[A-Za-z]{2}$/.test(value)
-    ? { country_code: value.toUpperCase(), country: null }
-    : { country_code: null, country: truncate(value, CSV_FIELDS.country.maxLen) };
-}
-
-/**
- * Find (case/whitespace-insensitively, matching uq_sites_tenant_name) or create the
- * site named in a CSV row. Existing sites are linked as-is and never modified: an
- * import must not silently overwrite an address an admin curated by hand.
- *
- * @returns {Promise<{ site: object, created: boolean }|null>} null only if the row lost
- *          a race and the site vanished again — the device is then imported without one.
- */
-async function findOrCreateImportSite(tenantId, siteName, address) {
-  const select = `SELECT ${IMPORT_SITE_COLUMNS} FROM sites
-                   WHERE tenant_id = $1 AND lower(btrim(name)) = lower(btrim($2::text))`;
-
-  const found = await db.query(select, [tenantId, siteName]);
-  if (found.rows.length > 0) return { site: found.rows[0], created: false };
-
-  const inserted = await db.query(
-    `INSERT INTO sites (tenant_id, name, country_code, country, region, city, address_line)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT DO NOTHING
-     RETURNING ${IMPORT_SITE_COLUMNS}`,
-    [tenantId, truncate(siteName, CSV_FIELDS.site_name.maxLen),
-     address.country_code, address.country, address.region, address.city, address.address_line]
-  );
-  if (inserted.rows.length > 0) return { site: inserted.rows[0], created: true };
-
-  // Concurrent import inserted the same name first — read it back.
-  const again = await db.query(select, [tenantId, siteName]);
-  return again.rows.length > 0 ? { site: again.rows[0], created: false } : null;
-}
-
-/**
- * Fire-and-forget geocode of a freshly imported site. Never awaited by the request
- * handler and never rejects: a geocoder outage must not fail a CSV import.
- * Honours GEOCODER_BULK_ENABLED — when bulk geocoding is off the site simply stays
- * geo_source='none' for the operator to geocode by hand from the Sites page.
- */
-async function geocodeImportedSite(site, log) {
-  try {
-    const out = (await geocodeSvc.resolveAddress({
-      name:         site.name,
-      address_line: site.address_line,
-      city:         site.city,
-      region:       site.region,
-      postal_code:  site.postal_code,
-      country:      site.country,
-      country_code: site.country_code,
-    }, { lane: 'bulk' })) || {};
-
-    // BUSY means the queue was full or the wait budget expired while the job keeps
-    // running — not the address's fault, so it must not count as an attempt.
-    if (out.status === geocodeSvc.OUTCOME.DISABLED || out.status === geocodeSvc.OUTCOME.BUSY) return;
-
-    if (out.status === geocodeSvc.OUTCOME.OK && out.result) {
-      const addr = out.result.address || {};
-      // A mangled query fails silently and confidently — corrupted Cyrillic once
-      // resolved to French departments with high importance and no error. Never
-      // store coordinates that contradict the country the CSV named.
-      const want = (site.country_code || '').trim().toUpperCase();
-      const got  = (addr.country_code || '').trim().toUpperCase();
-      if (want && got && want !== got) {
-        await recordImportGeocodeFailure(site, `country_mismatch:${got}`, log);
-        return;
-      }
-
-      await db.query(
-        `UPDATE sites
-            SET latitude      = $1,
-                longitude     = $2,
-                geo_source    = 'geocoded',
-                geo_precision = $3,
-                geocoded_at   = NOW(),
-                osm_type      = $4,
-                osm_id        = $5,
-                country_code  = COALESCE(NULLIF(btrim(country_code), ''), $6),
-                country       = COALESCE(NULLIF(btrim(country), ''), $7),
-                region        = COALESCE(NULLIF(btrim(region), ''), $8),
-                city          = COALESCE(NULLIF(btrim(city), ''), $9),
-                address_line  = COALESCE(NULLIF(btrim(address_line), ''), $10),
-                postal_code   = COALESCE(NULLIF(btrim(postal_code), ''), $11),
-                geo_attempts  = 0,
-                geo_error     = NULL,
-                updated_at    = NOW()
-          WHERE id = $12 AND tenant_id = $13`,
-        [
-          out.result.latitude, out.result.longitude,
-          truncate(out.result.precision, 16),
-          truncate(out.result.osm_type, 16),
-          Number.isFinite(out.result.osm_id) ? out.result.osm_id : null,
-          addr.country_code ? String(addr.country_code).trim().toUpperCase().slice(0, 2) : null,
-          truncate(addr.country, 64),
-          // Kyiv has special status and carries no `state`: group it under its own
-          // name rather than creating an "unknown region" bucket in geo-stats.
-          truncate(addr.region || addr.city, 128),
-          truncate(addr.city, 128),
-          truncate(addr.address_line, 256),
-          truncate(addr.postal_code, 16),
-          site.id, site.tenant_id,
-        ]
-      );
-      return;
-    }
-
-    const reason = out.status === geocodeSvc.OUTCOME.FAILED ? 'provider_error' : 'no_match';
-    await recordImportGeocodeFailure(site, reason, log);
-  } catch (err) {
-    log?.warn?.({ err, siteId: site.id }, 'CSV import: background geocode failed');
-  }
-}
-
-/**
- * Failure bookkeeping. Coordinates, geo_source, geo_precision and geocoded_at are
- * left untouched — a provider outage must not wipe a site off the map.
- */
-async function recordImportGeocodeFailure(site, reason, log) {
-  try {
-    await db.query(
-      `UPDATE sites
-          SET geo_attempts        = geo_attempts + 1,
-              geo_last_attempt_at = NOW(),
-              geo_error           = $3,
-              geo_source          = CASE WHEN geo_source = 'none' AND geo_attempts + 1 >= $4
-                                         THEN 'failed' ELSE geo_source END,
-              updated_at          = NOW()
-        WHERE id = $1 AND tenant_id = $2`,
-      [site.id, site.tenant_id, String(reason).slice(0, 200), GEO_FAIL_AFTER_ATTEMPTS]
-    );
-  } catch (err) {
-    log?.warn?.({ err, siteId: site.id }, 'CSV import: could not record geocode failure');
-  }
-}
-
-router.post('/pending/batch', maybeAuthorize('admin'), csvUpload.single('file'), async (req, res, next) => {
+}, async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'no_file', message: 'CSV file is required', status: 400 });
     }
 
-    // Parse CSV
     let rows;
     try {
-      rows = parseCsvBuffer(req.file.buffer);
+      rows = await importSvc.parseCsv(req.file.buffer);
     } catch (e) {
-      return res.status(400).json({ error: 'parse_error', message: `CSV parse error: ${e.message}`, status: 400 });
+      if (e.code === 'too_many_rows') {
+        return res.status(400).json({ error: 'too_many_rows', message: `CSV has more than ${e.limit} rows, maximum is ${e.limit}`, status: 400, limit: e.limit });
+      }
+      return res.status(400).json({ error: 'parse_error', message: e.message, status: 400 });
     }
-
     if (rows.length === 0) {
       return res.status(400).json({ error: 'empty_file', message: 'CSV has no data rows', status: 400 });
     }
 
-    if (rows.length > MAX_BATCH_ROWS) {
-      return res.status(400).json({
-        error: 'too_many_rows',
-        message: `CSV has ${rows.length} rows, maximum is ${MAX_BATCH_ROWS}`,
-        status: 400,
-      });
-    }
-
-    // Phase 1: Validate all rows
-    const validationErrors = validateCsvRows(rows);
+    const validationErrors = importSvc.validateRows(rows);
     if (validationErrors.length > 0) {
-      return res.status(400).json({
-        error: 'validation_failed',
-        message: 'CSV validation failed',
-        errors: validationErrors,
-        status: 400,
-      });
+      return res.status(400).json({ error: 'validation_failed', message: 'CSV validation failed', errors: validationErrors, status: 400 });
     }
 
     // Determine target tenant
     const isSA = req.user && req.user.role === 'superadmin';
     const tenantIdFromBody = req.body?.tenant_id;
     const targetTenantId = (isSA && tenantIdFromBody) ? tenantIdFromBody : req.tenantId;
-
-    // Verify tenant exists
-    const tenantRes = await db.query(`SELECT slug FROM tenants WHERE id = $1`, [targetTenantId]);
+    const tenantRes = await db.query(`SELECT id FROM tenants WHERE id = $1`, [targetTenantId]);
     if (tenantRes.rows.length === 0) {
       return res.status(400).json({ error: 'invalid_tenant', message: 'Tenant not found', status: 400 });
     }
-    const tenantSlug = tenantRes.rows[0].slug;
 
-    // Phase 2: Process rows sequentially
-    const results = [];
-    const summary = {
-      total: rows.length, assigned: 0, pre_registered: 0, skipped: 0,
-      sites_created: 0, devices_with_site: 0,
-    };
-
-    // One lookup per distinct site name per import, not per row: a 200-row import
-    // of one store must not run 200 identical SELECTs.
-    const siteCache = new Map();
-    const bulkGeocode = geocodeSvc.isBulkEnabled();
-
-    // First pass: check device status in DB and generate passwords for pending ones
-    for (const row of rows) {
-      const mqttId = row.mqtt_device_id.trim().toUpperCase();
-      row._mqttId = mqttId;
-
-      const { rows: devRows } = await db.query(
-        `SELECT id, status, tenant_id FROM devices WHERE mqtt_device_id = $1`,
-        [mqttId]
-      );
-
-      if (devRows.length > 0 && devRows[0].status === 'pending' && devRows[0].tenant_id === db.SYSTEM_TENANT_ID) {
-        row._action = 'assign';
-        row._dbId = devRows[0].id;
-        row._password = mqttAuth.generatePassword();
-      } else if (devRows.length > 0) {
-        row._action = 'skip';
-        row._skipReason = 'Device already active';
-      } else {
-        row._action = 'pre_register';
-      }
+    // The plan must have room for what the import would add
+    const forecast = await importSvc.plan(targetTenantId, rows);
+    if (forecast.assign > 0) {
+      const cap = await planMw.checkCapacity(targetTenantId, 'devices', forecast.assign);
+      if (!cap.ok) return planMw.planLimitResponse(res, cap);
+    }
+    if (forecast.new_sites > 0) {
+      const cap = await planMw.checkCapacity(targetTenantId, 'sites', forecast.new_sites);
+      if (!cap.ok) return planMw.planLimitResponse(res, cap);
     }
 
-    // Hash passwords in parallel batches of 8
-    const toAssign = rows.filter(r => r._action === 'assign');
-    const HASH_BATCH = 8;
-    for (let i = 0; i < toAssign.length; i += HASH_BATCH) {
-      const batch = toAssign.slice(i, i + HASH_BATCH);
-      await Promise.all(batch.map(r =>
-        bcrypt.hash(r._password, 12).then(h => { r._hash = h; })
-      ));
+    const { rows: active } = await db.query(
+      `SELECT id FROM imports WHERE tenant_id = $1 AND status IN ('pending', 'running') LIMIT 1`, [targetTenantId]);
+    if (active.length > 0) {
+      return res.status(409).json({ error: 'import_in_progress', message: 'Another import is still running', status: 409, import_id: active[0].id });
     }
 
-    // Process each row
-    for (const row of rows) {
-      const mqttId = row._mqttId;
-      const name = (row.name || '').trim();
-      const location = (row.location || '').trim() || null;
-      const model = (row.model || '').trim() || null;
-      const serialNumber = (row.serial_number || '').trim() || null;
-      const comment = (row.comment || '').trim() || null;
-      let manufacturedAt = (row.manufactured_at || '').trim() || null;
-      // Convert DD-MM-YYYY → YYYY-MM-DD for PostgreSQL
-      if (manufacturedAt && /^\d{2}-\d{2}-\d{4}$/.test(manufacturedAt)) {
-        const [dd, mm, yyyy] = manufacturedAt.split('-');
-        manufacturedAt = `${yyyy}-${mm}-${dd}`;
-      }
+    const job = await importSvc.create({ tenantId: targetTenantId, requestedBy: req.user?.id || null, fileName: req.file.originalname, rows });
+    importSvc.schedule(job.id);
+    planMw.invalidate(targetTenantId);
 
-      if (row._action === 'skip') {
-        summary.skipped++;
-        results.push({
-          row: row._line, mqtt_device_id: mqttId, name,
-          status: 'skipped', error: row._skipReason,
-        });
-        continue;
-      }
-
-      if (row._action === 'assign') {
-        // Optional site link. Only the assign path may set site_id: the device's
-        // tenant becomes targetTenantId here, whereas a pre_register row stays in
-        // the SYSTEM tenant, which owns no sites. The address columns are ignored
-        // without a site_name — there is no other key to identify a site by.
-        let siteId = null, siteName = null;
-        const csvSiteName = csvField(row, 'site_name');
-        if (csvSiteName) {
-          const cacheKey = csvSiteName.toLowerCase();
-          try {
-            let resolved = siteCache.get(cacheKey);
-            if (resolved === undefined) {
-              const { country_code, country } = splitCountry(csvField(row, 'country'));
-              resolved = await findOrCreateImportSite(targetTenantId, csvSiteName, {
-                country_code,
-                country,
-                region:       truncate(csvField(row, 'region'), CSV_FIELDS.region.maxLen),
-                city:         truncate(csvField(row, 'city'), CSV_FIELDS.city.maxLen),
-                address_line: truncate(csvField(row, 'address_line'), CSV_FIELDS.address_line.maxLen),
-              });
-              siteCache.set(cacheKey, resolved);
-
-              if (resolved && resolved.created) {
-                summary.sites_created++;
-                // Fire-and-forget: never awaited, so a 1 req/s geocoder cannot
-                // stall the import. Errors are swallowed inside the helper.
-                if (bulkGeocode) {
-                  geocodeImportedSite(resolved.site, req.log).catch(() => {});
-                }
-              }
-            }
-            if (resolved) {
-              siteId = resolved.site.id;
-              siteName = resolved.site.name;
-              summary.devices_with_site++;
-            }
-          } catch (err) {
-            // A bad site must not cost the operator the device row.
-            req.log?.warn?.({ err, site: csvSiteName, row: row._line }, 'CSV import: site link failed');
-          }
-        }
-
-        // Same logic as single assign
-        const newUsername = `device_${mqttId}`;
-        const newPassword = row._password;
-        const hash = row._hash;
-
-        // Send MQTT commands
-        let sentCreds = false, sentTenant = false;
-        try {
-          mqttSvc.sendJsonCommand('pending', mqttId, '_set_mqtt_creds', {
-            user: newUsername, pass: newPassword,
-          });
-          sentCreds = true;
-        } catch (_) { /* MQTT may be unavailable */ }
-        try {
-          // Retained for the same reason as the single-assign path above.
-          mqttSvc.sendCommand('pending', mqttId, '_set_tenant', tenantSlug, { qos: 1, retain: true });
-          sentTenant = true;
-        } catch (_) { /* MQTT may be unavailable */ }
-
-        // Update DB
-        await db.query(
-          `UPDATE devices
-           SET tenant_id = $1, status = 'active',
-               mqtt_username = $2, mqtt_password_hash = $3,
-               name = COALESCE($4, name), location = COALESCE($5, location),
-               model = COALESCE($6, model), serial_number = COALESCE($7, serial_number),
-               comment = COALESCE($8, comment), manufactured_at = COALESCE($9, manufactured_at),
-               site_id = $10,
-               assigned_at = NOW()
-           WHERE id = $11`,
-          [targetTenantId, newUsername, hash, name || null, location, model, serialNumber, comment, manufacturedAt, siteId, row._dbId]
-        );
-
-        mqttSvc.recordAssign(mqttId);
-        mqttSvc.clearPendingRetained(mqttId);
-
-        summary.assigned++;
-        results.push({
-          row: row._line, mqtt_device_id: mqttId, name,
-          status: 'assigned',
-          site_id: siteId,
-          site_name: siteName,
-          credentials: {
-            username: newUsername,
-            password: newPassword,
-            mqtt_host: process.env.MQTT_PUBLIC_HOST || req.hostname,
-            mqtt_port: 8883,
-            sent_via_mqtt: sentCreds,
-          },
-        });
-
-        // Delay between devices to let each one process MQTT commands
-        // and reconnect before sending commands to the next device
-        await new Promise(resolve => setTimeout(resolve, 300));
-        continue;
-      }
-
-      if (row._action === 'pre_register') {
-        // Pre-register in SYSTEM tenant. site_id is deliberately NOT set — the
-        // SYSTEM tenant owns no sites, and the row's site columns are applied
-        // later, when the device is actually assigned to a real tenant.
-        const { rowCount } = await db.query(
-          `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at)
-           VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
-           ON CONFLICT (mqtt_device_id) DO NOTHING`,
-          [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment, manufacturedAt]
-        );
-
-        if (rowCount === 0) {
-          // Race condition: device appeared between validation and processing
-          summary.skipped++;
-          results.push({
-            row: row._line, mqtt_device_id: mqttId, name,
-            status: 'skipped', error: 'Device appeared during processing',
-          });
-        } else {
-          summary.pre_registered++;
-          results.push({
-            row: row._line, mqtt_device_id: mqttId, name,
-            status: 'pre_registered',
-          });
-        }
-        continue;
-      }
-    }
-
-    // Refresh registries once after all assignments
-    if (summary.assigned > 0) {
-      await mqttSvc.refreshRegistries();
-      mqttSvc.emit('pending_device', { action: 'batch_assigned', count: summary.assigned });
-    }
-    if (summary.pre_registered > 0) {
-      mqttSvc.emit('pending_device', { action: 'batch_pre_registered', count: summary.pre_registered });
-    }
-
-    res.json({ data: { summary, results } });
+    req.auditContext = { entityId: job.id, action: 'import.create', changes: { rows: rows.length, file: req.file.originalname, ...forecast } };
+    res.status(202).json({ data: { ...job, summary: importSvc.summaryOf(job), forecast } });
   } catch (err) {
     next(err);
   }

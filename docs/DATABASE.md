@@ -1080,6 +1080,33 @@ ALTER TABLE tenant_settings ADD COLUMN ota_window_from SMALLINT, ADD COLUMN ota_
 
 ---
 
+## CSV-імпорт мережі як фонова задача (migration 044)
+
+```sql
+CREATE TABLE imports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  status VARCHAR(10) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','done','failed','cancelled')),
+  file_name VARCHAR(160), total_rows INT, processed_rows INT,
+  assigned INT, pre_registered INT, skipped INT, failed_rows INT, sites_created INT, devices_with_site INT,
+  geocode_queued INT, geocoded INT, geocode_failed INT,
+  rows JSONB,                       -- розібрані рядки CSV; очищаються, коли задача завершена
+  results JSONB,                    -- результат по рядках без секретів
+  credentials_enc TEXT,             -- зашифрований JSON нових облікових даних MQTT; видається один раз
+  credentials_downloaded_at TIMESTAMPTZ, cancel_requested BOOLEAN NOT NULL DEFAULT false, error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ
+);
+CREATE INDEX idx_imports_tenant ON imports (tenant_id, created_at DESC);
+CREATE INDEX idx_imports_active ON imports (status) WHERE status IN ('pending','running');
+```
+
+> Той самий візерунок, що й `tenant_exports`: атомний захват `UPDATE … WHERE status = 'pending' RETURNING`,
+> лічильники прогресу для опитування з UI. Паролі контролерів не лежать у базі відкрито — блок зашифровано
+> ключем MFA/вебхуків і він знищується в тій самій транзакції, що віддає CSV.
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Початкова схема.
@@ -1110,3 +1137,5 @@ ALTER TABLE tenant_settings ADD COLUMN ota_window_from SMALLINT, ADD COLUMN ota_
 - 2026-09-08 — Міграція 043: бібліотека прошивок (`firmwares.tenant_id` NULL = платформенна, `visibility`,
   `firmware_visibility`), `ota_jobs`/`ota_rollouts` з `firmware_version`, FK `ON DELETE SET NULL`, актор,
   `kind`, відкладання; `paused_reason`/`acked_failures`; вікно оновлень `tenant_settings.ota_window_*`.
+- 2026-09-08 — Міграція 044: `imports` — CSV-імпорт мережі як фонова задача з прогресом, результатами
+  й одноразовими зашифрованими обліковими даними.

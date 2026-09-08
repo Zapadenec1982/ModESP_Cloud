@@ -2761,6 +2761,62 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 
 ---
 
+## CSV-імпорт мережі (plan epic 2.12)
+
+Адміністратор завантажує один CSV на всю мережу: контролери й торгові точки разом. Запит перевіряє файл
+і план, а роботу виконує фонова задача (`imports`), за якою стежить сторінка «Очікування».
+
+### `GET /devices/pending/template.csv`
+Шаблон із усіма колонками і одним прикладом (UTF-8 BOM для Excel). Колонки: `mqtt_device_id`, `name`
+(обов'язкові), `serial_number`, `location`, `model`, `comment`, `manufactured_at` (`ДД-ММ-РРРР` або
+`РРРР-ММ-ДД`), `site_name`, `country` (ISO-код `UA` або назва), `region`, `city`, `address_line`, `postal_code`.
+Заголовки-синоніми: `device id`/`device_id`, `serial`, `site`, `address`, `postal`/`zip`.
+
+### `POST /devices/pending/batch`
+**Ролі:** admin (superadmin — з `tenant_id` для іншої організації). `multipart/form-data`, поле `file`
+(.csv, ≤ 2 МБ, до `IMPORT_MAX_ROWS` = 2 000 рядків). Ліміт 30 запитів/хв (як інші маршрути з
+геокодуванням).
+
+Перевірки в запиті: `400 empty_file` / `parse_error` / `too_many_rows` (з `limit`) / `invalid_file_type` /
+`file_too_large`; `400 validation_failed` з `errors: [{ row, field, message }]` (довжини колонок збігаються з
+DDL, дублікати `mqtt_device_id` у файлі); `402 plan_limit` для `devices` (скільки буде призначено) і `sites`
+(скільки точок буде створено); `409 import_in_progress` з `import_id`, поки попередній імпорт організації не
+завершено.
+
+**Response 202** — задача:
+```json
+{ "data": { "id": "uuid", "status": "pending", "file_name": "merezha.csv", "total_rows": 120, "processed_rows": 0,
+            "assigned": 0, "pre_registered": 0, "skipped": 0, "failed_rows": 0, "sites_created": 0, "devices_with_site": 0,
+            "geocode_queued": 0, "geocoded": 0, "geocode_failed": 0, "credentials_available": false,
+            "forecast": { "assign": 96, "pre_register": 20, "skip": 4, "new_sites": 11 },
+            "summary": { "total": 120, "processed": 0, "...": "..." } } }
+```
+
+Що робить задача з кожним рядком: контролер у черзі очікування (`pending`, системна організація) —
+**призначається** організації (облікові дані MQTT надсилаються контролеру, пауза `IMPORT_MQTT_PACE_MS` = 300 мс
+між контролерами, `site_id` за `site_name`); невідомий — **попередньо реєструється** в черзі очікування (без
+точки); уже активний — **пропускається**. Невідома точка створюється з адресою (без правки наявних) і
+геокодується через bulk-чергу геокодера, якщо `GEOCODER_BULK_ENABLED=true`; результат рахується в
+`geocoded` / `geocode_failed`. Помилка одного рядка (`failed_rows`) не зупиняє імпорт. Лічильники оновлюються
+кожні 5 рядків; після рестарту сервера незавершена задача позначається `failed` (`interrupted by a restart`),
+а ті, що ще в черзі, запускаються знову.
+
+### `GET /imports` · `GET /imports/:id`
+**Ролі:** admin. Список (20 останніх, `meta.max_rows`) і одна задача з `summary`, `results`
+(`[{ row, mqtt_device_id, name, status: assigned | pre_registered | skipped | failed, site_id, site_name, error }]` —
+без паролів), `requested_by_email`, `credentials_available`, `credentials_downloaded_at`, `error`.
+
+### `GET /imports/:id/credentials.csv`
+Паролі MQTT призначених контролерів — **один раз**: файл `mqtt_device_id, name, username, password,
+mqtt_host, mqtt_port, sent_via_mqtt`, після чого зашифрований блок видаляється (`410 credentials_gone` при
+повторній спробі, `409 no_credentials`, якщо ніхто не був призначений). Аудит `import.credentials`.
+
+### `POST /imports/:id/cancel`
+Задача в черзі завершується одразу (`cancelled`), та, що виконується, — після поточного рядка;
+`409 not_active` для завершеної.
+
+---
+
 ## Інтеграції: API-ключі та вебхуки (plan epic 2.6)
 
 Адміністратор організації на плані з функцією `api` (Про, Мережа, Партнер; `402 plan_feature` інакше — наявні
@@ -2928,3 +2984,4 @@ duration_ms, created_at, delivered_at, payload`.
 - 2026-09-08 — Інтеграції (epic 2.6): API-ключі `GET/POST/DELETE /api-keys` (Bearer `modesp_…`, scope read|write|admin, заборонена поверхня `403 api_key_scope`), вебхуки `GET/POST/PATCH/DELETE /webhooks`, `POST /webhooks/:id/test|rotate-secret`, `GET /webhooks/:id/deliveries`, `POST /webhooks/:id/deliveries/:did/redeliver`; підпис `X-ModESP-Signature v1=HMAC-SHA256`.
 - 2026-09-08 — OpenAPI 3.1 інтеграційної поверхні: `GET /api/docs` (Swagger UI), `GET /api/docs/openapi.json`, `docs/openapi.json` з перевіркою в CI (`npm run openapi:check`).
 - 2026-09-08 — Прошивки (epic 2.8): платформенна бібліотека (`global`, `visibility`, `PATCH /firmware/:id`), перевірки перед OTA (`409 precheck_failed`, `force`), `GET/POST /ota/rollback`, відкладання в розгортанні, `paused_reason`, `acked_failures`, `kind/forced/actor` у завданнях, безпечне `DELETE /firmware/:id`, вікно оновлень у `tenants/:id/settings` (`ota_window_from/to`).
+- 2026-09-08 — CSV-імпорт мережі (epic 2.12): `POST /devices/pending/batch` → `202` із задачею `imports`, `GET /devices/pending/template.csv`, `GET /imports`, `GET /imports/:id`, `GET /imports/:id/credentials.csv` (один раз), `POST /imports/:id/cancel`; до 2 000 рядків, перевірка плану, геокодування нових точок.

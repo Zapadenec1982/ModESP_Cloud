@@ -394,6 +394,10 @@
 <div class="sites-page">
   <PageHeader title={$t('pages.sites')} subtitle={$t('pages.sites_sub')}>
     {#if $isAdmin}
+      <button class="hdr-btn" on:click={() => (window.location.hash = '#/pending?import=1')}>
+        <Icon name="upload" size={14} />
+        {$t('pending.import_csv')}
+      </button>
       <button class="hdr-btn" on:click={openCreate}>
         <Icon name="plus" size={14} />
         {$t('site.new_site')}

@@ -619,28 +619,56 @@ export function deletePendingDevice(mqttId) {
   return request(`/devices/pending/${mqttId}`, { method: 'DELETE' });
 }
 
+/**
+ * POST /api/devices/pending/batch — upload a CSV of devices and sites. The
+ * server validates it and answers 202 with an import job (plan epic 2.12);
+ * poll getImport(id) for progress and results.
+ */
 export async function batchRegisterDevices(file, tenantId) {
   const formData = new FormData()
   formData.append('file', file)
   if (tenantId) formData.append('tenant_id', tenantId)
-
   const headers = {}
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
-
-  const res = await fetch(`${BASE}/devices/pending/batch`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  })
+  const res = await fetch(`${BASE}/devices/pending/batch`, { method: 'POST', headers, body: formData })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    if (body.errors) {
-      const msgs = body.errors.slice(0, 5).map(e => `Row ${e.row}: ${e.message}`).join('; ')
-      throw new Error(msgs + (body.errors.length > 5 ? ` (+${body.errors.length - 5} more)` : ''))
+    let message = body.message || `HTTP ${res.status}`
+    if (Array.isArray(body.errors) && body.errors.length) {
+      message = body.errors.slice(0, 20).map(e => `#${e.row} ${e.field}: ${e.message}`).join('\n')
+        + (body.errors.length > 20 ? `\n… +${body.errors.length - 20}` : '')
     }
-    throw new Error(body.message || `HTTP ${res.status}`)
+    const err = new Error(message)
+    err.status = res.status
+    err.body = body
+    if (res.status === 402) notifyPlanLimit(body)
+    throw err
   }
   return (await res.json()).data
+}
+
+/** GET /api/imports — the organisation's CSV imports, newest first: { data, meta: { max_rows } }. */
+export function getImports() {
+  return requestFull('/imports')
+}
+
+/** GET /api/imports/:id — one import with progress counters, summary and per-row results (no secrets). */
+export function getImport(id) {
+  return request(`/imports/${id}`)
+}
+
+/** GET /api/imports/:id/credentials.csv — the MQTT credentials of the assigned controllers, downloadable once. */
+export function downloadImportCredentials(id) {
+  return downloadFile(`/imports/${id}/credentials.csv`, `credentials_${String(id).slice(0, 8)}.csv`)
+}
+
+export function cancelImport(id) {
+  return request(`/imports/${id}/cancel`, { method: 'POST' })
+}
+
+/** GET /api/devices/pending/template.csv — every import column with one example row. */
+export function downloadImportTemplate() {
+  return downloadFile('/devices/pending/template.csv', 'modesp_import_template.csv')
 }
 
 export function deleteDevice(id) {

@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-841-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-846-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 841 tests across 70 test files
+│   ├── test/                        # 846 tests across 71 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -249,7 +249,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**841 integration tests** across 70 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**846 integration tests** across 71 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
