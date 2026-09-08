@@ -2748,7 +2748,7 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 впізнавання; повний ключ є лише у відповіді на створення. Ключ представляє організацію цілком: бачить усі її
 пристрої (без грантів `user_devices`/`user_sites`), а роль випливає зі `scope` — `read` → переглядач,
 `write` → технік, `admin` → адміністратор. Заборонена поверхня для будь-якого ключа: `/auth/*` (з
-автентифікацією), `/profile`, `/api-keys`, `/users`, `/tenants`, `/billing`, `/audit-log`, `/pilot-requests`,
+автентифікацією), `/profile`, `/api-keys`, `/webhooks`, `/users`, `/tenants`, `/billing`, `/audit-log`, `/pilot-requests`,
 `/partner`, `/onboarding`, `/ws-ticket` — `403 api_key_scope`. Відкликаний або прострочений ключ, а також
 ключ організації без функції `api` — `401 invalid_key` / `402 plan_feature`; у закритій організації ключ
 читає, але не пише (`423 organisation_closed`), у призупиненій — `401`. `last_used_at` оновлюється не частіше

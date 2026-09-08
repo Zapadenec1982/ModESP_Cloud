@@ -110,7 +110,7 @@ describe('integrations (plan epic 2.6)', () => {
     expect(ack.status).toBe(200);
     expect(ack.body.data.acknowledged_by_email).toBe('apikey:Automation');
     // the denied surface
-    for (const path of ['/api/users', '/api/api-keys', '/api/profile', '/api/tenants', '/api/billing/invoices']) {
+    for (const path of ['/api/users', '/api/api-keys', '/api/webhooks', '/api/profile', '/api/tenants', '/api/billing/invoices']) {
       const r = await request(app).get(path).set(bearer(writeKey));
       expect(r.status, path).toBe(403);
       expect(r.body.error, path).toBe('api_key_scope');

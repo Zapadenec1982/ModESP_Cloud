@@ -29,6 +29,8 @@ const DENIED = [
   /^\/api\/auth(\/|$)/, /^\/api\/profile(\/|$)/, /^\/api\/api-keys(\/|$)/, /^\/api\/users(\/|$)/,
   /^\/api\/tenants(\/|$)/, /^\/api\/billing(\/|$)/, /^\/api\/audit-log(\/|$)/, /^\/api\/pilot-requests(\/|$)/,
   /^\/api\/partner(\/|$)/, /^\/api\/onboarding(\/|$)/, /^\/api\/ws-ticket$/,
+  // integration configuration itself belongs to a person, not to a leaked key
+  /^\/api\/webhooks(\/|$)/,
 ];
 
 function looksLikeKey(token) { return typeof token === 'string' && token.startsWith(PREFIX); }
