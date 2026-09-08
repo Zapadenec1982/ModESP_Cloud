@@ -9,6 +9,8 @@ const emailSvc   = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 const { passwordSchema } = require('../lib/password-policy');
 const registrationSvc = require('../services/registration');
+const sessionsSvc = require('../services/sessions');
+const mfaSvc      = require('../services/mfa');
 
 const router = Router();
 
@@ -17,10 +19,6 @@ const router = Router();
 const loginSchema = z.object({
   email:    z.string().email(),
   password: z.string().min(1),
-});
-
-const refreshSchema = z.object({
-  refresh_token: z.string().min(1),
 });
 
 const selectTenantSchema = z.object({
@@ -54,24 +52,19 @@ async function roleFor(userId, tenantId) {
   return member_role || base_role;
 }
 
-async function issueTokens(user, tenantId) {
+/**
+ * Open a session for `user` in `tenantId` — or continue the session
+ * `familyId` (token refresh, tenant switch). The refresh token goes to the
+ * httpOnly cookie and the body through sessionsSvc.attach() (plan epic 2.9).
+ */
+async function issueTokens(user, tenantId, req, familyId = null) {
   const role = (await roleFor(user.id, tenantId)) || user.role;
-  const accessToken  = authSvc.generateAccessToken({
-    id: user.id, email: user.email, role, tenantId,
-  });
-  const refreshToken = authSvc.generateRefreshToken();
-  const tokenHash    = authSvc.hashRefreshToken(refreshToken);
+  return sessionsSvc.issue({ user, role, tenantId, req, familyId });
+}
 
-  const refreshExpiresIn = parseInt(process.env.JWT_REFRESH_EXPIRES_IN, 10) || 2592000;
-  const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
-
-  await db.query(
-    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, tenant_id)
-     VALUES ($1, $2, $3, $4)`,
-    [user.id, tokenHash, expiresAt, tenantId]
-  );
-
-  return { accessToken, refreshToken, role };
+/** The public shape of a signed-in user. */
+function userPayload(user, role) {
+  return { id: user.id, email: user.email, role, locale: user.locale || null, timezone: user.timezone || null };
 }
 
 // Organisations a session may run in: trial, active and past_due. A suspended
@@ -146,7 +139,7 @@ router.post('/login', async (req, res) => {
   try {
     // Find user by email
     const { rows } = await db.query(
-      `SELECT id, tenant_id, email, password_hash, role, active, locale, timezone, email_verified_at
+      `SELECT id, tenant_id, email, password_hash, role, active, locale, timezone, email_verified_at, mfa_enabled_at
        FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -187,6 +180,30 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // Second factor (plan epic 2.9): the password alone is not a login
+    if (user.mfa_enabled_at) {
+      return res.json({
+        data: {
+          require_mfa: true,
+          mfa_token: authSvc.generateMfaToken({ id: user.id, email: user.email, role: user.role }),
+          user: { id: user.id, email: user.email },
+        },
+      });
+    }
+
+    return await finishLogin(req, res, user);
+  } catch (err) {
+    req.log?.error?.({ err }, 'Login failed') || console.error('Login failed:', err);
+    res.status(500).json({ error: 'internal_error', message: 'Login failed', status: 500 });
+  }
+});
+
+/**
+ * The tail of a login once every factor is in: pick the organisation (or ask
+ * for one) and open the session. Shared by /login and /mfa/verify.
+ */
+async function finishLogin(req, res, user) {
+  try {
     // Fetch available tenants from user_tenants
     const tenants = await getUserTenants(user.id);
 
@@ -235,18 +252,17 @@ router.post('/login', async (req, res) => {
       const loginTenant = user.role === 'superadmin'
         ? tenants.find(t => t.id === user.tenant_id) || tenants[0]
         : tenants[0];
-      const { accessToken, refreshToken, role } = await issueTokens(user, loginTenant.id);
+      const session = await issueTokens(user, loginTenant.id, req);
       await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
       return res.json({
-        data: {
-          access_token:  accessToken,
-          refresh_token: refreshToken,
+        data: sessionsSvc.attach(res, session, {
+          access_token: session.accessToken,
           // role = the role inside loginTenant (user_tenants.role), not the account role
-          user: { id: user.id, email: user.email, role, locale: user.locale || null, timezone: user.timezone || null },
+          user: userPayload(user, session.role),
           tenant: loginTenant,
           tenants,
-        },
+        }),
       });
     }
 
@@ -259,7 +275,7 @@ router.post('/login', async (req, res) => {
       data: {
         require_tenant_select: true,
         pending_token: pendingToken,
-        user: { id: user.id, email: user.email, role: user.role, locale: user.locale || null, timezone: user.timezone || null },
+        user: userPayload(user, user.role),
         tenants,
       },
     });
@@ -267,7 +283,7 @@ router.post('/login', async (req, res) => {
     req.log?.error?.({ err }, 'Login failed') || console.error('Login failed:', err);
     res.status(500).json({ error: 'internal_error', message: 'Login failed', status: 500 });
   }
-});
+}
 
 // ── POST /auth/select-tenant ────────────────────────────
 // Complete login after tenant selection (uses pending_token)
@@ -306,20 +322,19 @@ router.post('/select-tenant', async (req, res) => {
       });
     }
 
-    const { accessToken, refreshToken, role } = await issueTokens(user, tenant_id);
+    const session = await issueTokens(user, tenant_id, req);
     await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
 
     const tenant  = await tenantSummary(tenant_id);
     const tenants = await getUserTenants(user.id);
 
     res.json({
-      data: {
-        access_token:  accessToken,
-        refresh_token: refreshToken,
-        user: { id: user.id, email: user.email, role, locale: user.locale || null, timezone: user.timezone || null },
+      data: sessionsSvc.attach(res, session, {
+        access_token: session.accessToken,
+        user: userPayload(user, session.role),
         tenant,
         tenants,
-      },
+      }),
     });
   } catch (err) {
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
@@ -366,20 +381,20 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
     }
     if (!OPEN_STATUSES.includes(tenant.status)) return tenantSuspended(res);
 
-    // Issue new tokens with new tenant context — and the role held THERE (plan epic 2.5)
+    // Issue new tokens with new tenant context — and the role held THERE (plan
+    // epic 2.5) — inside the same session (plan epic 2.9)
     const user = { id: userId, email: req.user.email, role: req.user.role };
-    const { accessToken, refreshToken, role } = await issueTokens(user, tenant_id);
+    const session = await issueTokens(user, tenant_id, req, req.user.sid || null);
 
     const tenants = await getUserTenants(userId);
 
     res.json({
-      data: {
-        access_token:  accessToken,
-        refresh_token: refreshToken,
-        role,
+      data: sessionsSvc.attach(res, session, {
+        access_token: session.accessToken,
+        role: session.role,
         tenant,
         tenants,
-      },
+      }),
     });
   } catch (err) {
     req.log?.error?.({ err }, 'Switch tenant failed') || console.error('Switch tenant failed:', err);
@@ -389,9 +404,24 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
 
 // ── POST /auth/refresh ──────────────────────────────────
 
+//
+// The refresh token comes in the body (API clients) or in the httpOnly cookie
+// with the X-CSRF-Token header (the WebUI), see services/sessions.js. Each
+// token is single-use: a token seen twice closes its whole session.
+
+function tokenFrom(req, res) {
+  try {
+    return sessionsSvc.presentedToken(req);
+  } catch (err) {
+    res.status(403).json({ error: 'csrf_required', message: 'Missing or invalid CSRF token', status: 403 });
+    return null;
+  }
+}
+
 router.post('/refresh', async (req, res) => {
-  const parsed = refreshSchema.safeParse(req.body);
-  if (!parsed.success) {
+  const presented = tokenFrom(req, res);
+  if (!presented) return;
+  if (!presented.token) {
     return res.status(400).json({
       error: 'validation_failed',
       message: 'refresh_token is required',
@@ -399,42 +429,24 @@ router.post('/refresh', async (req, res) => {
     });
   }
 
-  const { refresh_token } = parsed.data;
-  const tokenHash = authSvc.hashRefreshToken(refresh_token);
-
   try {
-    // Find token — use rt.tenant_id (preserves selected tenant context)
-    const { rows } = await db.query(
-      `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
-              COALESCE(rt.tenant_id, u.tenant_id) AS tenant_id,
-              u.email, u.role, u.active, t.status AS tenant_status
-       FROM refresh_tokens rt
-       JOIN users u ON u.id = rt.user_id
-       LEFT JOIN tenants t ON t.id = COALESCE(rt.tenant_id, u.tenant_id)
-       WHERE rt.token_hash = $1`,
-      [tokenHash]
-    );
-
-    if (rows.length === 0) {
-      return res.status(401).json({
-        error: 'invalid_token',
-        message: 'Invalid refresh token',
-        status: 401,
-      });
+    let row;
+    try {
+      row = await sessionsSvc.lookup(presented.token);
+    } catch (err) {
+      if (err.code === 'token_reused') {
+        sessionsSvc.detach(res);
+        return res.status(401).json({ error: 'token_reused', message: err.message, status: 401 });
+      }
+      if (err.code === 'token_expired') {
+        return res.status(401).json({ error: 'token_expired', message: 'Refresh token expired or revoked', status: 401 });
+      }
+      return res.status(401).json({ error: 'invalid_token', message: 'Invalid refresh token', status: 401 });
     }
 
-    const row = rows[0];
     // A suspended organisation ends the session at the next refresh (≤ 15 min).
     if (row.role !== 'superadmin' && row.tenant_status && !OPEN_STATUSES.includes(row.tenant_status)) {
       return tenantSuspended(res);
-    }
-
-    if (row.revoked || new Date(row.expires_at) < new Date()) {
-      return res.status(401).json({
-        error: 'token_expired',
-        message: 'Refresh token expired or revoked',
-        status: 401,
-      });
     }
 
     if (!row.active) {
@@ -445,38 +457,20 @@ router.post('/refresh', async (req, res) => {
       });
     }
 
-    // Rotation: revoke old token, issue new pair
-    await db.query(
-      'UPDATE refresh_tokens SET revoked = true WHERE id = $1',
-      [row.id]
-    );
-
-    const role = (await roleFor(row.user_id, row.tenant_id)) || row.role;
-    const accessToken     = authSvc.generateAccessToken({
-      id: row.user_id, email: row.email, role, tenantId: row.tenant_id,
-    });
-    const newRefreshToken = authSvc.generateRefreshToken();
-    const newTokenHash    = authSvc.hashRefreshToken(newRefreshToken);
-
-    const refreshExpiresIn = parseInt(process.env.JWT_REFRESH_EXPIRES_IN, 10) || 2592000;
-    const expiresAt = new Date(Date.now() + refreshExpiresIn * 1000);
-
-    await db.query(
-      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, tenant_id)
-       VALUES ($1, $2, $3, $4)`,
-      [row.user_id, newTokenHash, expiresAt, row.tenant_id]
-    );
+    // Rotation: retire the presented token, issue the next one in the same session
+    await sessionsSvc.retire(row);
+    const user = { id: row.user_id, email: row.email, role: row.role, locale: row.locale, timezone: row.timezone };
+    const session = await issueTokens(user, row.tenant_id, req, row.family_id);
 
     // Fetch user's tenants for frontend
     const tenants = await getUserTenants(row.user_id);
 
     res.json({
-      data: {
-        access_token:  accessToken,
-        refresh_token: newRefreshToken,
-        role,
+      data: sessionsSvc.attach(res, session, {
+        access_token: session.accessToken,
+        role: session.role,
         tenants,
-      },
+      }),
     });
   } catch (err) {
     req.log?.error?.({ err }, 'Refresh failed') || console.error('Refresh failed:', err);
@@ -486,18 +480,18 @@ router.post('/refresh', async (req, res) => {
 
 // ── POST /auth/logout ───────────────────────────────────
 
+// Ends the whole session the token belongs to (every rotation of it), and
+// clears the cookie. Accepts the token from the body or from the cookie.
 router.post('/logout', async (req, res) => {
-  const parsed = refreshSchema.safeParse(req.body);
-  if (!parsed.success) {
+  const presented = tokenFrom(req, res);
+  if (!presented) return;
+  if (!presented.token) {
     return res.status(400).json({
       error: 'validation_failed',
       message: 'refresh_token is required',
       status: 400,
     });
   }
-
-  const { refresh_token } = parsed.data;
-  const tokenHash = authSvc.hashRefreshToken(refresh_token);
 
   try {
     // Fetch user info before revoking so audit middleware can log who logged out
@@ -506,17 +500,15 @@ router.post('/logout', async (req, res) => {
        FROM refresh_tokens rt
        LEFT JOIN users u ON u.id = rt.user_id
        WHERE rt.token_hash = $1`,
-      [tokenHash]
+      [authSvc.hashRefreshToken(presented.token)]
     );
     if (tokenRow.rows.length) {
       const t = tokenRow.rows[0];
       req.user = { id: t.user_id, email: t.email, role: t.role, tenantId: t.tenant_id };
     }
 
-    await db.query(
-      'UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1',
-      [tokenHash]
-    );
+    await sessionsSvc.revokeByToken(presented.token);
+    sessionsSvc.detach(res);
     res.json({ data: { message: 'Logged out' } });
   } catch (err) {
     req.log?.error?.({ err }, 'Logout failed') || console.error('Logout failed:', err);
@@ -779,7 +771,7 @@ router.post('/invite/:token/accept', async (req, res) => {
     if (outcome.error === 'weak_password')    return res.status(400).json({ error: 'validation_failed', message: outcome.message, status: 400 });
 
     const { user, created } = outcome;
-    const { accessToken, refreshToken } = await issueTokens(user, inv.tenant_id);
+    const session = await issueTokens(user, inv.tenant_id, req);
     await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
     const tenants = await getUserTenants(user.id);
 
@@ -788,14 +780,13 @@ router.post('/invite/:token/accept', async (req, res) => {
       changes: { invitation_id: inv.id, tenant_id: inv.tenant_id, created },
     };
     res.status(created ? 201 : 200).json({
-      data: {
-        access_token:  accessToken,
-        refresh_token: refreshToken,
+      data: sessionsSvc.attach(res, session, {
+        access_token: session.accessToken,
         user:    { id: user.id, email: user.email, role: user.role },
         tenant:  { id: inv.tenant_id, name: inv.tenant_name, slug: inv.tenant_slug },
         tenants,
         created,
-      },
+      }),
     });
   } catch (err) {
     req.log?.error?.({ err }, 'Accept invitation failed');
@@ -830,14 +821,13 @@ const registerSchema = z.object({
   website:      z.string().max(200).optional(),   // honeypot: people never see it, bots fill it
 });
 
-function sessionPayload(tokens, user, tenant, tenants) {
-  return {
-    access_token:  tokens.accessToken,
-    refresh_token: tokens.refreshToken,
-    user: { id: user.id, email: user.email, role: tokens.role, locale: user.locale || null, timezone: user.timezone || null },
+function sessionPayload(res, session, user, tenant, tenants) {
+  return sessionsSvc.attach(res, session, {
+    access_token: session.accessToken,
+    user: userPayload(user, session.role),
     tenant,
     tenants,
-  };
+  });
 }
 
 router.post('/register', async (req, res) => {
@@ -868,9 +858,9 @@ router.post('/register', async (req, res) => {
     };
     // Nothing left to wait for: sign in right away, as invitation acceptance does.
     if (!verificationRequired && !approvalRequired) {
-      const tokens = await issueTokens(user, tenant.id);
+      const session = await issueTokens(user, tenant.id, req);
       await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
-      Object.assign(data, sessionPayload(tokens, user, await tenantSummary(tenant.id), await getUserTenants(user.id)));
+      Object.assign(data, sessionPayload(res, session, user, await tenantSummary(tenant.id), await getUserTenants(user.id)));
     }
     res.status(201).json({ data });
   } catch (err) {
@@ -903,9 +893,9 @@ router.post('/verify-email', async (req, res) => {
     const approvalRequired = registrationSvc.awaitingApproval(home[0]);
     const data = { verified: true, approval_required: approvalRequired };
     if (!approvalRequired && tenant && OPEN_STATUSES.includes(tenant.status)) {
-      const tokens = await issueTokens(user, tenant.id);
+      const session = await issueTokens(user, tenant.id, req);
       await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
-      Object.assign(data, sessionPayload(tokens, user, tenant, await getUserTenants(user.id)));
+      Object.assign(data, sessionPayload(res, session, user, tenant, await getUserTenants(user.id)));
     }
     res.json({ data });
   } catch (err) {
@@ -935,6 +925,185 @@ router.post('/resend-verification', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Resend verification failed');
     res.status(500).json({ error: 'internal_error', message: 'Request failed', status: 500 });
+  }
+});
+
+// ── Second factor (plan epic 2.9) ────────────────────────
+//
+// /mfa/verify is the second half of a login (public, rate-limited, keyed by
+// the five-minute mfa_token); the rest manages the authenticator of the
+// signed-in account.
+
+const mfaVerifySchema = z.object({
+  mfa_token: z.string().min(1),
+  code:      z.string().trim().min(6).max(16),
+});
+
+router.post('/mfa/verify', async (req, res) => {
+  const parsed = mfaVerifySchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    let payload;
+    try {
+      payload = authSvc.verifyMfaToken(parsed.data.mfa_token);
+    } catch {
+      return res.status(401).json({ error: 'invalid_token', message: 'Sign in again — the code window has closed', status: 401 });
+    }
+    const { rows } = await db.query(
+      `SELECT id, tenant_id, email, role, active, locale, timezone, mfa_enabled_at FROM users WHERE id = $1`, [payload.sub]);
+    const user = rows[0];
+    if (!user || !user.active) {
+      return res.status(401).json({ error: 'account_disabled', message: 'Account not found or disabled', status: 401 });
+    }
+    const check = await mfaSvc.verify(user.id, parsed.data.code);
+    if (!check.ok) {
+      req.auditContext = { entityId: user.id, action: 'auth.mfa_failed' };
+      return res.status(401).json({ error: 'invalid_mfa_code', message: 'The code is wrong or was already used', status: 401 });
+    }
+    req.auditContext = { entityId: user.id, action: 'auth.mfa_verify', changes: { method: check.method } };
+    return await finishLogin(req, res, user);
+  } catch (err) {
+    req.log?.error?.({ err }, 'MFA verify failed');
+    res.status(500).json({ error: 'internal_error', message: 'Verification failed', status: 500 });
+  }
+});
+
+router.get('/mfa', authenticate, async (req, res) => {
+  try {
+    const s = await mfaSvc.status(req.user.id);
+    if (!s) return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    res.json({ data: s });
+  } catch (err) {
+    req.log?.error?.({ err }, 'MFA status failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to read MFA status', status: 500 });
+  }
+});
+
+router.post('/mfa/setup', authenticate, async (req, res) => {
+  try {
+    const s = await mfaSvc.status(req.user.id);
+    if (s && s.enabled) {
+      return res.status(409).json({ error: 'mfa_enabled', message: 'MFA is already enabled — disable it first', status: 409 });
+    }
+    const data = await mfaSvc.setup(req.user.id, req.user.email);
+    req.auditContext = { entityId: req.user.id, action: 'auth.mfa_setup' };
+    res.json({ data });
+  } catch (err) {
+    req.log?.error?.({ err }, 'MFA setup failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to start MFA setup', status: 500 });
+  }
+});
+
+const mfaCodeSchema = z.object({ code: z.string().trim().min(6).max(16) });
+
+// The first code from the app: the secret becomes live, the backup codes are
+// shown once, and every other session of the account is signed out — they
+// never passed the second factor.
+router.post('/mfa/enable', authenticate, async (req, res) => {
+  const parsed = mfaCodeSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const codes = await mfaSvc.enable(req.user.id, parsed.data.code);
+    if (!codes) return res.status(400).json({ error: 'invalid_mfa_code', message: 'The code does not match — check the time on the phone and try the next one', status: 400 });
+    const closed = await sessionsSvc.revokeAll(req.user.id, req.user.sid || null);
+    req.auditContext = { entityId: req.user.id, action: 'auth.mfa_enable', changes: { sessions_closed: closed } };
+    res.json({ data: { enabled: true, backup_codes: codes, sessions_closed: closed } });
+  } catch (err) {
+    if (err.code === 'no_setup') return res.status(409).json({ error: 'no_setup', message: 'Start the setup first', status: 409 });
+    req.log?.error?.({ err }, 'MFA enable failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to enable MFA', status: 500 });
+  }
+});
+
+const mfaDisableSchema = z.object({
+  password: z.string().min(1).max(256),
+  code:     z.string().trim().min(6).max(16),
+});
+
+// Password and a current code (or a backup code): both, so neither a stolen
+// session nor a stolen phone alone can switch the factor off.
+router.post('/mfa/disable', authenticate, async (req, res) => {
+  const parsed = mfaDisableSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const { rows } = await db.query('SELECT password_hash, mfa_enabled_at FROM users WHERE id = $1', [req.user.id]);
+    if (!rows[0] || !rows[0].mfa_enabled_at) {
+      return res.status(409).json({ error: 'mfa_not_enabled', message: 'MFA is not enabled', status: 409 });
+    }
+    if (!await authSvc.comparePassword(parsed.data.password, rows[0].password_hash)) {
+      return res.status(401).json({ error: 'invalid_credentials', message: 'Password is incorrect', status: 401 });
+    }
+    const check = await mfaSvc.verify(req.user.id, parsed.data.code);
+    if (!check.ok) return res.status(401).json({ error: 'invalid_mfa_code', message: 'The code is wrong or was already used', status: 401 });
+    await mfaSvc.disable(req.user.id);
+    req.auditContext = { entityId: req.user.id, action: 'auth.mfa_disable' };
+    res.json({ data: { enabled: false } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'MFA disable failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to disable MFA', status: 500 });
+  }
+});
+
+router.post('/mfa/backup-codes', authenticate, async (req, res) => {
+  const parsed = mfaCodeSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const check = await mfaSvc.verify(req.user.id, parsed.data.code);
+    if (!check.ok) return res.status(401).json({ error: 'invalid_mfa_code', message: 'The code is wrong or was already used', status: 401 });
+    const codes = await mfaSvc.regenerateBackupCodes(req.user.id);
+    req.auditContext = { entityId: req.user.id, action: 'auth.mfa_backup_codes' };
+    res.json({ data: { backup_codes: codes } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'MFA backup codes failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to regenerate backup codes', status: 500 });
+  }
+});
+
+// ── Sessions (plan epic 2.9) ─────────────────────────────
+
+router.get('/sessions', authenticate, async (req, res) => {
+  try {
+    res.json({ data: await sessionsSvc.list(req.user.id, req.user.sid || null) });
+  } catch (err) {
+    req.log?.error?.({ err }, 'List sessions failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to list sessions', status: 500 });
+  }
+});
+
+// Sign out everywhere else: every session but the one making the call.
+router.delete('/sessions', authenticate, async (req, res) => {
+  try {
+    const closed = await sessionsSvc.revokeAll(req.user.id, req.user.sid || null);
+    req.auditContext = { entityId: req.user.id, action: 'auth.sessions_revoke_all', changes: { sessions_closed: closed } };
+    res.json({ data: { revoked: closed } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Revoke sessions failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to revoke sessions', status: 500 });
+  }
+});
+
+router.delete('/sessions/:id', authenticate, async (req, res) => {
+  if (!z.string().uuid().safeParse(req.params.id).success) {
+    return res.status(400).json({ error: 'validation_failed', message: 'Invalid session id', status: 400 });
+  }
+  try {
+    const n = await sessionsSvc.revokeFamily(req.user.id, req.params.id);
+    if (!n) return res.status(404).json({ error: 'not_found', message: 'Session not found', status: 404 });
+    const current = req.params.id === req.user.sid;
+    if (current) sessionsSvc.detach(res);
+    req.auditContext = { entityId: req.user.id, action: 'auth.session_revoke', changes: { session_id: req.params.id, current } };
+    res.json({ data: { revoked: true, current } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Revoke session failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to revoke session', status: 500 });
   }
 });
 

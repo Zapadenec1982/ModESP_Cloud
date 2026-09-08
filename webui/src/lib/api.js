@@ -20,12 +20,33 @@ function applyUser(user) {
 
 const BASE = '/api';
 
-// ── Token management (access in memory, refresh in localStorage) ──
+// ── Token management (plan epic 2.9) ────────────────────
+//
+// The access token lives in memory only. The refresh token lives in an
+// httpOnly cookie the browser sends to /api/auth by itself — no script can
+// read it. What the page keeps is the CSRF token that pairs with the cookie
+// (worthless on its own) so a refresh after a reload can prove it came from
+// this app. Sessions opened before the cookie existed left the refresh token
+// in localStorage: it is sent once so the server moves it into the cookie,
+// and then dropped.
 
 let accessToken = null;
-let refreshToken = localStorage.getItem('modesp_refresh_token');
+let csrfToken = localStorage.getItem('modesp_csrf');
+let legacyRefreshToken = localStorage.getItem('modesp_refresh_token');
 let refreshPromise = null;
 let refreshTimer = null;
+
+/** Whether there is anything to resume a session from. */
+function hasSession() {
+  return !!csrfToken || !!legacyRefreshToken;
+}
+
+function forgetSession() {
+  csrfToken = null;
+  legacyRefreshToken = null;
+  localStorage.removeItem('modesp_csrf');
+  localStorage.removeItem('modesp_refresh_token');
+}
 
 /**
  * Decode JWT payload without external dependencies.
@@ -48,7 +69,7 @@ function parseJwtExp(token) {
 /**
  * Proactive token refresh — schedules refresh at ~80% of token lifetime.
  * This prevents tokens from silently expiring during active use.
- * Creates a self-maintaining chain: refresh → setTokens → schedule → refresh …
+ * Creates a self-maintaining chain: refresh → setSession → schedule → refresh …
  */
 function scheduleTokenRefresh() {
   clearTimeout(refreshTimer);
@@ -69,7 +90,7 @@ function scheduleTokenRefresh() {
         // Retry in 30s
         refreshTimer = setTimeout(() => scheduleTokenRefresh(), 30000);
       }
-      // Success: setTokens() → scheduleTokenRefresh() chain continues
+      // Success: setSession() → scheduleTokenRefresh() chain continues
     });
     return;
   }
@@ -86,17 +107,20 @@ function scheduleTokenRefresh() {
       console.warn('[Auth] Proactive refresh failed, retrying in 30s');
       refreshTimer = setTimeout(() => scheduleTokenRefresh(), 30000);
     }
-    // Success path: tryRefresh → setTokens → scheduleTokenRefresh (auto-chain)
+    // Success path: tryRefresh → setSession → scheduleTokenRefresh (auto-chain)
   }, refreshInMs);
 }
 
-function setTokens(access, refresh) {
+function setSession(access, csrf) {
   accessToken = access;
-  refreshToken = refresh;
-  if (refresh) {
-    localStorage.setItem('modesp_refresh_token', refresh);
-  } else {
+  if (csrf) {
+    csrfToken = csrf;
+    localStorage.setItem('modesp_csrf', csrf);
+    // The server has the refresh token in the cookie now
+    legacyRefreshToken = null;
     localStorage.removeItem('modesp_refresh_token');
+  } else if (!access) {
+    forgetSession();
   }
   // Start/restart the proactive refresh chain
   scheduleTokenRefresh();
@@ -112,8 +136,8 @@ async function request(path, options = {}) {
   const url = `${BASE}${path}`;
   const headers = { 'Content-Type': 'application/json', ...options.headers };
 
-  // Pre-refresh: if access token is gone but refresh token exists, restore first
-  if (!accessToken && refreshToken && !options._noRetry) {
+  // Pre-refresh: if access token is gone but a session exists, restore first
+  if (!accessToken && hasSession() && !options._noRetry) {
     await tryRefresh();
   }
 
@@ -125,7 +149,7 @@ async function request(path, options = {}) {
   let res = await fetch(url, { ...options, headers });
 
   // Auto-refresh on 401 (safety net — proactive refresh should prevent this)
-  if (res.status === 401 && refreshToken && !options._noRetry) {
+  if (res.status === 401 && hasSession() && !options._noRetry) {
     const refreshed = await tryRefresh();
     if (refreshed) {
       // Retry original request with new token
@@ -171,7 +195,7 @@ async function requestFull(path, options = {}) {
   const url = `${BASE}${path}`;
   const headers = { 'Content-Type': 'application/json', ...options.headers };
 
-  if (!accessToken && refreshToken && !options._noRetry) {
+  if (!accessToken && hasSession() && !options._noRetry) {
     await tryRefresh();
   }
   if (accessToken) {
@@ -180,7 +204,7 @@ async function requestFull(path, options = {}) {
 
   let res = await fetch(url, { ...options, headers });
 
-  if (res.status === 401 && refreshToken && !options._noRetry) {
+  if (res.status === 401 && hasSession() && !options._noRetry) {
     const refreshed = await tryRefresh();
     if (refreshed) {
       headers['Authorization'] = `Bearer ${accessToken}`;
@@ -216,6 +240,7 @@ async function requestRaw(path, options = {}) {
     const body = await res.json().catch(() => ({}));
     const err = new Error(body.message || `HTTP ${res.status}`);
     err.status = res.status;
+    err.code = body.error;
     err.body = body;
     throw err;
   }
@@ -225,24 +250,15 @@ async function requestRaw(path, options = {}) {
 
 // ── Auth API ────────────────────────────────────────────
 
-export async function login(email, password) {
-  const res = await fetch(`${BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const err = new Error(body.message || `HTTP ${res.status}`);
-    err.status = res.status;
-    err.code = body.error;     // email_not_verified | pending_approval | … (plan epic 2.1)
-    err.body = body;
-    throw err;
+/**
+ * The three answers a login can end in: a second factor to enter (plan epic
+ * 2.9), an organisation to pick, or a session. Errors carry `code`
+ * (email_not_verified | pending_approval | invalid_credentials | …).
+ */
+function adoptLogin(data) {
+  if (data.require_mfa) {
+    return { requireMfa: true, mfaToken: data.mfa_token, user: data.user };
   }
-
-  const { data } = await res.json();
-
   // Multiple tenants → return selection data (don't set tokens yet)
   if (data.require_tenant_select) {
     return {
@@ -252,16 +268,18 @@ export async function login(email, password) {
       tenants: data.tenants,
     };
   }
-
   // Single tenant → direct login
-  setTokens(data.access_token, data.refresh_token);
-  applyUser(data.user);
-  if (data.tenant) {
-    currentTenant.set(data.tenant);
-    localStorage.setItem('modesp_last_tenant', data.tenant.id);
-  }
-  if (data.tenants) availableTenants.set(data.tenants);
+  adoptSession(data);
   return { user: data.user };
+}
+
+export async function login(email, password) {
+  return adoptLogin(await requestRaw('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }));
+}
+
+/** POST /auth/mfa/verify — the code from the authenticator app (or a backup code) after the password. */
+export async function verifyMfa(mfaToken, code) {
+  return adoptLogin(await requestRaw('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ mfa_token: mfaToken, code }) }));
 }
 
 /**
@@ -273,7 +291,7 @@ export async function selectTenant(pendingToken, tenantId) {
     body: JSON.stringify({ pending_token: pendingToken, tenant_id: tenantId }),
   });
 
-  setTokens(data.access_token, data.refresh_token);
+  setSession(data.access_token, data.csrf_token);
   applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
@@ -292,7 +310,7 @@ export async function switchTenant(tenantId) {
     body: JSON.stringify({ tenant_id: tenantId }),
   });
 
-  setTokens(data.access_token, data.refresh_token);
+  setSession(data.access_token, data.csrf_token);
   if (data.tenant) {
     currentTenant.set(data.tenant);
     localStorage.setItem('modesp_last_tenant', data.tenant.id);
@@ -310,15 +328,23 @@ async function tryRefresh() {
 
   refreshPromise = (async () => {
     try {
+      // The cookie travels by itself; the CSRF header proves the call is ours.
+      // A pre-cookie session sends its stored token once, in the body.
+      const headers = { 'Content-Type': 'application/json' };
+      if (!legacyRefreshToken && csrfToken) headers['X-CSRF-Token'] = csrfToken;
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        headers,
+        body: JSON.stringify(legacyRefreshToken ? { refresh_token: legacyRefreshToken } : {}),
       });
-      if (!res.ok) return false;
+      if (!res.ok) {
+        // The session is gone for good (revoked, expired, reused): stop trying
+        if (res.status === 401 || res.status === 403 || res.status === 400) forgetSession();
+        return false;
+      }
 
       const { data } = await res.json();
-      setTokens(data.access_token, data.refresh_token);
+      setSession(data.access_token, data.csrf_token);
       if (data.tenants) availableTenants.set(data.tenants);
       if (data.role) authUser.update(u => u ? { ...u, role: data.role } : u);
       return true;
@@ -334,11 +360,13 @@ async function tryRefresh() {
 
 export async function logout() {
   try {
-    if (refreshToken) {
+    if (hasSession()) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (!legacyRefreshToken && csrfToken) headers['X-CSRF-Token'] = csrfToken;
       await fetch(`${BASE}/auth/logout`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        headers,
+        body: JSON.stringify(legacyRefreshToken ? { refresh_token: legacyRefreshToken } : {}),
       });
     }
   } catch { /* best effort */ }
@@ -380,7 +408,7 @@ export async function acceptInvite(token, password, acceptTerms) {
     method: 'POST',
     body: JSON.stringify({ password, accept_terms: acceptTerms === true }),
   });
-  setTokens(data.access_token, data.refresh_token);
+  setSession(data.access_token, data.csrf_token);
   applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
@@ -400,7 +428,7 @@ export function getRegistrationInfo() {
 /** Signs the session in when the answer carries tokens (nothing left to verify or approve). */
 function adoptSession(data) {
   if (!data?.access_token) return data;
-  setTokens(data.access_token, data.refresh_token);
+  setSession(data.access_token, data.csrf_token);
   applyUser(data.user);
   if (data.tenant) {
     currentTenant.set(data.tenant);
@@ -426,7 +454,7 @@ export function resendVerification(email, lang) {
 
 function clearAuth() {
   clearTimeout(refreshTimer);
-  setTokens(null, null);
+  setSession(null, null);
   authUser.set(null);
   currentTenant.set(null);
   availableTenants.set([]);
@@ -437,7 +465,7 @@ function clearAuth() {
  * Returns true if successfully restored.
  */
 export async function restoreSession() {
-  if (!refreshToken) return false;
+  if (!hasSession()) return false;
 
   const ok = await tryRefresh();
   if (!ok) {
@@ -498,6 +526,55 @@ export function getOnboarding() {
 
 export function dismissOnboarding() {
   return request('/onboarding/dismiss', { method: 'POST' });
+}
+
+// ── Second factor and sessions (plan epic 2.9) ────────────
+
+/** GET /auth/mfa → { enabled, enabled_at, pending, backup_codes_left } */
+export function getMfaStatus() {
+  return request('/auth/mfa');
+}
+
+/** POST /auth/mfa/setup → { secret, otpauth_url, qr } */
+export function setupMfa() {
+  return request('/auth/mfa/setup', { method: 'POST' });
+}
+
+/** POST /auth/mfa/enable → { enabled, backup_codes, sessions_closed } — the backup codes are shown once */
+export function enableMfa(code) {
+  return request('/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+export function disableMfa(password, code) {
+  return request('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password, code }) });
+}
+
+export function regenerateBackupCodes(code) {
+  return request('/auth/mfa/backup-codes', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+/** GET /auth/sessions → [{ id, created_at, last_used_at, user_agent, ip, tenant_name, current }] */
+export function getSessions() {
+  return request('/auth/sessions');
+}
+
+export function revokeSession(id) {
+  return request(`/auth/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** Every session but this one */
+export function revokeOtherSessions() {
+  return request('/auth/sessions', { method: 'DELETE' });
+}
+
+/** Administrator: sign a user of the organisation out everywhere */
+export function revokeUserSessions(userId) {
+  return request(`/users/${userId}/sessions`, { method: 'DELETE' });
+}
+
+/** Superadmin: reset a locked-out user's second factor */
+export function resetUserMfa(userId) {
+  return request(`/users/${userId}/mfa`, { method: 'DELETE' });
 }
 
 // ── WebSocket ────────────────────────────────────────────

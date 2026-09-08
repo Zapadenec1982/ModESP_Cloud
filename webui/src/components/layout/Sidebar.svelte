@@ -32,6 +32,7 @@
     { path: '/alarms',        icon: 'alert-triangle', label: $t('nav.alarms'), badge: () => alarmCount },
     { path: '/work-orders',   icon: 'clipboard', label: $t('nav.work_orders') },
     { path: '/notifications', icon: 'bell',     label: $t('nav.notifications') },
+    { path: '/security',      icon: 'shield',   label: $t('nav.security') },
     { section: $t('nav.sections.management') },
     // Any authenticated role: GET /api/sites narrows by RBAC rather than by role,
     // and the page hides its own write controls from a non-admin.

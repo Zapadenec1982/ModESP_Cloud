@@ -28,11 +28,20 @@ function authenticate(req, res, next) {
         status: 401,
       });
     }
+    // …and the token that only carries a login to its second factor (plan epic 2.9)
+    if (payload.mfa) {
+      return res.status(401).json({
+        error: 'unauthorized',
+        message: 'Second factor required',
+        status: 401,
+      });
+    }
     req.user = {
       id:       payload.sub,
       email:    payload.email,
       role:     payload.role,
       tenantId: payload.tenantId,
+      sid:      payload.sid || null,   // the session the token belongs to (plan epic 2.9)
     };
     req.tenantId = payload.tenantId;
     next();

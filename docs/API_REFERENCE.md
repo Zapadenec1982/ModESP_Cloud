@@ -49,6 +49,7 @@ Authorization: Bearer <access_token>
 {
   "access_token": "eyJ...",
   "refresh_token": "eyJ...",
+  "csrf_token": "0f3a…",
   "expires_in": 900,
   "user": {
     "id": "uuid",
@@ -58,6 +59,20 @@ Authorization: Bearer <access_token>
   }
 }
 ```
+
+> **Сесії (епік 2.9).** Кожна відповідь, що відкриває або продовжує сесію (login, select-tenant,
+> switch-tenant, refresh, прийняття запрошення, реєстрація, `mfa/verify`), крім `refresh_token` у тілі
+> ставить його ж в httpOnly-cookie `modesp_rt` (`Path=/api/auth; SameSite=Strict; Secure` у production,
+> `COOKIE_SECURE=false` для LAN по http) і повертає `csrf_token`. Браузер cookie не читає: refresh і logout
+> ідуть без тіла, з заголовком `X-CSRF-Token: <csrf_token>`. Скрипти й застосунки, як і раніше, передають
+> `refresh_token` у тілі — CSRF-заголовок тоді не потрібен. Access-токен несе `sid` — ідентифікатор сесії
+> (сім'ї refresh-токенів), його показує `GET /auth/sessions`.
+
+**Response 200 з увімкненим другим фактором:** пароль прийнято, токенів ще немає — потрібен код:
+```json
+{ "require_mfa": true, "mfa_token": "eyJ...", "user": { "id": "uuid", "email": "…" } }
+```
+`mfa_token` живе 5 хвилин і придатний лише для `POST /auth/mfa/verify` (як Bearer він відповідає 401).
 
 ### `POST /auth/select-tenant`
 Завершити логін після вибору тенанта (multi-tenant flow).
@@ -83,15 +98,21 @@ Authorization: Bearer <access_token>
 **Response 200:** New access_token, refresh_token, tenant, tenants array.
 
 ### `POST /auth/refresh`
-Оновити access токен. Також повертає `tenants` array.
+Оновити access токен. Також повертає `tenants` array. Refresh-токен одноразовий: відповідь містить новий
+`refresh_token` (і новий `csrf_token`), старий стає недійсним.
 
-**Body:**
+**Body** (API-клієнти) або **cookie `modesp_rt` + заголовок `X-CSRF-Token`** (браузер):
 ```json
 { "refresh_token": "eyJ..." }
 ```
 
+**Помилки:** `400 validation_failed` — ні тіла, ні cookie; `403 csrf_required` — cookie без правильного
+CSRF-заголовка; `401 token_expired`; `401 invalid_token`; `401 token_reused` — токен пред'явлено вдруге:
+це ознака вкраденого ланцюжка, тож **уся сесія закривається** (і легітимний власник теж входить знову),
+cookie очищується.
+
 ### `POST /auth/logout`
-Відкликати refresh токен.
+Закрити сесію (усі refresh-токени її сім'ї). Токен — у тілі або в cookie з `X-CSRF-Token`; cookie очищується.
 
 ---
 
@@ -184,6 +205,67 @@ Slug виводиться з назви (транслітерація, `[a-z0-9-
 
 #### `POST /auth/resend-verification`
 `{ "email": "…", "lang": "uk" }` — новий лист для непідтвердженої адреси; відповідь однакова для будь-якої адреси.
+
+---
+
+### Другий фактор і сесії (plan epic 2.9)
+
+TOTP (RFC 6238, крок 30 с, вікно ±1) з будь-яким застосунком-автентифікатором; секрет зберігається
+зашифрованим (AES-256-GCM під `MFA_ENCRYPTION_KEY`, за замовчуванням — `JWT_SECRET`). Код приймається
+один раз: крок, з якого він прийшов, запам'ятовується. Усі ендпоїнти, крім `mfa/verify`, потребують Bearer.
+
+#### `POST /auth/mfa/verify`
+Публічний, ліміт 10 спроб / 15 хв з IP. Завершує вхід після `require_mfa`.
+
+**Body:** `{ "mfa_token": "eyJ...", "code": "123456" }` — 6 цифр з застосунку або резервний код `xxxx-xxxx`.
+
+**Response 200:** як у `POST /auth/login` (з cookie, `csrf_token`, а за кількох організацій —
+`require_tenant_select`). **Помилки:** `401 invalid_token` (mfa_token прострочено — увійти знову),
+`401 invalid_mfa_code` (невірний, використаний або старіший за останній прийнятий).
+
+#### `GET /auth/mfa`
+```json
+{ "data": { "enabled": true, "enabled_at": "2026-09-08T10:00:00Z", "pending": false, "backup_codes_left": 9 } }
+```
+
+#### `POST /auth/mfa/setup`
+Починає (або перезапускає) налаштування: новий *очікуючий* секрет, який вхід ще не змінює.
+`409 mfa_enabled`, якщо фактор уже ввімкнено.
+```json
+{ "data": { "secret": "JBSWY3DP…", "otpauth_url": "otpauth://totp/ModESP%20Cloud:…", "qr": "data:image/png;base64,…" } }
+```
+
+#### `POST /auth/mfa/enable`
+**Body:** `{ "code": "123456" }` — перший код із застосунку. Секрет стає чинним, **усі інші сесії
+облікового запису закриваються** (вони не проходили другий фактор), резервні коди показуються **один раз**.
+```json
+{ "data": { "enabled": true, "backup_codes": ["ab12-cd34", "…"], "sessions_closed": 1 } }
+```
+`400 invalid_mfa_code`, `409 no_setup`.
+
+#### `POST /auth/mfa/disable`
+**Body:** `{ "password": "…", "code": "123456" }` — і пароль, і код (або резервний): ні вкрадена сесія, ні
+вкрадений телефон окремо фактор не вимкнуть. `401 invalid_credentials | invalid_mfa_code`, `409 mfa_not_enabled`.
+**Response 200:** `{ "data": { "enabled": false } }`.
+
+#### `POST /auth/mfa/backup-codes`
+**Body:** `{ "code": "…" }`. Нові 10 резервних кодів, старі перестають діяти.
+
+#### `GET /auth/sessions`
+Відкриті сесії користувача — одна на пристрій, з поточною позначкою:
+```json
+{ "data": [
+  { "id": "uuid", "current": true, "user_agent": "Mozilla/5.0 …", "ip": "203.0.113.5",
+    "tenant_id": "uuid", "tenant_name": "Морозко", "created_at": "…", "last_used_at": "…", "expires_at": "…" }
+] }
+```
+
+#### `DELETE /auth/sessions`
+«Вийти всюди, крім цього пристрою». **Response 200:** `{ "data": { "revoked": 2 } }`.
+
+#### `DELETE /auth/sessions/:id`
+Закрити одну сесію (лише свою; чужа — `404`). Для поточної cookie очищується.
+**Response 200:** `{ "data": { "revoked": true, "current": false } }`.
 
 ---
 
@@ -1811,6 +1893,21 @@ Bulk-заміна списку пристроїв користувача (вид
 Разом із членством видаляються **всі гранти на точки цього тенанта** (`user_sites`) — інакше вони
 пережили б видалення членства і знову ожили б при повторному додаванні користувача.
 
+### `DELETE /users/:id/sessions`
+Закрити всі сесії користувача (заблокований співробітник, загублений телефон).
+
+**Ролі:** admin (користувач своєї організації або її член; superadmin недоторканний), superadmin — будь-хто.
+
+**Response 200:** `{ "data": { "revoked": 1 } }`. Аудит: `user.sessions_revoke`.
+
+### `DELETE /users/:id/mfa`
+Скинути другий фактор користувачеві, що втратив застосунок і резервні коди. Разом із фактором
+закриваються всі його сесії.
+
+**Ролі:** superadmin
+
+**Response 200:** `{ "data": { "mfa_enabled": false, "sessions_revoked": 1 } }`. Аудит: `user.mfa_reset`.
+
 ### `GET /users/:id/sites`
 Точки, до яких користувач має доступ.
 
@@ -2608,3 +2705,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-09-02 — Епік 1.11: `GET /api/public/plans`, `POST /api/public/pilot-request`, `GET /api/pilot-requests`; `GET /api/public/site` додає `organisation` і `link_expires_at` (сторінка каже, чия вона, і попереджає за тиждень до закінчення посилання).
 - 2026-09-02 — Епік 1.2: `GET /sites/:id/weather`, `GET /sites/:id/weather/history` і `POST /map/route` відповідають `402 plan_feature` поза планами з функціями `weather`/`routing`.
 - 2026-09-08 — Самореєстрація (епік 2.1): `GET /auth/registration`, `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`; `401 email_not_verified | pending_approval` на вході; `POST /tenants/:id/approve | reject` і поля `registered_at/approved_at/awaiting_approval` у `GET /tenants`; чек-ліст `GET /onboarding`, `POST /onboarding/dismiss`; `trial_expires_at` у `tenant` відповідей входу.
+- 2026-09-08 — Сесії і другий фактор (епік 2.9): refresh-токен у httpOnly-cookie `modesp_rt` + `csrf_token`/`X-CSRF-Token` для браузера (тіло `refresh_token` для API-клієнтів лишається), одноразові refresh-токени з `401 token_reused`, `sid` у access-токені; `POST /auth/mfa/verify`, `GET /auth/mfa`, `POST /auth/mfa/setup | enable | disable | backup-codes`; `GET/DELETE /auth/sessions`, `DELETE /auth/sessions/:id`; `DELETE /users/:id/sessions`, `DELETE /users/:id/mfa`.

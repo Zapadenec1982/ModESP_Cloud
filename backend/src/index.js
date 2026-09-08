@@ -151,6 +151,15 @@ const signupLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many registration attempts, try again later', status: 429 },
 });
+// Second factor (plan epic 2.9): six digits guessed at 10 per quarter hour
+// per IP is nothing; the mfa_token itself dies after five minutes.
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many code attempts, try again later', status: 429 },
+});
 // Public site status page — unauthenticated, so the only key available is the IP.
 // Showcase links (site_public_links.rate_limit_exempt) skip it, see routes/public.js.
 const publicRoutes = require('./routes/public');
@@ -433,6 +442,7 @@ if (AUTH_ENABLED) {
   app.use('/api/auth/register', signupLimiter);
   app.use('/api/auth/resend-verification', signupLimiter);
   app.use('/api/auth/verify-email', resetLimiter);
+  app.use('/api/auth/mfa/verify', mfaLimiter);
   app.use('/api/auth', require('./routes/auth'));
 
   // All other /api routes require JWT

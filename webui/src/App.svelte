@@ -64,6 +64,7 @@
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/settings':        wrap({ asyncComponent: () => import('./pages/TenantSettings.svelte'), conditions: [isAdminCheck] }),
+    '/security':        wrap({ asyncComponent: () => import('./pages/Security.svelte') }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
   }
 
@@ -229,6 +230,7 @@
     '/tenants': 'pages.tenants',
     '/users': 'pages.users',
     '/settings': 'pages.settings',
+    '/security': 'pages.security',
     '/audit-log': 'pages.audit_log',
   }
 
