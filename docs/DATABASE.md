@@ -836,6 +836,33 @@ ALTER TABLE tenant_settings ADD COLUMN onboarding JSONB NOT NULL DEFAULT '{}';
 
 ---
 
+## Сесії і другий фактор (migration 039)
+
+```sql
+ALTER TABLE refresh_tokens
+  ADD COLUMN family_id    UUID NOT NULL DEFAULT gen_random_uuid(),  -- сесія = сім'я токенів; ротація лишається в сім'ї
+  ADD COLUMN user_agent   VARCHAR(256),
+  ADD COLUMN ip           INET,
+  ADD COLUMN last_used_at TIMESTAMPTZ;
+CREATE INDEX idx_refresh_tokens_family ON refresh_tokens (user_id, family_id);
+
+ALTER TABLE users
+  ADD COLUMN mfa_secret         TEXT,                             -- 'v1:<iv>:<tag>:<ciphertext>' (AES-256-GCM)
+  ADD COLUMN mfa_pending_secret TEXT,                             -- setup розпочато, перший код ще не підтверджено
+  ADD COLUMN mfa_enabled_at     TIMESTAMPTZ,                      -- NULL = фактор вимкнено
+  ADD COLUMN mfa_backup_codes   JSONB NOT NULL DEFAULT '[]',      -- SHA-256 резервних кодів; використаний видаляється
+  ADD COLUMN mfa_last_step      BIGINT;                           -- останній прийнятий 30-секундний крок TOTP (захист від повтору)
+```
+
+> Наявні рядки `refresh_tokens` отримують кожен свою `family_id` (кожен старий токен — окрема сесія),
+> тож міграція не виганяє нікого. Refresh-токен одноразовий: `revoked=true` після ротації, а повторне
+> пред'явлення ревокованого токена закриває всю сім'ю (`services/sessions.js`). `GET /auth/sessions`
+> групує рядки за `family_id`; `user_agent`/`ip` беруться з найновішого рядка сім'ї, що їх має.
+> Секрет TOTP шифрується ключем sha256(`mfa:` + `MFA_ENCRYPTION_KEY` або `JWT_SECRET`): дамп бази без
+> `.env` кодів не дасть; зміна ключа знецінює всі увімкнені автентифікатори.
+
+---
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -911,3 +938,5 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 - 2026-09-08 — Міграція 038: самореєстрація (`tenants.registered_at/registered_ip/approved_at/approved_by`,
   `users.email_verified_at/email_verify_hash/email_verify_expires/terms_accepted_at`) і чек-ліст онбордингу
   (`tenant_settings.onboarding JSONB`).
+- 2026-09-08 — Міграція 039: сесії (`refresh_tokens.family_id/user_agent/ip/last_used_at`) і другий фактор
+  (`users.mfa_secret/mfa_pending_secret/mfa_enabled_at/mfa_backup_codes/mfa_last_step`).

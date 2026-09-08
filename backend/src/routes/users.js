@@ -1006,6 +1006,61 @@ router.delete('/:id/sites/:siteId', async (req, res) => {
 
 // ── Password reset (admin generates code for user) ────────
 
+// ── Sessions and MFA of another user (plan epic 2.9) ──────
+//
+// An administrator of the organisation can sign one of its users out
+// everywhere (a lost phone, a leaver); only a superadmin can reset a user's
+// second factor — the recovery path for a lost authenticator without backup
+// codes, and deliberately not something an organisation admin can do to a
+// colleague.
+
+const sessionsSvc = require('../services/sessions');
+const mfaSvc      = require('../services/mfa');
+
+async function manageableUser(req, id) {
+  const isSuper = req.user && req.user.role === 'superadmin';
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, u.role
+       FROM users u
+       LEFT JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $2
+      WHERE u.id = $1 AND ($3::boolean OR u.tenant_id = $2 OR ut.user_id IS NOT NULL)`,
+    [id, req.tenantId, isSuper]);
+  const user = rows[0];
+  if (!user) return null;
+  if (user.role === 'superadmin' && !isSuper) return null;
+  return user;
+}
+
+router.delete('/:id/sessions', async (req, res) => {
+  try {
+    const user = await manageableUser(req, req.params.id);
+    if (!user) return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    const closed = await sessionsSvc.revokeAll(user.id, null);
+    req.auditContext = { entityId: user.id, action: 'user.sessions_revoke', changes: { email: user.email, sessions_closed: closed } };
+    res.json({ data: { revoked: closed } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Revoke user sessions failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to revoke sessions', status: 500 });
+  }
+});
+
+router.delete('/:id/mfa', async (req, res) => {
+  if (!req.user || req.user.role !== 'superadmin') {
+    return res.status(403).json({ error: 'forbidden', message: 'Superadmin access required', status: 403 });
+  }
+  try {
+    const user = await manageableUser(req, req.params.id);
+    if (!user) return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });
+    await mfaSvc.disable(user.id);
+    const closed = await sessionsSvc.revokeAll(user.id, null);
+    req.auditContext = { entityId: user.id, action: 'user.mfa_reset', changes: { email: user.email, sessions_closed: closed } };
+    res.json({ data: { mfa_enabled: false, sessions_revoked: closed } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Reset user MFA failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to reset MFA', status: 500 });
+  }
+});
+
 router.post('/:id/password-reset', async (req, res) => {
   try {
     const userId = req.params.id;

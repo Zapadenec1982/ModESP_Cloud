@@ -26,19 +26,18 @@ function comparePassword(plain, hash) {
 }
 
 /**
- * Sign a short-lived access token.
- * @param {{ id: string, email: string, role: string, tenantId: string }} user
+ * Sign a short-lived access token. `sid` is the session (refresh-token
+ * family) the token belongs to (plan epic 2.9).
+ * @param {{ id: string, email: string, role: string, tenantId: string, sid?: string }} user
  * @returns {string}
  */
 function generateAccessToken(user) {
   const secret    = process.env.JWT_SECRET;
   const expiresIn = parseInt(process.env.JWT_EXPIRES_IN, 10) || 900;
 
-  return jwt.sign(
-    { sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId },
-    secret,
-    { expiresIn }
-  );
+  const claims = { sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId };
+  if (user.sid) claims.sid = user.sid;
+  return jwt.sign(claims, secret, { expiresIn });
 }
 
 /**
@@ -94,6 +93,25 @@ function verifyPendingToken(token) {
   return payload;
 }
 
+/**
+ * Sign the token that carries a login from "password accepted" to "second
+ * factor accepted" (plan epic 2.9). Five minutes, useless for the API.
+ * @param {{ id: string, email: string, role: string }} user
+ */
+function generateMfaToken(user) {
+  return jwt.sign(
+    { sub: user.id, email: user.email, role: user.role, mfa: true },
+    process.env.JWT_SECRET,
+    { expiresIn: 300 }
+  );
+}
+
+function verifyMfaToken(token) {
+  const payload = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+  if (!payload.mfa) throw new jwt.JsonWebTokenError('Not an MFA token');
+  return payload;
+}
+
 module.exports = {
   hashPassword,
   comparePassword,
@@ -103,4 +121,6 @@ module.exports = {
   verifyAccessToken,
   generatePendingToken,
   verifyPendingToken,
+  generateMfaToken,
+  verifyMfaToken,
 };

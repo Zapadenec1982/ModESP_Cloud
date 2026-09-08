@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { login, selectTenant, resetPassword, forgotPassword, getRegistrationInfo, resendVerification } from '../lib/api.js'
+  import { login, verifyMfa, selectTenant, resetPassword, forgotPassword, getRegistrationInfo, resendVerification } from '../lib/api.js'
   import { navigate } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
 
@@ -12,9 +12,12 @@
   let error = ''
   let loading = false
 
-  // Steps: 'credentials' | 'tenant_select' | 'reset_password'
+  // Steps: 'credentials' | 'mfa' | 'tenant_select' | 'forgot' | 'reset_password'
   let step = 'credentials'
   let pendingToken = null
+  // Second factor (plan epic 2.9): the password was right, a code is still needed
+  let mfaToken = null
+  let mfaCode = ''
   let tenants = []
   let selectedTenantId = null
 
@@ -70,23 +73,45 @@
     resent = false
     loading = true
     try {
-      const result = await login(email, password)
-
-      if (result.requireTenantSelect) {
-        // Multiple tenants — show selection
-        pendingToken = result.pendingToken
-        tenants = result.tenants
-        // Default: last used tenant from localStorage, or first
-        const lastTenant = localStorage.getItem('modesp_last_tenant')
-        selectedTenantId = tenants.find(t => t.id === lastTenant)?.id || tenants[0]?.id
-        step = 'tenant_select'
-      } else {
-        // Single tenant — direct login
-        navigate('/')
-      }
+      afterLogin(await login(email, password))
     } catch (e) {
       if (e.code === 'email_not_verified') unverified = true
       else if (e.code === 'pending_approval') pendingApproval = true
+      else error = e.message || 'Login failed'
+    } finally {
+      loading = false
+    }
+  }
+
+  // Where a successful password (or code) leads: the second factor, the
+  // organisation choice, or straight in.
+  function afterLogin(result) {
+    if (result.requireMfa) {
+      mfaToken = result.mfaToken
+      mfaCode = ''
+      step = 'mfa'
+    } else if (result.requireTenantSelect) {
+      // Multiple tenants — show selection
+      pendingToken = result.pendingToken
+      tenants = result.tenants
+      // Default: last used tenant from localStorage, or first
+      const lastTenant = localStorage.getItem('modesp_last_tenant')
+      selectedTenantId = tenants.find(t => t.id === lastTenant)?.id || tenants[0]?.id
+      step = 'tenant_select'
+    } else {
+      // Single tenant — direct login
+      navigate('/')
+    }
+  }
+
+  async function handleMfa() {
+    error = ''
+    loading = true
+    try {
+      afterLogin(await verifyMfa(mfaToken, mfaCode.trim()))
+    } catch (e) {
+      if (e.code === 'invalid_mfa_code') error = $t('login.mfa_wrong')
+      else if (e.code === 'invalid_token' || e.status === 429) { backToCredentials(); error = $t('login.mfa_expired') }
       else error = e.message || 'Login failed'
     } finally {
       loading = false
@@ -152,6 +177,8 @@
   function backToCredentials() {
     step = 'credentials'
     pendingToken = null
+    mfaToken = null
+    mfaCode = ''
     tenants = []
     selectedTenantId = null
     resetCode = ''
@@ -214,6 +241,32 @@
         <!-- Self-registration (plan epic 2.1): the hash change reloads into the standalone page -->
         <p class="register-link">{$t('login.no_account')} <a href="#/register">{$t('login.create_org')}</a></p>
       {/if}
+    </form>
+
+  {:else if step === 'mfa'}
+    <!-- Second factor (plan epic 2.9): a code from the authenticator app or a backup code -->
+    <form class="login-form" on:submit|preventDefault={handleMfa}>
+      <div class="login-brand">M</div>
+      <h1 class="login-title">{$t('login.mfa_title')}</h1>
+      <p class="login-subtitle">{$t('login.mfa_subtitle')}</p>
+
+      {#if error}
+        <div class="error">{error}</div>
+      {/if}
+
+      <label class="field">
+        <span>{$t('login.mfa_code')}</span>
+        <!-- svelte-ignore a11y-autofocus -->
+        <input type="text" bind:value={mfaCode} inputmode="numeric" autocomplete="one-time-code" maxlength="16" placeholder="123456" required autofocus />
+      </label>
+      <p class="mfa-hint">{$t('login.mfa_backup_hint')}</p>
+
+      <button type="submit" class="btn-login" disabled={loading || !mfaCode.trim()}>
+        {loading ? $t('login.mfa_verifying') : $t('login.mfa_submit')}
+      </button>
+      <button type="button" class="btn-back" on:click={backToCredentials}>
+        ← {$t('login.back')}
+      </button>
     </form>
 
   {:else if step === 'forgot'}
@@ -392,6 +445,13 @@
     margin-bottom: var(--space-3);
     width: 100%;
     text-align: center;
+  }
+
+  .mfa-hint {
+    width: 100%;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    margin: calc(-1 * var(--space-2)) 0 var(--space-3);
   }
 
   .success {

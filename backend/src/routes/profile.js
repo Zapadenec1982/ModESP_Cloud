@@ -66,9 +66,13 @@ const updateProfileSchema = z.object({
   });
 
 function tenantScope(req, startIndex) {
-  // Returns ['', []] for superadmin, [' AND tenant_id = $n', [tenantId]] otherwise.
+  // Returns ['', []] for superadmin; otherwise the row must belong to the
+  // organisation of the token — as the home organisation or a membership
+  // (user_tenants), so a multi-organisation user acting in another
+  // organisation still reaches their own profile (e.g. session restore).
   if (req.user && req.user.role === 'superadmin') return ['', []];
-  return [` AND tenant_id = $${startIndex}`, [req.tenantId]];
+  const n = `$${startIndex}`;
+  return [` AND (tenant_id = ${n} OR EXISTS (SELECT 1 FROM user_tenants ut WHERE ut.user_id = users.id AND ut.tenant_id = ${n}))`, [req.tenantId]];
 }
 
 // ── GET /api/profile ──────────────────────────────────────
