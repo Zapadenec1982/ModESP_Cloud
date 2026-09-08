@@ -11,6 +11,13 @@ Authorization: Bearer <access_token>
 
 **Формат відповіді:** JSON
 
+> **OpenAPI.** Інтеграційна поверхня (усе, що доступно API-ключу: пристрої, телеметрія, аварії, точки,
+> наряди, рекомендації, звіти, а також вихідні події вебхуків) описана машинно в OpenAPI 3.1:
+> `GET /api/docs` — інтерактивна документація (Swagger UI, self-hosted), `GET /api/docs/openapi.json` —
+> документ, копія в репозиторії — `docs/openapi.json` (генерується з `backend/src/openapi`, CI перевіряє
+> актуальність). Обидва маршрути публічні, з лімітом 120 запитів/хв на IP. Цей файл лишається повним
+> довідником, включно з обліковою й адміністративною поверхнею, якої в OpenAPI немає.
+
 > **Виняток — `/api/public/*`.** Роутер публічної сторінки статусу точки змонтований **вище**
 > ланцюжка автентифікації і навмисне не вимагає Bearer-токена. Він має власний rate limiter і власний
 > звужений набір полів — див. «Публічна сторінка статусу точки».
@@ -2901,3 +2908,4 @@ duration_ms, created_at, delivered_at, payload`.
 - 2026-09-08 — Планові звіти (епік 2.7): `GET/POST /reports/schedules`, `PATCH/DELETE /reports/schedules/:id`, `POST /reports/schedules/:id/run`; архів `GET /reports` і `GET /reports/:code/download`; типи `haccp | alarms | energy`, щотижня/щомісяця, лист з PDF у вкладенні.
 - 2026-09-08 — Життєвий цикл організації та експорт даних (епік 2.10): `closed` = вхід лише на читання (`423 organisation_closed` на зміни), `read_only_until` у `tenant` відповіді входу, purge через `CLOSED_RETENTION_DAYS`; `POST /tenants/:id/export`, `GET /tenants/:id/exports`, `GET /tenants/:id/exports/:exportId/download`; `DELETE /tenants/bulk` через спільну процедуру; `DELETE /users/:id` псевдонімізує аудит-лог.
 - 2026-09-08 — Інтеграції (epic 2.6): API-ключі `GET/POST/DELETE /api-keys` (Bearer `modesp_…`, scope read|write|admin, заборонена поверхня `403 api_key_scope`), вебхуки `GET/POST/PATCH/DELETE /webhooks`, `POST /webhooks/:id/test|rotate-secret`, `GET /webhooks/:id/deliveries`, `POST /webhooks/:id/deliveries/:did/redeliver`; підпис `X-ModESP-Signature v1=HMAC-SHA256`.
+- 2026-09-08 — OpenAPI 3.1 інтеграційної поверхні: `GET /api/docs` (Swagger UI), `GET /api/docs/openapi.json`, `docs/openapi.json` з перевіркою в CI (`npm run openapi:check`).

@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-828-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-833-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 828 tests across 68 test files
+│   ├── test/                        # 833 tests across 69 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -177,6 +177,7 @@ ModESP_Cloud/
 │   ├── MQTT_PROTOCOL.md            # v1 protocol, topics, message formats
 │   ├── DATABASE.md                 # Schema, partitioning, indexes
 │   ├── API_REFERENCE.md            # 60+ REST endpoints with examples
+│   ├── openapi.json                # OpenAPI 3.1 of the integration surface (generated, served at /api/docs)
 │   ├── DEPLOYMENT.md               # VPS setup, migrations, systemd timers, backups
 │   ├── runbooks/restore.md         # Disaster recovery, measured RTO/RPO
 │   └── ROADMAP.md                  # Development phases & progress
@@ -248,7 +249,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**828 integration tests** across 68 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**833 integration tests** across 69 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
@@ -375,6 +376,7 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 | [`docs/MQTT_PROTOCOL.md`](docs/MQTT_PROTOCOL.md) | MQTT v1 protocol, topics, message formats |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | DB schema (15 tables), partitioning, indexes |
 | [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | 60+ REST endpoints with request/response examples |
+| [`docs/openapi.json`](docs/openapi.json) | OpenAPI 3.1 of the integration surface — API keys, webhooks and their events; interactive at `/api/docs` |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | VPS deployment guide, migrations, monitoring |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Development phases & future roadmap ([🇺🇦 Українською](docs/ROADMAP_UA.md)) |
 

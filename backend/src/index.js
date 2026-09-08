@@ -434,6 +434,8 @@ app.use('/api', createAuditMiddleware(logger));
 // gate — so a future reorder fails a test instead of 401ing every status page.
 // The raw token travels in the X-Site-Token header, never in the path (access.log).
 app.use('/api/public', publicLimiter, publicRoutes);
+// API documentation (plan epic 2.6): OpenAPI document and a self-hosted Swagger UI, public
+app.use('/api/docs', require('./routes/docs'));
 
 // ── Auth / Tenant middleware ────────────────────────────────
 if (AUTH_ENABLED) {

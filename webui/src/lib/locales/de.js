@@ -1533,6 +1533,7 @@ export default {
     keys_title: 'API-Schlüssel',
     keys_intro: 'Ein Schlüssel gibt einem externen System (CMMS, BI, ERP, eigenes Skript) Zugriff auf die REST-API der Organisation ohne Personenkonto. Übergeben Sie ihn im Header Authorization: Bearer. Ein Schlüssel sieht alle Geräte der Organisation, aber nie Benutzer, Einstellungen oder Abrechnung.',
     keys_none: 'Noch keine Schlüssel.',
+    docs_link: 'API-Dokumentation (OpenAPI)',
     keys_hint: 'Basis-URL der API:',
     key_new: 'Neuer Schlüssel',
     key_name: 'Name (wofür)',

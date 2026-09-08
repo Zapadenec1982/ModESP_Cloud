@@ -95,6 +95,8 @@ function createTestApp() {
   // so any suite using this helper exercises the real order; public-site.test.js
   // asserts it answers without an Authorization header.
   app.use('/api/public', require('../../src/routes/public'));
+  // API documentation (plan epic 2.6): public, above the JWT gate as in index.js
+  app.use('/api/docs', require('../../src/routes/docs'));
 
   // JWT gate
   app.use('/api', authenticate);
