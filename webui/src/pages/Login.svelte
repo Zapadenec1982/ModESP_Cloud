@@ -1,5 +1,6 @@
 <script>
-  import { login, selectTenant, resetPassword, forgotPassword } from '../lib/api.js'
+  import { onMount } from 'svelte'
+  import { login, selectTenant, resetPassword, forgotPassword, getRegistrationInfo, resendVerification } from '../lib/api.js'
   import { navigate } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
 
@@ -23,6 +24,31 @@
   let resetSuccess = false
   let forgotSent = false
 
+  // Self-registration (plan epic 2.1): the link shows when the server has it
+  // open; an unverified or not-yet-approved administrator is told what to do.
+  let registrationOpen = false
+  let unverified = false
+  let pendingApproval = false
+  let resent = false
+
+  onMount(async () => {
+    try {
+      const info = await getRegistrationInfo()
+      registrationOpen = info.mode !== 'off'
+    } catch {
+      registrationOpen = false
+    }
+  })
+
+  async function handleResend() {
+    try {
+      await resendVerification(email, $locale)
+      resent = true
+    } catch (e) {
+      error = e.message || 'Request failed'
+    }
+  }
+
   // #/reset?email=…&code=… — the link from the password-reset email lands here
   // with the code prefilled; the fragment never reaches the server.
   {
@@ -39,6 +65,9 @@
 
   async function handleSubmit() {
     error = ''
+    unverified = false
+    pendingApproval = false
+    resent = false
     loading = true
     try {
       const result = await login(email, password)
@@ -56,7 +85,9 @@
         navigate('/')
       }
     } catch (e) {
-      error = e.message || 'Login failed'
+      if (e.code === 'email_not_verified') unverified = true
+      else if (e.code === 'pending_approval') pendingApproval = true
+      else error = e.message || 'Login failed'
     } finally {
       loading = false
     }
@@ -127,6 +158,9 @@
     newPassword = ''
     resetSuccess = false
     forgotSent = false
+    unverified = false
+    pendingApproval = false
+    resent = false
     error = ''
     if (typeof window !== 'undefined' && window.location.hash.startsWith('#/reset')) {
       history.replaceState(null, '', '#/')
@@ -143,6 +177,19 @@
 
       {#if error}
         <div class="error">{error}</div>
+      {/if}
+      {#if unverified}
+        <div class="notice">
+          {$t('login.not_verified')}
+          {#if resent}
+            <span class="resent">{$t('login.resent')}</span>
+          {:else}
+            <button type="button" class="link-btn" on:click={handleResend}>{$t('login.resend')}</button>
+          {/if}
+        </div>
+      {/if}
+      {#if pendingApproval}
+        <div class="notice">{$t('login.pending_approval')}</div>
       {/if}
 
       <label class="field">
@@ -162,6 +209,11 @@
       <button type="button" class="btn-forgot" on:click={showForgotForm}>
         {$t('login.forgot_password')}
       </button>
+
+      {#if registrationOpen}
+        <!-- Self-registration (plan epic 2.1): the hash change reloads into the standalone page -->
+        <p class="register-link">{$t('login.no_account')} <a href="#/register">{$t('login.create_org')}</a></p>
+      {/if}
     </form>
 
   {:else if step === 'forgot'}
@@ -541,4 +593,34 @@
   .btn-back:hover {
     color: var(--text-secondary);
   }
+
+  /* Self-registration (plan epic 2.1) */
+  .notice {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-3);
+    text-align: center;
+    background: rgba(210, 153, 34, 0.12);
+    color: var(--text-primary);
+    line-height: 1.5;
+  }
+  .notice .resent { display: block; color: var(--accent-green, #3fb950); }
+  .link-btn {
+    display: block;
+    margin: var(--space-1) auto 0;
+    background: none;
+    border: none;
+    color: var(--accent-blue);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+  .register-link {
+    margin: var(--space-4) 0 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .register-link a { color: var(--accent-blue); font-weight: 600; text-decoration: none; }
 </style>

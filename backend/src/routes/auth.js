@@ -8,6 +8,7 @@ const authSvc    = require('../services/auth');
 const emailSvc   = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 const { passwordSchema } = require('../lib/password-policy');
+const registrationSvc = require('../services/registration');
 
 const router = Router();
 
@@ -83,7 +84,7 @@ const OPEN_STATUSES = ['trial', 'active', 'past_due'];
 // 010 or by seed-admin have none, and must not be locked out of their own
 // organisation. The role there is the account role.
 const MEMBER_TENANTS_SQL = `
-  SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id,
+  SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at,
          COALESCE(ut.role, CASE WHEN u.role = 'superadmin' THEN 'admin' ELSE u.role END) AS role,
          COALESCE(p.features, '[]'::jsonb) AS features
     FROM users u
@@ -113,7 +114,7 @@ async function isMember(userId, tenantId) {
 /** One organisation as the session sees it (plan and features included, plan epic 2.5). */
 async function tenantSummary(tenantId) {
   const { rows } = await db.query(
-    `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, COALESCE(p.features, '[]'::jsonb) AS features
+    `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at, COALESCE(p.features, '[]'::jsonb) AS features
        FROM tenants t LEFT JOIN plan_limits p ON p.plan = t.plan WHERE t.id = $1`,
     [tenantId]
   );
@@ -145,7 +146,7 @@ router.post('/login', async (req, res) => {
   try {
     // Find user by email
     const { rows } = await db.query(
-      `SELECT id, tenant_id, email, password_hash, role, active, locale, timezone
+      `SELECT id, tenant_id, email, password_hash, role, active, locale, timezone, email_verified_at
        FROM users WHERE email = $1 LIMIT 1`,
       [email]
     );
@@ -177,6 +178,15 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // A self-registered administrator proves the address first (plan epic 2.1)
+    if (!user.email_verified_at) {
+      return res.status(401).json({
+        error: 'email_not_verified',
+        message: 'Confirm your e-mail address with the link we sent you, then sign in',
+        status: 401,
+      });
+    }
+
     // Fetch available tenants from user_tenants
     const tenants = await getUserTenants(user.id);
 
@@ -198,6 +208,18 @@ router.post('/login', async (req, res) => {
     }
 
     if (tenants.length === 0) {
+      // A registration a superadmin has not approved yet is suspended, but the
+      // message is a different one (plan epic 2.1)
+      if (suspendedOnly && user.tenant_id) {
+        const { rows: home } = await db.query('SELECT registered_at, approved_at FROM tenants WHERE id = $1', [user.tenant_id]);
+        if (registrationSvc.awaitingApproval(home[0])) {
+          return res.status(401).json({
+            error: 'pending_approval',
+            message: 'Your organisation is awaiting approval. We will e-mail you as soon as it is ready.',
+            status: 401,
+          });
+        }
+      }
       if (suspendedOnly) return tenantSuspended(res);
       return res.status(401).json({
         error: 'no_tenant',
@@ -728,13 +750,17 @@ router.post('/invite/:token/accept', async (req, res) => {
           `INSERT INTO user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)
            ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = EXCLUDED.role`,
           [user.id, inv.tenant_id, inv.role]);
+        // The link went to this very address: it is verified from here on (plan epic 2.1)
+        await client.query(
+          `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), email_verify_hash = NULL,
+                            email_verify_expires = NULL, terms_accepted_at = now() WHERE id = $1`, [user.id]);
       } else {
         const pw = passwordSchema.safeParse(password);
         if (!pw.success) return { error: 'weak_password', message: pw.error.issues[0].message };
         const hash = await authSvc.hashPassword(password);
         const { rows } = await client.query(
-          `INSERT INTO users (tenant_id, email, password_hash, role)
-           VALUES ($1, $2, $3, $4) RETURNING id, email, role, tenant_id`,
+          `INSERT INTO users (tenant_id, email, password_hash, role, email_verified_at, terms_accepted_at)
+           VALUES ($1, $2, $3, $4, now(), now()) RETURNING id, email, role, tenant_id`,
           [inv.tenant_id, inv.email, hash, inv.role]);
         user = rows[0];
         created = true;
@@ -774,6 +800,141 @@ router.post('/invite/:token/accept', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Accept invitation failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to accept invitation', status: 500 });
+  }
+});
+
+// ── Self-registration (public, plan epic 2.1) ────────────
+//
+// Organisation + first administrator on the free plan with a 14-day trial.
+// REGISTRATION_MODE decides whether the endpoint is open at all and whether a
+// superadmin approves each registration; with an e-mail channel the address
+// is verified before the first login (services/registration.js).
+
+/** What the registration page needs before it renders. */
+router.get('/registration', (_req, res) => {
+  res.json({
+    data: {
+      mode:               registrationSvc.mode(),
+      email_verification: registrationSvc.verificationRequired(),
+      trial_days:         registrationSvc.trialDays(),
+    },
+  });
+});
+
+const registerSchema = z.object({
+  organisation: z.string().trim().min(2, 'Organisation name must be at least 2 characters').max(128),
+  email:        z.string().trim().email().max(256),
+  password:     passwordSchema,
+  accept_terms: z.literal(true, { errorMap: () => ({ message: 'The terms of service must be accepted' }) }),
+  lang:         z.enum(['uk', 'en', 'pl', 'de']).optional(),
+  website:      z.string().max(200).optional(),   // honeypot: people never see it, bots fill it
+});
+
+function sessionPayload(tokens, user, tenant, tenants) {
+  return {
+    access_token:  tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+    user: { id: user.id, email: user.email, role: tokens.role, locale: user.locale || null, timezone: user.timezone || null },
+    tenant,
+    tenants,
+  };
+}
+
+router.post('/register', async (req, res) => {
+  if (registrationSvc.mode() === 'off') {
+    return res.status(403).json({ error: 'registration_closed', message: 'Self-registration is not open on this server', status: 403 });
+  }
+  const parsed = registerSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  const { organisation, email, password, lang, website } = parsed.data;
+  // A filled honeypot answers as if it worked and creates nothing.
+  if (website && website.trim()) return res.status(201).json({ data: { received: true } });
+
+  try {
+    const result = await registrationSvc.register({ organisation, email, password, lang, ip: req.ip || null, log: req.log });
+    const { tenant, user, verificationRequired, approvalRequired, emailSent } = result;
+    req.auditContext = {
+      entityId: tenant.id, action: 'auth.register',
+      changes: { tenant_id: tenant.id, slug: tenant.slug, email: user.email, mode: registrationSvc.mode(), email_sent: emailSent },
+    };
+
+    const data = {
+      tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug, status: tenant.status, trial_expires_at: tenant.trial_expires_at },
+      verification_required: verificationRequired,
+      approval_required:     approvalRequired,
+      email_sent:            emailSent,
+    };
+    // Nothing left to wait for: sign in right away, as invitation acceptance does.
+    if (!verificationRequired && !approvalRequired) {
+      const tokens = await issueTokens(user, tenant.id);
+      await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+      Object.assign(data, sessionPayload(tokens, user, await tenantSummary(tenant.id), await getUserTenants(user.id)));
+    }
+    res.status(201).json({ data });
+  } catch (err) {
+    if (err.code === 'email_taken') {
+      return res.status(409).json({ error: 'email_taken', message: 'An account with this e-mail already exists — sign in or reset the password', status: 409 });
+    }
+    req.log?.error?.({ err }, 'Registration failed');
+    res.status(500).json({ error: 'internal_error', message: 'Registration failed', status: 500 });
+  }
+});
+
+const verifyEmailSchema = z.object({
+  email: z.string().trim().email().max(256),
+  code:  z.string().regex(/^[0-9a-f]{64}$/, 'Invalid verification code'),
+});
+
+// The link from the verification e-mail lands here (#/verify?email=…&code=…).
+// A verified administrator whose organisation is already open is signed in.
+router.post('/verify-email', async (req, res) => {
+  const parsed = verifyEmailSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const { user, alreadyVerified } = await registrationSvc.verifyEmail(parsed.data);
+    req.auditContext = { entityId: user.id, action: 'auth.verify_email', changes: { already_verified: alreadyVerified } };
+
+    const tenant = await tenantSummary(user.tenant_id);
+    const { rows: home } = await db.query('SELECT registered_at, approved_at FROM tenants WHERE id = $1', [user.tenant_id]);
+    const approvalRequired = registrationSvc.awaitingApproval(home[0]);
+    const data = { verified: true, approval_required: approvalRequired };
+    if (!approvalRequired && tenant && OPEN_STATUSES.includes(tenant.status)) {
+      const tokens = await issueTokens(user, tenant.id);
+      await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [user.id]);
+      Object.assign(data, sessionPayload(tokens, user, tenant, await getUserTenants(user.id)));
+    }
+    res.json({ data });
+  } catch (err) {
+    if (err.code === 'invalid_code' || err.code === 'code_expired') {
+      return res.status(400).json({ error: err.code, message: err.message, status: 400 });
+    }
+    req.log?.error?.({ err }, 'E-mail verification failed');
+    res.status(500).json({ error: 'internal_error', message: 'Verification failed', status: 500 });
+  }
+});
+
+const resendSchema = z.object({
+  email: z.string().trim().email().max(256),
+  lang:  z.enum(['uk', 'en', 'pl', 'de']).optional(),
+});
+
+// Same answer whether or not the address exists or is already verified.
+router.post('/resend-verification', async (req, res) => {
+  const parsed = resendSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'validation_failed', message: parsed.error.issues[0].message, status: 400 });
+  }
+  try {
+    const sent = await registrationSvc.resendVerification({ ...parsed.data, log: req.log });
+    req.auditContext = { action: 'auth.resend_verification', changes: { email_sent: sent } };
+    res.json({ data: { message: 'If that address is waiting for verification, a new link has been sent' } });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Resend verification failed');
+    res.status(500).json({ error: 'internal_error', message: 'Request failed', status: 500 });
   }
 });
 

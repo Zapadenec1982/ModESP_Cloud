@@ -111,12 +111,33 @@
   const inviteToken = readInviteToken()
   const isInviteView = inviteToken !== null
 
+  // ── Self-registration (plan epic 2.1) ───────────────────
+  // #/register (the form) and #/verify?email=…&code=… (the link from the
+  // verification e-mail) are standalone in the same way. The code stays in
+  // the fragment, which never reaches a server log.
+  const REGISTER_PREFIX = '#/register'
+  const VERIFY_PREFIX = '#/verify'
+
+  function readRegisterView() {
+    const hash = typeof window !== 'undefined' ? (window.location.hash || '') : ''
+    if (hash.startsWith(REGISTER_PREFIX)) return { verify: null }
+    if (hash.startsWith(VERIFY_PREFIX)) {
+      const q = new URLSearchParams(hash.split('?')[1] || '')
+      return { verify: { email: q.get('email') || '', code: q.get('code') || '' } }
+    }
+    return null
+  }
+
+  const registerView = readRegisterView()
+  const isRegisterView = registerView !== null
+
   // Pasting a public link into an already-open tab changes the hash without a
   // page load, and the two shells cannot swap in place — reload across that
   // boundary only. Ordinary in-app navigation never crosses it.
   function onHashChange() {
     if ((readPublicToken() !== null) !== isPublicView) window.location.reload()
     if ((readInviteToken() !== null) !== isInviteView) window.location.reload()
+    if ((readRegisterView() !== null) !== isRegisterView) window.location.reload()
   }
 
   let booting = true
@@ -152,8 +173,9 @@
     // hits /api/devices + /api/alarms. Bail out before any of them.
     // (routeLoaded never fires here — there is no <Router> — so the placeholder
     // title is set explicitly; PublicSite replaces it with the site name.)
-    if (isPublicView || isInviteView) {
-      document.title = isInviteView ? `${$t('invite.title')} — ModESP Cloud` : `${$t('pages.public_site')} — ModESP Cloud`
+    if (isPublicView || isInviteView || isRegisterView) {
+      document.title = isRegisterView ? `${$t('register.title')} — ModESP Cloud`
+        : isInviteView ? `${$t('invite.title')} — ModESP Cloud` : `${$t('pages.public_site')} — ModESP Cloud`
       return
     }
 
@@ -180,7 +202,7 @@
   })
 
   // Reconnect WS when user logs in
-  $: if ($isAuthenticated && !booting && !isPublicView && !isInviteView) {
+  $: if ($isAuthenticated && !booting && !isPublicView && !isInviteView && !isRegisterView) {
     reconnect()
     refreshCounts()
   }
@@ -255,6 +277,20 @@
     </div>
   {/await}
   <ToastContainer />
+{:else if isRegisterView}
+  {#await import('./pages/Register.svelte')}
+    <div class="boot">
+      <div class="boot-spinner" />
+      <span class="boot-text">ModESP Cloud</span>
+    </div>
+  {:then { default: Register }}
+    <Register verify={registerView.verify} />
+  {:catch}
+    <div class="boot">
+      <span class="boot-text">ModESP Cloud</span>
+    </div>
+  {/await}
+  <ToastContainer />
 {:else if booting}
   <div class="boot">
     <div class="boot-spinner" />
@@ -269,10 +305,15 @@
 
     <main class="main-content">
       {#if $isAdmin && $currentTenant?.status === 'past_due'}
-        <!-- Billing (plan epic 2.2): an overdue invoice; day 21 suspends the organisation -->
+        <!--
+          Billing (plan epic 2.2): an overdue invoice; day 21 suspends the organisation.
+          On the free plan there is no invoice to be overdue: past_due there means
+          the trial ended (plan epic 2.1), and the banner says so.
+        -->
+        {@const trialEnded = $currentTenant.plan === 'free' && !!$currentTenant.trial_expires_at}
         <div class="past-due-banner" role="alert">
-          <span>{$t('billing.past_due_banner')}</span>
-          <a href="#/billing">{$t('billing.past_due_link')}</a>
+          <span>{$t(trialEnded ? 'billing.trial_ended_banner' : 'billing.past_due_banner')}</span>
+          <a href="#/billing">{$t(trialEnded ? 'billing.trial_ended_link' : 'billing.past_due_link')}</a>
         </div>
       {/if}
       <Router {routes} on:conditionsFailed={conditionsFailed} on:routeLoaded={handleRouteLoaded} />
