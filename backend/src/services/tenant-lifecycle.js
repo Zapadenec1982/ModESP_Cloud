@@ -12,11 +12,18 @@
  *
  * The sweep is its own hourly timer (TRIAL_SWEEP_INTERVAL_MIN, 0 disables) so
  * it keeps running on a server where the billing timer is switched off.
+ *
+ * It also ends closed organisations (plan epic 2.10): CLOSED_RETENTION_DAYS
+ * after `closed_at` the operational data is purged and the controllers go
+ * back to the pending queue — the organisation, its users and its invoices
+ * stay — and data-export files past their TTL are removed.
  */
 
 const db       = require('./db');
 const emailSvc = require('./email');
 const planMw   = require('../middleware/plan');
+const tenantDelete = require('./tenant-delete');
+const exportSvc    = require('./tenant-export');
 
 const BOOT_DELAY_MS  = 60_000;
 const BOOT_JITTER_MS = 30_000;
@@ -63,6 +70,44 @@ async function expireTrials({ now = new Date() } = {}) {
   return rows;
 }
 
+function closedRetentionDays() { return envInt('CLOSED_RETENTION_DAYS', 30); }
+
+/**
+ * Purge every organisation closed longer than CLOSED_RETENTION_DAYS ago
+ * (a negative value never purges). Resolves the organisations purged.
+ */
+async function purgeClosed({ now = new Date() } = {}) {
+  const days = closedRetentionDays();
+  if (days < 0) return [];
+  const { rows } = await db.query(
+    `SELECT id, name, slug FROM tenants
+      WHERE status = 'closed' AND purged_at IS NULL AND closed_at IS NOT NULL
+        AND closed_at <= $1::timestamptz - make_interval(days => $2) AND id <> $3
+      ORDER BY closed_at`,
+    [now, days, db.SYSTEM_TENANT_ID]);
+  const done = [];
+  for (const t of rows) {
+    try {
+      const r = await db.transaction(client => tenantDelete.purgeTenant(client, t.id, { now }));
+      planMw.invalidate(t.id);
+      const mqtt = require('./mqtt');
+      for (const mqttId of r.devices) {
+        // The controller may still sit on the old prefix: point it at the queue
+        try { mqtt.sendCommand(t.slug, mqttId, '_set_tenant', 'pending', { qos: 1 }); } catch { /* broker offline */ }
+      }
+      log().info({ tenantId: t.id, slug: t.slug, counts: r.counts, devices: r.movedDevices }, 'Closed organisation purged');
+      done.push({ ...t, counts: r.counts, devices: r.devices });
+    } catch (err) {
+      log().error({ err, tenantId: t.id }, 'Purge of a closed organisation failed');
+    }
+  }
+  if (done.length) {
+    try { await require('./mqtt').refreshRegistries(); }
+    catch (err) { log().warn({ err }, 'Broker registry refresh failed'); }
+  }
+  return done;
+}
+
 async function runOnce() {
   if (running) return;
   running = true;
@@ -71,9 +116,20 @@ async function runOnce() {
     if (moved.length) log().info({ count: moved.length }, 'Trial sweep: organisations moved to past_due');
   } catch (err) {
     log().error({ err }, 'Trial sweep failed');
-  } finally {
-    running = false;
   }
+  try {
+    const purged = await purgeClosed();
+    if (purged.length) log().info({ count: purged.length }, 'Lifecycle: closed organisations purged');
+  } catch (err) {
+    log().error({ err }, 'Purge sweep failed');
+  }
+  try {
+    const expired = await exportSvc.expire();
+    if (expired) log().info({ count: expired }, 'Lifecycle: data exports expired');
+  } catch (err) {
+    log().error({ err }, 'Export expiry failed');
+  }
+  running = false;
 }
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -100,4 +156,4 @@ function shutdown() {
   if (poller)    { clearInterval(poller);   poller = null; }
 }
 
-module.exports = { start, shutdown, runOnce, expireTrials, __test: { setLogger(l) { logger = l; } } };
+module.exports = { start, shutdown, runOnce, expireTrials, purgeClosed, closedRetentionDays, __test: { setLogger(l) { logger = l; } } };

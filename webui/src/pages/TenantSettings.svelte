@@ -2,14 +2,18 @@
   // Organisation settings (plan epic 1.8): what an admin used to ask the founder
   // to change in SQL — time zone, locale, electricity tariff, alarm delays,
   // offline thresholds, acknowledgement escalation.
-  import { onMount } from 'svelte'
-  import { getTenantSettings, updateTenantSettings, getTenants, getMaintenanceRules, putMaintenanceRule, resetMaintenanceRule } from '../lib/api.js'
+  import { onMount, onDestroy } from 'svelte'
+  import {
+    getTenantSettings, updateTenantSettings, getTenants, getMaintenanceRules, putMaintenanceRule, resetMaintenanceRule,
+    requestTenantExport, getTenantExports, downloadTenantExport,
+  } from '../lib/api.js'
   import { currentTenant, isSuperAdmin } from '../lib/stores.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
   import Icon from '../components/ui/Icon.svelte'
+  import Badge from '../components/ui/Badge.svelte'
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
 
@@ -21,6 +25,60 @@
 
   // Form model: minutes/seconds for humans, milliseconds on the wire
   let form = {}
+
+  // ── Data export (plan epic 2.10) ──
+  // The administrator asks for a zip of every table plus a HACCP PDF per
+  // site; it is built in the background, so the list polls while one is
+  // pending. Works while the organisation is closed (read-only).
+  let exports = []
+  let exportTtl = 7
+  let exportBusy = false
+  let downloading = null
+  let pollTimer = null
+  $: exportTenantId = tenant?.id || $currentTenant?.id || null
+  $: if (exportTenantId) loadExports(exportTenantId)
+
+  async function loadExports(id) {
+    try {
+      const res = await getTenantExports(id)
+      exports = res.data || []
+      exportTtl = res.meta?.ttl_days ?? exportTtl
+    } catch {
+      exports = []
+    }
+    clearTimeout(pollTimer)
+    if (exports.some(e => e.status === 'pending' || e.status === 'running')) pollTimer = setTimeout(() => loadExports(id), 4000)
+  }
+
+  async function requestExport() {
+    if (!exportTenantId) return
+    exportBusy = true
+    try {
+      await requestTenantExport(exportTenantId)
+      toast.success($t('tenants.export_requested'))
+      await loadExports(exportTenantId)
+    } catch (e) {
+      toast.error(e.body?.error === 'export_in_progress' ? $t('tenants.export_in_progress') : e.message)
+    } finally {
+      exportBusy = false
+    }
+  }
+
+  async function downloadExport(e) {
+    downloading = e.id
+    try {
+      await downloadTenantExport(exportTenantId, e.id, e.file_name)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      downloading = null
+    }
+  }
+
+  const exportVariant = (st) => (st === 'ready' ? 'success' : st === 'failed' ? 'danger' : st === 'expired' ? 'neutral' : 'warning')
+  const formatBytes = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : (n || 0) + ' B')
+  const localeDate = (d) => (d ? new Date(d).toLocaleDateString($t('time.locale_code'), { day: '2-digit', month: '2-digit', year: 'numeric' }) : '')
+  onDestroy(() => clearTimeout(pollTimer))
 
   const toMin = (ms) => (ms === null || ms === undefined ? '' : Math.round(ms / 60000))
   const toSec = (ms) => (ms === null || ms === undefined ? '' : Math.round(ms / 1000))
@@ -192,6 +250,45 @@
       </div>
     </form>
 
+    <section class="section-card">
+      <div class="section-header"><Icon name="download" size={16} /><span>{$t('tenants.export_title')}</span></div>
+      <p class="hint">{$t('tenants.export_hint', exportTtl)}</p>
+      <div class="export-actions">
+        <Button size="sm" on:click={requestExport} disabled={exportBusy || exports.some(e => e.status === 'pending' || e.status === 'running')}>
+          {$t('tenants.export_request')}
+        </Button>
+      </div>
+      {#if exports.length === 0}
+        <p class="hint">{$t('tenants.export_none')}</p>
+      {:else}
+        <div class="exports">
+          <div class="exports-head">
+            <span>{$t('tenants.export_col_date')}</span><span>{$t('tenants.export_col_status')}</span>
+            <span>{$t('tenants.export_col_contents')}</span><span>{$t('tenants.export_col_size')}</span><span></span>
+          </div>
+          {#each exports as e (e.id)}
+            <div class="exports-row">
+              <span>{new Date(e.created_at).toLocaleString($t('time.locale_code'), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              <span>
+                <Badge variant={exportVariant(e.status)} size="sm">{$t('tenants.export_status_' + e.status)}</Badge>
+                {#if e.status === 'ready' && e.expires_at}<small class="muted"> {$t('tenants.export_expires', localeDate(e.expires_at))}</small>{/if}
+                {#if e.status === 'failed' && e.error}<small class="muted" title={e.error}> {e.error}</small>{/if}
+              </span>
+              <span class="muted">{e.manifest ? $t('tenants.export_contents', Object.keys(e.manifest.tables || {}).length, (e.manifest.reports || []).length) : '—'}</span>
+              <span class="muted">{e.bytes ? formatBytes(e.bytes) : '—'}</span>
+              <span class="export-dl">
+                {#if e.status === 'ready'}
+                  <Button size="sm" variant="secondary" disabled={downloading === e.id} on:click={() => downloadExport(e)}>
+                    <Icon name="download" size={14} /> {$t('tenants.export_download')}
+                  </Button>
+                {/if}
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
     {#if rulesAvailable && rules.length > 0}
       <section class="section-card">
         <div class="section-header"><Icon name="wrench" size={16} /><span>{$t('settings.maintenance_title')}</span></div>
@@ -230,6 +327,13 @@
   .field { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); color: var(--text-secondary); }
   .input { padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-primary); }
   .hint { margin: 0; padding: 0 var(--space-4) var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+  .export-actions { padding: 0 var(--space-4) var(--space-3); }
+  .exports { display: flex; flex-direction: column; padding: 0 var(--space-4) var(--space-3); font-size: var(--text-sm); overflow-x: auto; }
+  .exports-head, .exports-row { display: grid; grid-template-columns: 1.2fr 1.6fr 1.4fr 0.8fr auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; min-width: 640px; }
+  .exports-head { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-bottom: 1px solid var(--border-default); }
+  .exports-row { border-bottom: 1px solid var(--border-muted); }
+  .exports .muted { color: var(--text-muted); font-size: var(--text-xs); }
+  .export-dl { display: flex; justify-content: flex-end; }
   .actions { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-muted); }
 
   .rules { display: grid; gap: var(--space-2); }

@@ -23,6 +23,8 @@ const weatherSvc  = require('./services/weather');
 const maintenanceSvc = require('./services/maintenance');
 const billingSvc  = require('./services/billing');
 const lifecycleSvc = require('./services/tenant-lifecycle');
+const tenantExportSvc = require('./services/tenant-export');
+const { readOnlyWhenClosed } = require('./middleware/tenant-status');
 const reportSchedulerSvc = require('./services/report-scheduler');
 const registrationSvc = require('./services/registration');
 const routingSvc  = require('./services/routing');
@@ -448,6 +450,8 @@ if (AUTH_ENABLED) {
 
   // All other /api routes require JWT
   app.use('/api', authenticate);
+  // A closed organisation is read-only until it is purged (plan epic 2.10)
+  app.use('/api', readOnlyWhenClosed());
 
   // One-time WS ticket (P1-4) — issued over authenticated REST so the JWT
   // never travels in the WS URL query string (logs/Referer leak).
@@ -584,6 +588,7 @@ async function main() {
   }
   logger.info({ mode: registrationMode, trialDays: registrationSvc.trialDays(), emailVerification: emailSvc.isConfigured() }, 'Self-registration');
   lifecycleSvc.start(logger);
+  tenantExportSvc.init(logger);
   // Scheduled reports (plan epic 2.7): weekly/monthly PDFs, archived and e-mailed
   reportSchedulerSvc.start(logger);
 

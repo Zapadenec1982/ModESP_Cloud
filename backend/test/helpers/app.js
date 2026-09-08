@@ -98,6 +98,7 @@ function createTestApp() {
 
   // JWT gate
   app.use('/api', authenticate);
+  app.use('/api', require('../../src/middleware/tenant-status').readOnlyWhenClosed());
 
   // Own profile (any role) — ABOVE the admin-only /api/users mount, as in index.js
   app.use('/api/profile',  require('../../src/routes/profile'));

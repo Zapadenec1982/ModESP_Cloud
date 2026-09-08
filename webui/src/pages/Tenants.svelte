@@ -342,6 +342,13 @@
                   {$t('tenants.status_' + (tenant.status || (tenant.active ? 'active' : 'suspended')))}
                 </Badge>
               {/if}
+              {#if tenant.status === 'closed'}
+                <small class="lifecycle">
+                  {tenant.purged_at
+                    ? $t('tenants.purged_at', formatDate(tenant.purged_at))
+                    : tenant.purge_after ? $t('tenants.purge_after', formatDate(tenant.purge_after)) : $t('tenants.closed_since', formatDate(tenant.closed_at))}
+                </small>
+              {/if}
             </span>
             <span class="cell cell-created">{formatDate(tenant.created_at)}</span>
             <span class="cell cell-actions">
@@ -726,4 +733,5 @@
     .cell-actions { flex: 1; justify-content: flex-start; }
   }
   .parent-of { display: block; font-size: var(--text-xs); color: var(--text-muted); }
+  .lifecycle { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
 </style>

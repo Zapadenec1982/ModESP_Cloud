@@ -71,13 +71,15 @@ function userPayload(user, role) {
 // or closed organisation is invisible at login, refused on switch-tenant and
 // dropped at token refresh (plan epic 1.8).
 const OPEN_STATUSES = ['trial', 'active', 'past_due'];
+// A closed organisation stays open to sign in — read-only, until it is purged (plan epic 2.10)
+const LOGIN_STATUSES = [...OPEN_STATUSES, 'closed'];
 
 // The home organisation (users.tenant_id) counts as a membership even when no
 // user_tenants row exists for it — accounts created by scripts before migration
 // 010 or by seed-admin have none, and must not be locked out of their own
 // organisation. The role there is the account role.
 const MEMBER_TENANTS_SQL = `
-  SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at,
+  SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at, t.closed_at, t.purged_at,
          COALESCE(ut.role, CASE WHEN u.role = 'superadmin' THEN 'admin' ELSE u.role END) AS role,
          COALESCE(p.features, '[]'::jsonb) AS features
     FROM users u
@@ -86,12 +88,19 @@ const MEMBER_TENANTS_SQL = `
     LEFT JOIN plan_limits p ON p.plan = t.plan
    WHERE u.id = $1`;
 
+/** A closed organisation says how long it stays readable (plan epic 2.10). */
+function withReadOnlyUntil(row) {
+  if (!row || !row.closed_at) return row;
+  const days = require('../services/tenant-lifecycle').closedRetentionDays();
+  return { ...row, read_only_until: days < 0 ? null : new Date(new Date(row.closed_at).getTime() + days * 86_400_000) };
+}
+
 async function getUserTenants(userId) {
   const { rows } = await db.query(
     `${MEMBER_TENANTS_SQL} AND t.status = ANY($2::text[]) ORDER BY t.name`,
-    [userId, OPEN_STATUSES]
+    [userId, LOGIN_STATUSES]
   );
-  return rows;
+  return rows.map(withReadOnlyUntil);
 }
 
 /** Membership test used by select-tenant and switch-tenant: a row, or the home organisation. */
@@ -107,9 +116,11 @@ async function isMember(userId, tenantId) {
 /** One organisation as the session sees it (plan and features included, plan epic 2.5). */
 async function tenantSummary(tenantId) {
   const { rows } = await db.query(
-    `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at, COALESCE(p.features, '[]'::jsonb) AS features
+    `SELECT t.id, t.name, t.slug, t.status, t.plan, t.parent_tenant_id, t.trial_expires_at, COALESCE(p.features, '[]'::jsonb) AS features,
+            t.closed_at, t.purged_at,
+            CASE WHEN t.closed_at IS NULL OR $2 < 0 THEN NULL ELSE t.closed_at + make_interval(days => $2) END AS read_only_until
        FROM tenants t LEFT JOIN plan_limits p ON p.plan = t.plan WHERE t.id = $1`,
-    [tenantId]
+    [tenantId, require('../services/tenant-lifecycle').closedRetentionDays()]
   );
   return rows[0] || null;
 }
@@ -211,11 +222,11 @@ async function finishLogin(req, res, user) {
     let suspendedOnly = false;
     if (tenants.length === 0 && user.tenant_id) {
       const { rows: tRows } = await db.query(
-        'SELECT id, name, slug, status FROM tenants WHERE id = $1',
+        'SELECT id, name, slug, status, closed_at, purged_at FROM tenants WHERE id = $1',
         [user.tenant_id]
       );
       if (tRows.length > 0) {
-        if (OPEN_STATUSES.includes(tRows[0].status)) tenants.push(tRows[0]);
+        if (LOGIN_STATUSES.includes(tRows[0].status)) tenants.push(withReadOnlyUntil(tRows[0]));
         else suspendedOnly = true;
       }
     } else if (tenants.length === 0) {
@@ -379,7 +390,7 @@ router.post('/switch-tenant', authenticate, async (req, res) => {
         error: 'not_found', message: 'Tenant not found', status: 404,
       });
     }
-    if (!OPEN_STATUSES.includes(tenant.status)) return tenantSuspended(res);
+    if (!LOGIN_STATUSES.includes(tenant.status)) return tenantSuspended(res);
 
     // Issue new tokens with new tenant context — and the role held THERE (plan
     // epic 2.5) — inside the same session (plan epic 2.9)
@@ -445,7 +456,7 @@ router.post('/refresh', async (req, res) => {
     }
 
     // A suspended organisation ends the session at the next refresh (≤ 15 min).
-    if (row.role !== 'superadmin' && row.tenant_status && !OPEN_STATUSES.includes(row.tenant_status)) {
+    if (row.role !== 'superadmin' && row.tenant_status && !LOGIN_STATUSES.includes(row.tenant_status)) {
       return tenantSuspended(res);
     }
 
