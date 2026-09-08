@@ -4,7 +4,8 @@
  */
 
 import { authUser, authEnabled, currentTenant, availableTenants, navigate } from './stores.js';
-import { setLocale } from './i18n.js';
+import { get } from 'svelte/store';
+import { setLocale, t } from './i18n.js';
 import { toast } from './toast.js';
 
 /**
@@ -170,6 +171,7 @@ async function request(path, options = {}) {
     err.status = res.status;
     err.body = body;
     if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
+    if (res.status === 423 && !options.quiet) notifyReadOnly();
     throw err;
   }
 
@@ -185,6 +187,12 @@ function notifyPlanLimit(body) {
   const contact = import.meta.env.VITE_SALES_EMAIL || 'sales@modesp.com.ua';
   const what = body.resource ? `${body.resource} ${body.current}/${body.limit}` : (body.feature || '');
   toast.warning(`${body.message || 'Plan limit reached'} (${what}) → ${contact}`, 8000);
+}
+
+/** 423 organisation_closed: the organisation is read-only until it is purged (plan epic 2.10). */
+function notifyReadOnly() {
+  try { toast.warning(get(t)('tenants.closed_readonly_toast'), 6000); }
+  catch { toast.warning('This organisation is closed: its data can be read and exported, but not changed', 6000); }
 }
 
 /**
@@ -1314,6 +1322,7 @@ async function downloadFile(path, filename) {
     err.status = res.status;
     err.body = body;
     if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
+    if (res.status === 423 && !options.quiet) notifyReadOnly();
     throw err;
   }
   const blob = await res.blob();
@@ -1768,4 +1777,20 @@ export function getReports(params = {}) {
 /** GET /api/reports/:code/download — the archived PDF of a scheduled report. */
 export function downloadReport(code, fileName) {
   return downloadFile(`/reports/${encodeURIComponent(code)}/download`, fileName || `report_${code}.pdf`);
+}
+
+// ── Organisation lifecycle and data export (plan epic 2.10) ──
+
+/** POST /api/tenants/:id/export — ask for a zip of every table plus a HACCP PDF per site; built in the background. */
+export function requestTenantExport(id) {
+  return request(`/tenants/${id}/export`, { method: 'POST' });
+}
+
+/** GET /api/tenants/:id/exports — { data: [...], meta: { ttl_days } }. */
+export function getTenantExports(id) {
+  return requestFull(`/tenants/${id}/exports`);
+}
+
+export function downloadTenantExport(id, exportId, fileName) {
+  return downloadFile(`/tenants/${id}/exports/${exportId}/download`, fileName || 'modesp-export.zip');
 }

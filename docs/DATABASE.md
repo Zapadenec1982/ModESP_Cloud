@@ -905,6 +905,40 @@ ALTER TABLE report_exports
 
 ---
 
+## Життєвий цикл організації та експорт даних (migration 041)
+
+```sql
+ALTER TABLE tenants
+  ADD COLUMN closed_at TIMESTAMPTZ,   -- ставить/чистить тригер trg_tenants_track_closed за статусом
+  ADD COLUMN purged_at TIMESTAMPTZ;   -- дані видалено, контролери в черзі очікування
+
+CREATE TABLE tenant_exports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  status VARCHAR(8) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','ready','failed','expired')),
+  file_path TEXT, file_name VARCHAR(160), bytes BIGINT, sha256 CHAR(64), manifest JSONB, error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), completed_at TIMESTAMPTZ, expires_at TIMESTAMPTZ
+);
+```
+
+> **Аудит-лог без вимкнення тригера.** `audit_log_immutable()` тепер пропускає рівно один вид UPDATE:
+> коли в транзакції виставлено `modesp.audit_pii_scrub = on` **і** змінюються лише поля особи
+> (`user_email`, `ip`, `user_agent`, а `user_id`/`tenant_id` можуть стати NULL). Усе інше, як і DELETE,
+> далі заборонено — навіть якщо хтось виставить прапорець вручну. Прапорець ставлять лише дві
+> функції `SECURITY DEFINER`: `audit_log_scrub_user(uuid)` (видалення користувача: e-mail стає
+> сталим псевдонімом `deleted-<hash>@removed`, адреса й браузер — NULL) і
+> `audit_log_detach_tenant(uuid)` (повне видалення організації). `ALTER TABLE … DISABLE TRIGGER`
+> у коді більше немає.
+>
+> **Purge.** `services/tenant-delete.js#purgeTenant` — спільний для сторожа закритих організацій,
+> `DELETE /tenants/:id`, `DELETE /tenants/bulk` і `purge-demo.js`: видаляє дочірні таблиці в правильному
+> порядку (включно з `device_models`, на яких раніше падав bulk), повертає контролери в `__system__`
+> зі `status = pending` (пароль MQTT збережено) і ставить `purged_at`. Користувачі, `invoices`,
+> `usage_snapshots`, `plan_change_requests`, `tenant_settings` і `audit_log` лишаються.
+
+---
+
 ## Партиціонування телеметрії — автоматизація
 
 Дві функції з правами власника схеми (`SECURITY DEFINER`, `search_path = pg_catalog, pg_temp`,
@@ -984,3 +1018,6 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
   (`users.mfa_secret/mfa_pending_secret/mfa_enabled_at/mfa_backup_codes/mfa_last_step`).
 - 2026-09-08 — Міграція 040: планові звіти (`report_schedules`) і архів PDF
   (`report_exports.report_type/schedule_id/file_name/bytes/pdf`).
+- 2026-09-08 — Міграція 041: життєвий цикл організації (`tenants.closed_at/purged_at`, тригер
+  `trg_tenants_track_closed`), `tenant_exports`, псевдонімізація `audit_log` через
+  `audit_log_scrub_user()` / `audit_log_detach_tenant()` без вимкнення тригера.

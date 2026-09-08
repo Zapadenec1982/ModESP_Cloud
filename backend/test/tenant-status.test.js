@@ -93,14 +93,19 @@ describe('organisation status', () => {
     expect(rows[0]).toMatchObject({ status: 'suspended', active: false });
   });
 
-  it('reactivation restores login and topics; closed behaves like suspended', async () => {
+  it('reactivation restores login and topics; closed keeps login read-only but no topics', async () => {
     const res = await request(app).patch(`/api/tenants/${tenant.id}`).set(authHeader(superadmin, other.id)).send({ status: 'active' });
     expect(res.body.data).toMatchObject({ status: 'active', active: true, suspended_at: null });
     expect((await request(app).post('/api/auth/login').send({ email: 'admin@status.test', password: PW })).status).toBe(200);
     expect(await aclTopics('device_ST0001', 2)).toContain('modesp/v1/status-a/ST0001/status');
 
+    // Closed (plan epic 2.10): people still sign in to read and export; the broker stays shut
     await request(app).patch(`/api/tenants/${tenant.id}`).set(authHeader(superadmin, other.id)).send({ status: 'closed' });
-    expect((await request(app).post('/api/auth/login').send({ email: 'admin@status.test', password: PW })).body.error).toBe('tenant_suspended');
+    const closed = await request(app).post('/api/auth/login').send({ email: 'admin@status.test', password: PW });
+    expect(closed.status).toBe(200);
+    expect(closed.body.data.tenant.status).toBe('closed');
+    expect(closed.body.data.tenant.read_only_until).toBeTruthy();
+    expect(await aclTopics('device_ST0001', 2)).toEqual([]);
     await request(app).patch(`/api/tenants/${tenant.id}`).set(authHeader(superadmin, other.id)).send({ status: 'active' });
   });
 

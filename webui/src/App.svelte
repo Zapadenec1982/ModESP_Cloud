@@ -321,6 +321,15 @@
           <a href="#/billing">{$t(trialEnded ? 'billing.trial_ended_link' : 'billing.past_due_link')}</a>
         </div>
       {/if}
+      {#if $currentTenant?.status === 'closed'}
+        <!-- Lifecycle (plan epic 2.10): read-only until the purge date; the administrator can take the data out -->
+        <div class="past-due-banner closed" role="alert">
+          <span>{$currentTenant.read_only_until
+            ? $t('tenants.closed_banner', new Date($currentTenant.read_only_until).toLocaleDateString($t('time.locale_code')))
+            : $t('tenants.closed_banner_no_date')}</span>
+          {#if $isAdmin}<a href="#/settings">{$t('tenants.closed_export_link')}</a>{/if}
+        </div>
+      {/if}
       <Router {routes} on:conditionsFailed={conditionsFailed} on:routeLoaded={handleRouteLoaded} />
     </main>
   </div>
@@ -368,6 +377,7 @@
     font-size: var(--text-sm);
   }
   .past-due-banner a { color: var(--accent-blue); font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .past-due-banner.closed { border-color: rgba(248, 81, 73, 0.5); background: rgba(248, 81, 73, 0.1); }
 
   .app-layout {
     display: flex;

@@ -2287,6 +2287,41 @@ suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`,
 
 Slug змінити не можна якщо є пристрої (`400 Cannot change slug while devices exist`).
 
+**Життєвий цикл (plan epic 2.10).** `status: "closed"` ставить `closed_at` (тригер `trg_tenants_track_closed`;
+повернення в `active` очищує його). Закрита організація лишається відкритою для входу, але **лише на
+читання**: будь-який `POST/PATCH/PUT/DELETE` від її користувачів відповідає `423 organisation_closed`,
+крім `/auth/*`, `/profile` і експорту даних; superadmin не обмежений. Топіки брокера для неї закриті,
+як і для `suspended`. Вхід віддає в `tenant` поля `closed_at`, `purged_at` і `read_only_until`
+(`closed_at + CLOSED_RETENTION_DAYS`, типово 30 днів). Коли цей термін минає, сторож
+`services/tenant-lifecycle.js` виконує purge: телеметрія, аварії, події, звіти, наряди, підказки,
+прошивки, моделі, точки й експорти видаляються, контролери повертаються в чергу очікування
+(`__system__`, `status = pending`, облікові дані збережені, `_set_tenant pending` на старий префікс);
+організація, її користувачі, рахунки, знімки використання й аудит лишаються, `purged_at` заповнюється.
+`GET /tenants` віддає `closed_at`, `purged_at`, `purge_after`.
+
+### `POST /tenants/:id/export` · `GET /tenants/:id/exports` · `GET /tenants/:id/exports/:exportId/download`
+Експорт даних організації (plan epic 2.10). **Ролі:** admin своєї організації або superadmin. Дозволено
+й для закритої організації.
+
+`POST` створює запит і відповідає `202` з рядком `tenant_exports` (`status: pending`); архів збирається
+у фоні. `409 export_in_progress`, поки готується попередній. Zip містить CSV на кожну таблицю
+організації (`sites`, `devices`, `device_models`, `users`, `alarms`, `events`, `service_records`,
+`work_orders`, `maintenance_hints`, `notification_subscribers`, `notification_log`, `invoices`,
+`usage_snapshots`, `report_schedules`, `report_exports`, `audit_log`, `telemetry_hourly`, `telemetry`;
+UTF-8 з BOM, ISO-8601, JSON у комірках) без паролів, других факторів, токенів і збережених файлів,
+плюс `reports/haccp_<точка>.pdf` за останній рік на кожну точку з обладнанням, `manifest.json`
+(кількість рядків) і `README.txt`.
+
+```json
+{ "data": [ { "id": "uuid", "status": "ready", "file_name": "modesp_morozko_2026-09-08_1a2b3c4d.zip", "bytes": 4813355,
+              "sha256": "…", "manifest": { "tables": { "telemetry": 412000 }, "reports": [ { "site": "Магазин №1", "code": "ABCD-…" } ] },
+              "created_at": "…", "completed_at": "…", "expires_at": "…" } ],
+  "meta": { "ttl_days": 7 } }
+```
+`download` віддає `application/zip` із заголовком `X-Export-Sha256`; `409 export_not_ready`,
+`410 export_expired` (після `EXPORT_TTL_DAYS` файл видаляється, рядок лишається). Файли живуть у
+`EXPORT_DIR`.
+
 ### `POST /tenants/:id/approve` · `POST /tenants/:id/reject`
 Superadmin, plan epic 2.1. Організація, що зареєструвалася сама при `REGISTRATION_MODE=approve`, чекає
 зі статусом `suspended` (`GET /tenants` віддає `registered_at`, `approved_at`, `awaiting_approval`).
@@ -2295,7 +2330,9 @@ Superadmin, plan epic 2.1. Організація, що зареєструвал
 `409 not_awaiting_approval`, якщо організація не чекає на схвалення.
 
 ### `DELETE /tenants/:id`
-Soft-delete тенант. Не можна видалити якщо є пристрої.
+Повне видалення організації спільною процедурою `services/tenant-delete.js`: спочатку purge (як вище),
+далі аудит-лог псевдонімізується (`audit_log_detach_tenant`), користувачі та сама організація видаляються.
+Контролери переходять у чергу очікування.
 
 **Ролі:** superadmin
 
@@ -2372,7 +2409,9 @@ Soft-delete тенант. Не можна видалити якщо є прис�
 чинне значення. Явна зміна `plan` через `PATCH /tenants/:id` скидає перевизначення.
 
 ### `DELETE /tenants/bulk`
-`{ "ids": [...] }` — масове видалення (superadmin). Маршрут оголошено перед `DELETE /tenants/:id`.
+`{ "ids": [...] }` — масове видалення (superadmin) тією самою процедурою, що й `DELETE /tenants/:id`
+(раніше мало власний, неповний перелік таблиць і падало на `device_models`). Маршрут оголошено перед
+`DELETE /tenants/:id`.
 
 ---
 
@@ -2769,3 +2808,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-09-08 — Самореєстрація (епік 2.1): `GET /auth/registration`, `POST /auth/register`, `POST /auth/verify-email`, `POST /auth/resend-verification`; `401 email_not_verified | pending_approval` на вході; `POST /tenants/:id/approve | reject` і поля `registered_at/approved_at/awaiting_approval` у `GET /tenants`; чек-ліст `GET /onboarding`, `POST /onboarding/dismiss`; `trial_expires_at` у `tenant` відповідей входу.
 - 2026-09-08 — Сесії і другий фактор (епік 2.9): refresh-токен у httpOnly-cookie `modesp_rt` + `csrf_token`/`X-CSRF-Token` для браузера (тіло `refresh_token` для API-клієнтів лишається), одноразові refresh-токени з `401 token_reused`, `sid` у access-токені; `POST /auth/mfa/verify`, `GET /auth/mfa`, `POST /auth/mfa/setup | enable | disable | backup-codes`; `GET/DELETE /auth/sessions`, `DELETE /auth/sessions/:id`; `DELETE /users/:id/sessions`, `DELETE /users/:id/mfa`.
 - 2026-09-08 — Планові звіти (епік 2.7): `GET/POST /reports/schedules`, `PATCH/DELETE /reports/schedules/:id`, `POST /reports/schedules/:id/run`; архів `GET /reports` і `GET /reports/:code/download`; типи `haccp | alarms | energy`, щотижня/щомісяця, лист з PDF у вкладенні.
+- 2026-09-08 — Життєвий цикл організації та експорт даних (епік 2.10): `closed` = вхід лише на читання (`423 organisation_closed` на зміни), `read_only_until` у `tenant` відповіді входу, purge через `CLOSED_RETENTION_DAYS`; `POST /tenants/:id/export`, `GET /tenants/:id/exports`, `GET /tenants/:id/exports/:exportId/download`; `DELETE /tenants/bulk` через спільну процедуру; `DELETE /users/:id` псевдонімізує аудит-лог.

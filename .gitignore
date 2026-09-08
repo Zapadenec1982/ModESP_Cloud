@@ -45,6 +45,7 @@ backend/firmware/*
 
 # Data exports / provisioning CSVs
 *.csv
+backend/exports/
 
 # Emulator fleet credentials — PLAINTEXT MQTT passwords for the 120 demo
 # devices, written by backend/src/scripts/provision-demo-fleet.js.

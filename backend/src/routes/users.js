@@ -481,16 +481,20 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    // Nullify non-cascading FKs (firmwares.uploaded_by, ota_rollouts.created_by)
-    await db.query('UPDATE firmwares SET uploaded_by = NULL WHERE uploaded_by = $1', [req.params.id]);
-    await db.query('UPDATE ota_rollouts SET created_by = NULL WHERE created_by = $1', [req.params.id]);
-
-    // Hard delete (cascades: user_devices, user_tenants, refresh_tokens, push_subscriptions; audit_log → SET NULL)
+    // Non-cascading references go first; the audit trail keeps the actions but
+    // not the person (audit_log_scrub_user, migration 041). Then the hard delete
+    // cascades user_devices, user_tenants, refresh_tokens, push_subscriptions.
     const delQ = isSuperAdmin
       ? `DELETE FROM users WHERE id = $1 RETURNING id, email, role`
       : `DELETE FROM users WHERE id = $1 AND tenant_id = $2 RETURNING id, email, role`;
     const delParams = isSuperAdmin ? [req.params.id] : [req.params.id, req.tenantId];
-    const { rows } = await db.query(delQ, delParams);
+    const rows = await db.transaction(async (client) => {
+      await client.query('UPDATE firmwares SET uploaded_by = NULL WHERE uploaded_by = $1', [req.params.id]);
+      await client.query('UPDATE ota_rollouts SET created_by = NULL WHERE created_by = $1', [req.params.id]);
+      await client.query('UPDATE user_devices SET granted_by = NULL WHERE granted_by = $1', [req.params.id]);
+      await client.query('SELECT audit_log_scrub_user($1)', [req.params.id]);
+      return (await client.query(delQ, delParams)).rows;
+    });
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'not_found', message: 'User not found', status: 404 });

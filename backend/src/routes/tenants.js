@@ -6,7 +6,9 @@ const db         = require('../services/db');
 const mqttSvc    = require('../services/mqtt');
 const planMw     = require('../middleware/plan');
 const { deleteTenant } = require('../services/tenant-delete');
+const exportSvc  = require('../services/tenant-export');
 const { requireSuperadmin } = require('../middleware/auth');
+const { isUuidFormat } = require('../lib/ids');
 const registrationSvc = require('../services/registration');
 
 const router = Router();
@@ -15,12 +17,16 @@ const PLANS    = ['free', 'basic', 'pro', 'enterprise', 'partner'];
 const STATUSES = ['trial', 'active', 'past_due', 'suspended', 'closed'];
 
 // Columns every tenant read returns (plan limits joined for the usage column)
-const TENANT_SELECT = `
-  SELECT t.id, t.name, t.slug, t.plan, t.active, t.status, t.created_at,
+// Built per request: the purge date of a closed organisation depends on CLOSED_RETENTION_DAYS (plan epic 2.10)
+function tenantSelect() {
+  const days = require('../services/tenant-lifecycle').closedRetentionDays();
+  const purgeAfter = days < 0 ? 'NULL::timestamptz' : `t.closed_at + make_interval(days => ${days})`;
+  return `
+  SELECT t.id, t.name, t.slug, t.plan, t.active, t.status, t.created_at, ${purgeAfter} AS purge_after,
          t.trial_expires_at, t.suspended_at, t.billing_email, t.legal_name, t.tax_id,
          t.billing_currency, t.contract_started_at,
          t.parent_tenant_id, parent.name AS parent_name, t.billing_account_id,
-         t.registered_at, t.approved_at,
+         t.registered_at, t.approved_at, t.closed_at, t.purged_at,
          (t.registered_at IS NOT NULL AND t.approved_at IS NULL) AS awaiting_approval,
          (SELECT COUNT(*)::int FROM tenants c WHERE c.parent_tenant_id = t.id) AS client_count,
          p.name AS plan_name, p.max_devices, p.max_sites, p.max_users, p.sampling_sec, p.features,
@@ -33,6 +39,7 @@ const TENANT_SELECT = `
     LEFT JOIN tenants parent ON parent.id = t.parent_tenant_id
     LEFT JOIN plan_limits p ON p.plan = t.plan
     LEFT JOIN tenant_settings s ON s.tenant_id = t.id`;
+}
 
 const RESERVED_SLUGS = new Set(['__system__', 'pending', 'system', 'admin', 'api']);
 
@@ -91,12 +98,12 @@ function isSuperAdmin(req) {
 router.get('/', async (req, res, next) => {
   try {
     if (isSuperAdmin(req)) {
-      const { rows } = await db.query(`${TENANT_SELECT} ORDER BY t.created_at DESC`);
+      const { rows } = await db.query(`${tenantSelect()} ORDER BY t.created_at DESC`);
       return res.json({ data: rows });
     }
 
     // Regular admin: own tenant only
-    const { rows } = await db.query(`${TENANT_SELECT} WHERE t.id = $1`, [req.tenantId]);
+    const { rows } = await db.query(`${tenantSelect()} WHERE t.id = $1`, [req.tenantId]);
     res.json({ data: rows });
   } catch (err) {
     next(err);
@@ -295,7 +302,7 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
-    const { rows } = await db.query(`${TENANT_SELECT} WHERE t.id = $1`, [id]);
+    const { rows } = await db.query(`${tenantSelect()} WHERE t.id = $1`, [id]);
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -434,7 +441,7 @@ router.post('/:id/approve', requireSuperadmin, async (req, res, next) => {
       return res.status(409).json({ error: 'not_awaiting_approval', message: 'This organisation is not awaiting approval', status: 409 });
     }
     req.auditContext = { entityId: tenant.id, action: 'tenant.approve', changes: { after: { status: tenant.status, trial_expires_at: tenant.trial_expires_at } } };
-    const { rows } = await db.query(`${TENANT_SELECT} WHERE t.id = $1`, [tenant.id]);
+    const { rows } = await db.query(`${tenantSelect()} WHERE t.id = $1`, [tenant.id]);
     res.json({ data: rows[0] });
   } catch (err) {
     next(err);
@@ -449,6 +456,79 @@ router.post('/:id/reject', requireSuperadmin, async (req, res, next) => {
     }
     req.auditContext = { entityId: req.params.id, action: 'tenant.reject', changes: { before: { name: result.name, slug: result.slug } } };
     res.json({ data: { rejected: true, tenant: result } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Data export (plan epic 2.10) ─────────────────────────────
+// The organisation's administrator (or a superadmin) asks for a zip of every
+// table plus a HACCP PDF per site; it is built in the background and kept for
+// EXPORT_TTL_DAYS. Allowed while the organisation is closed (read-only).
+
+const EXPORT_COLUMNS = 'id, tenant_id, requested_by, status, file_name, bytes::float8 AS bytes, sha256, manifest, error, created_at, completed_at, expires_at';
+
+router.post('/:id/export', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isUuidFormat(id)) return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    if (!canManageTenant(req, id)) return res.status(403).json({ error: 'forbidden', message: 'Access denied', status: 403 });
+    const { rows: t } = await db.query('SELECT id FROM tenants WHERE id = $1', [id]);
+    if (t.length === 0) return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    const { rows: busy } = await db.query(
+      `SELECT id FROM tenant_exports WHERE tenant_id = $1 AND status IN ('pending', 'running') LIMIT 1`, [id]);
+    if (busy.length) {
+      return res.status(409).json({ error: 'export_in_progress', message: 'An export is already being prepared', status: 409, export_id: busy[0].id });
+    }
+    const { rows } = await db.query(
+      `INSERT INTO tenant_exports (tenant_id, requested_by) VALUES ($1, $2) RETURNING ${EXPORT_COLUMNS}`,
+      [id, req.user ? req.user.id : null]);
+    exportSvc.schedule(rows[0].id);
+    req.auditContext = { entityId: id, action: 'tenant.export_request', changes: { export_id: rows[0].id } };
+    res.status(202).json({ data: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/exports', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isUuidFormat(id)) return res.status(404).json({ error: 'not_found', message: 'Tenant not found', status: 404 });
+    if (!canManageTenant(req, id)) return res.status(403).json({ error: 'forbidden', message: 'Access denied', status: 403 });
+    const { rows } = await db.query(
+      `SELECT ${EXPORT_COLUMNS} FROM tenant_exports WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 20`, [id]);
+    res.json({ data: rows, meta: { ttl_days: exportSvc.ttlDays() } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/exports/:exportId/download', async (req, res, next) => {
+  try {
+    const { id, exportId } = req.params;
+    if (!isUuidFormat(id) || !isUuidFormat(exportId)) return res.status(404).json({ error: 'not_found', message: 'Export not found', status: 404 });
+    if (!canManageTenant(req, id)) return res.status(403).json({ error: 'forbidden', message: 'Access denied', status: 403 });
+    const { rows } = await db.query(
+      `SELECT status, file_path, file_name, bytes, sha256, expires_at FROM tenant_exports WHERE id = $1 AND tenant_id = $2`, [exportId, id]);
+    const e = rows[0];
+    if (!e) return res.status(404).json({ error: 'not_found', message: 'Export not found', status: 404 });
+    if (e.status === 'expired' || (e.expires_at && new Date(e.expires_at) <= new Date())) {
+      return res.status(410).json({ error: 'export_expired', message: 'This export has expired — request a new one', status: 410 });
+    }
+    if (e.status !== 'ready' || !e.file_path) {
+      return res.status(409).json({ error: 'export_not_ready', message: `Export is ${e.status}`, status: 409 });
+    }
+    let stat;
+    try { stat = require('fs').statSync(e.file_path); }
+    catch { return res.status(410).json({ error: 'export_expired', message: 'The export file is no longer on the server', status: 410 }); }
+    req.auditContext = { entityId: id, action: 'tenant.export_download', changes: { export_id: exportId } };
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Content-Disposition', `attachment; filename="${e.file_name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '')}"`);
+    res.setHeader('X-Export-Sha256', e.sha256 || '');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Export-Sha256');
+    require('fs').createReadStream(e.file_path).on('error', next).pipe(res);
   } catch (err) {
     next(err);
   }
@@ -472,22 +552,9 @@ router.delete('/bulk', requireSuperadmin, async (req, res, next) => {
     let totalMoved = 0;
     const deleted = [];
 
+    // The same procedure as DELETE /:id (services/tenant-delete.js): every child table in order
     for (const id of toDelete) {
-      const result = await db.transaction(async (client) => {
-        const { rows } = await client.query(`SELECT id, name, slug FROM tenants WHERE id = $1`, [id]);
-        if (rows.length === 0) return null;
-
-        const moved = await client.query(
-          `UPDATE devices SET tenant_id = $1 WHERE tenant_id = $2`, [db.SYSTEM_TENANT_ID, id]
-        );
-        await client.query(`DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
-        await client.query(`DELETE FROM push_subscriptions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, [id]);
-        await client.query(`DELETE FROM user_tenants WHERE tenant_id = $1`, [id]);
-        await client.query(`DELETE FROM users WHERE tenant_id = $1`, [id]);
-        await client.query(`DELETE FROM tenants WHERE id = $1`, [id]);
-
-        return { ...rows[0], movedDevices: moved.rowCount };
-      });
+      const result = await db.transaction((client) => deleteTenant(client, id));
       if (result) {
         deleted.push(result);
         totalMoved += result.movedDevices;
