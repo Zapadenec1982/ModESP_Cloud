@@ -2,13 +2,15 @@
   import { onMount, onDestroy } from 'svelte'
   import Router from 'svelte-spa-router'
   import { wrap } from 'svelte-spa-router/wrap'
-  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed, currentTenant } from './lib/stores.js'
-  import { checkAuthEnabled, restoreSession, getDevices, getAlarms } from './lib/api.js'
+  import { authEnabled, authUser, isAuthenticated, isAdmin, isSuperAdmin, canWrite, sidebarCollapsed, currentTenant, impersonation } from './lib/stores.js'
+  import { checkAuthEnabled, restoreSession, getDevices, getAlarms, endImpersonation, takeImpersonationEndReason } from './lib/api.js'
   import { connect, disconnect, reconnect, on, subscribeGlobal } from './lib/ws.js'
   import { t } from './lib/i18n.js'
+  import { toast } from './lib/toast.js'
   import Sidebar from './components/layout/Sidebar.svelte'
   import MobileHeader from './components/layout/MobileHeader.svelte'
   import ToastContainer from './components/ui/ToastContainer.svelte'
+  import Icon from './components/ui/Icon.svelte'
 
   // Pages
   import Dashboard from './pages/Dashboard.svelte'
@@ -62,6 +64,8 @@
     '/billing':         wrap({ asyncComponent: () => import('./pages/Billing.svelte'), conditions: [isAdminCheck] }),
     '/admin/billing':   wrap({ asyncComponent: () => import('./pages/BillingAdmin.svelte'), conditions: [isSuperAdminCheck] }),
     '/tenants':         wrap({ component: Tenants, conditions: [isAdminCheck] }),
+    // Support card of an organisation (plan epic 2.13): superadmin only
+    '/tenants/:id':     wrap({ asyncComponent: () => import('./pages/TenantCard.svelte'), conditions: [isSuperAdminCheck] }),
     '/users':           wrap({ component: Users, conditions: [isAdminCheck] }),
     '/settings':        wrap({ asyncComponent: () => import('./pages/TenantSettings.svelte'), conditions: [isAdminCheck] }),
     '/security':        wrap({ asyncComponent: () => import('./pages/Security.svelte') }),
@@ -69,7 +73,10 @@
     '/reports':         wrap({ asyncComponent: () => import('./pages/Reports.svelte') }),
     // Integrations (plan epic 2.6): API keys and webhooks of the organisation
     '/integrations':    wrap({ asyncComponent: () => import('./pages/Integrations.svelte'), conditions: [isAdminCheck] }),
-    '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
+    // Audit log (plan epic 2.13): an organisation's admin reads their own, a superadmin every organisation's
+    '/audit-log':       wrap({ component: AuditLog, conditions: [isAdminCheck] }),
+    // Support (plan epic 2.13): every role may write to support and see their requests
+    '/support':         wrap({ asyncComponent: () => import('./pages/Support.svelte') }),
   }
 
   // ── Public site status page (Part 2 §7.7) ──────────────
@@ -196,6 +203,10 @@
     booting = false
     connect()
     subscribeGlobal()
+    // The reload that ends an impersonation says why (plan epic 2.13)
+    const ended = takeImpersonationEndReason()
+    if (ended === 'expired') toast.info($t('impersonation.expired'), 8000)
+    else if (ended === 'manual') toast.success($t('impersonation.ended'))
     // Small delay ensures access token is fully set in memory after restoreSession()
     // before firing API requests (prevents spurious 401 on first request)
     await refreshCounts()
@@ -238,14 +249,26 @@
     '/reports': 'pages.reports',
     '/integrations': 'pages.integrations',
     '/audit-log': 'pages.audit_log',
+    '/support': 'pages.support',
   }
 
   function handleRouteLoaded(e) {
     const path = e.detail.location
     const key = pageTitleKeys[path]
-    const title = key ? $t(key) : (path.startsWith('/device/') ? $t('pages.device') : 'ModESP Cloud')
+    const title = key ? $t(key)
+      : path.startsWith('/device/') ? $t('pages.device')
+      : path.startsWith('/tenants/') ? $t('pages.tenant_card')
+      : 'ModESP Cloud'
     document.title = `${title} — ModESP Cloud`
   }
+
+  // ── Impersonation banner (plan epic 2.13) ──
+  let impNow = Date.now()
+  let impTicker = null
+  $: if ($impersonation && !impTicker) impTicker = setInterval(() => { impNow = Date.now() }, 30000)
+  $: if (!$impersonation && impTicker) { clearInterval(impTicker); impTicker = null }
+  $: impMinutesLeft = $impersonation ? Math.max(0, Math.round((new Date($impersonation.expires_at).getTime() - impNow) / 60000)) : 0
+  $: impUntil = $impersonation ? new Date($impersonation.expires_at).toLocaleTimeString($t('time.locale_code'), { hour: '2-digit', minute: '2-digit' }) : ''
 
   function conditionsFailed() {
     window.location.hash = '#/'
@@ -312,6 +335,18 @@
     <MobileHeader />
 
     <main class="main-content">
+      {#if $impersonation}
+        <!-- Support signed in as a user (plan epic 2.13): every page carries the banner, one click returns -->
+        <div class="impersonation-banner" role="status">
+          <Icon name="user-check" size={16} />
+          <span class="imp-text">
+            <strong>{$t('impersonation.banner', $impersonation.user.email, $impersonation.tenant?.name || '')}</strong>
+            <span class="imp-muted">· {$t('impersonation.until', impUntil, impMinutesLeft)}</span>
+            {#if $impersonation.reason}<span class="imp-muted imp-reason" title={$impersonation.reason}>· {$impersonation.reason}</span>{/if}
+          </span>
+          <button class="imp-return" on:click={() => endImpersonation('manual')}>{$t('impersonation.return')}</button>
+        </div>
+      {/if}
       {#if $isAdmin && $currentTenant?.status === 'past_due'}
         <!--
           Billing (plan epic 2.2): an overdue invoice; day 21 suspends the organisation.
@@ -381,6 +416,41 @@
   }
   .past-due-banner a { color: var(--accent-blue); font-weight: 600; text-decoration: none; white-space: nowrap; }
   .past-due-banner.closed { border-color: rgba(248, 81, 73, 0.5); background: rgba(248, 81, 73, 0.1); }
+
+  .impersonation-banner {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid #fdba74;
+    border-radius: var(--radius-md);
+    background: #7c2d12;
+    color: #fff7ed;
+    font-size: var(--text-sm);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  }
+  .imp-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+  .imp-muted { color: #fed7aa; }
+  .imp-reason { max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .imp-return {
+    flex-shrink: 0;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid #fdba74;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff7ed;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .imp-return:hover { background: rgba(255, 255, 255, 0.24); }
+  @media (max-width: 768px) {
+    .impersonation-banner { top: calc(var(--header-height) + var(--space-2)); }
+  }
 
   .app-layout {
     display: flex;

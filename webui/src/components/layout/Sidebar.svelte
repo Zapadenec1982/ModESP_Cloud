@@ -52,8 +52,14 @@
     // Billing (plan epic 2.2): the organisation's plan, usage, invoices; the superadmin ledger
     { path: '/billing',       icon: 'credit-card', label: $t('nav.billing'), admin: true },
     { path: '/admin/billing', icon: 'credit-card', label: $t('nav.billing_admin'), superadmin: true },
-    { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), superadmin: true },
+    // Audit log (plan epic 2.13): the organisation's own trail for its admin, every organisation's for a superadmin
+    { path: '/audit-log',     icon: 'shield',   label: $t('nav.audit_log'), admin: true },
   ]
+
+  // The Support form attaches the page the person came from (plan epic 2.13)
+  function rememberSupportOrigin() {
+    try { if (!$location.startsWith('/support')) sessionStorage.setItem('modesp_support_from', `#${$location}`) } catch { /* ignore */ }
+  }
 
   function isActive(itemPath, currentPath) {
     if (itemPath === '/') return currentPath === '/' || currentPath === ''
@@ -160,6 +166,12 @@
   <!-- Footer -->
   <div class="sidebar-footer">
     <ConnectionStatus compact={$sidebarCollapsed} />
+    <!-- Support (plan epic 2.13): the form and the person's requests -->
+    <a class="status-link" class:compact={$sidebarCollapsed} class:active={$location.startsWith('/support')} href="#/support" title={$t('nav.support')}
+       on:click={rememberSupportOrigin}>
+      <Icon name="help-circle" size={14} />
+      {#if !$sidebarCollapsed}<span class="truncate">{$t('nav.support')}</span>{/if}
+    </a>
     {#if STATUS_PAGE_URL}
       <a class="status-link" class:compact={$sidebarCollapsed} href={STATUS_PAGE_URL}
          target="_blank" rel="noopener" title={$t('nav.status_page')}>
@@ -390,6 +402,7 @@
     transition: all var(--transition-fast);
   }
   .status-link:hover { color: var(--text-primary); background: var(--bg-hover); }
+  .status-link.active { color: var(--accent-blue); }
   .status-link.compact { justify-content: center; padding: var(--space-1); }
 
   .sidebar-footer {

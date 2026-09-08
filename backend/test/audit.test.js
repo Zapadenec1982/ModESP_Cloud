@@ -67,10 +67,22 @@ describe('Audit Log', () => {
     expect(res.body.meta.total).toBeGreaterThanOrEqual(1);
   });
 
-  it('admin cannot access audit log (403)', async () => {
+  it('admin reads the audit log of their own organisation only (plan epic 2.13)', async () => {
     const res = await request(app)
       .get('/api/audit-log')
       .set(authHeader(admin, tenant.id));
+
+    expect(res.status).toBe(200);
+    expect(res.body.meta.scope).toBe('tenant');
+    expect(res.body.meta.total).toBeGreaterThanOrEqual(1);
+    for (const entry of res.body.data) expect(entry.tenant_id).toBe(tenant.id);
+  });
+
+  it('technician and viewer cannot access the audit log (403)', async () => {
+    const tech = await createUser(tenant.id, { role: 'technician', email: 'tech@audit.test' });
+    const res = await request(app)
+      .get('/api/audit-log')
+      .set(authHeader(tech, tenant.id));
 
     expect(res.status).toBe(403);
   });

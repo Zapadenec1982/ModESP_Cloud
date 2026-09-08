@@ -775,6 +775,42 @@ async function sendPilotRequest({ to, request }) {
   return true;
 }
 
+// ── Support request (plan epic 2.13) ──────────────────────
+
+const SUPPORT_CATEGORIES = { question: 'Питання', problem: 'Проблема', billing: 'Оплата', feature: 'Пропозиція', other: 'Інше' };
+
+/** A request from the Support form, to the operator's inbox; Reply-To is the person who wrote. */
+async function sendSupportRequest({ to, request, tenant }) {
+  if (!resend || !to) return false;
+  const r = request || {};
+  const t = tenant || {};
+  const ctx = r.context || {};
+  const rows =
+    infoRow('Організація', `${escHtml(t.name || '')} <span style="color:#94a3b8">(${escHtml(t.slug || '')}, ${escHtml(t.plan || '')}, ${escHtml(t.status || '')})</span>`) +
+    infoRow('Користувач', `${escHtml(r.user_email || '')} <span style="color:#94a3b8">(${escHtml(r.user_role || '')})</span>`) +
+    infoRow('Категорія', escHtml(SUPPORT_CATEGORIES[r.category] || r.category || '')) +
+    (ctx.impersonated_by ? infoRow('Подано підтримкою від імені користувача', escHtml(ctx.impersonated_by)) : '') +
+    (ctx.page ? infoRow('Сторінка', escHtml(ctx.page)) : '') +
+    (ctx.device_id ? infoRow('Контролер', escHtml(ctx.device_id)) : '') +
+    (ctx.user_agent ? infoRow('Браузер', escHtml(ctx.user_agent)) : '') +
+    (ctx.app_version ? infoRow('Версія', escHtml(ctx.app_version)) : '');
+  const cardLink = spaLink(`tenants/${r.tenant_id || t.id}`);
+  const html = wrapHtml(`
+    <tr><td style="padding:24px 32px 8px;">
+      <h2 style="margin:0 0 12px;color:#f1f5f9;font-size:18px;">Звернення в підтримку: ${escHtml(r.subject || '')}</h2>
+      ${rows}
+      <p style="white-space:pre-wrap;color:#e2e8f0;font-size:15px;line-height:1.5;margin:16px 0;">${escHtml(r.message || '')}</p>
+      <p style="margin:16px 0 0;"><a href="${cardLink}" style="color:#3b82f6;">Картка організації</a></p>
+      <p style="color:#64748b;font-size:12px;margin:12px 0 0;">id ${escHtml(String(r.id || ''))}</p>
+    </td></tr>`);
+  const { error } = await dispatch({
+    from: fromAddress, to, replyTo: r.user_email || undefined,
+    subject: `[Підтримка] ${SUPPORT_CATEGORIES[r.category] || 'Звернення'}: ${r.subject || ''} — ${t.name || ''}`, html,
+  });
+  if (error) throw new Error(`Resend API error: ${error.message || JSON.stringify(error)}`);
+  return true;
+}
+
 // ── Self-registration (plan epic 2.1) ─────────────────────
 
 /** Address confirmation after self-registration. Resolves false when not configured. */
@@ -1108,7 +1144,7 @@ async function sendPlanRequest({ to, request }) {
 }
 
 module.exports = {
-  init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest,
+  init, shutdown, isConfigured, sendInvitation, sendPasswordReset, sendPilotRequest, sendSupportRequest,
   sendInvoice, sendDunning, sendPlanRequest, sendScheduledReport,
   sendEmailVerification, sendRegistrationApproved, sendTrialEnded, sendRegistrationNotice,
   // scripts/check-locales.js and test/notification-templates.test.js

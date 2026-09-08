@@ -29,14 +29,17 @@ function comparePassword(plain, hash) {
  * Sign a short-lived access token. `sid` is the session (refresh-token
  * family) the token belongs to (plan epic 2.9).
  * @param {{ id: string, email: string, role: string, tenantId: string, sid?: string }} user
+ * @param {{ expiresIn?: number, impersonator?: { id: string, email: string } }} [opts]
  * @returns {string}
  */
-function generateAccessToken(user) {
+function generateAccessToken(user, opts = {}) {
   const secret    = process.env.JWT_SECRET;
-  const expiresIn = parseInt(process.env.JWT_EXPIRES_IN, 10) || 900;
+  const expiresIn = opts.expiresIn || parseInt(process.env.JWT_EXPIRES_IN, 10) || 900;
 
   const claims = { sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId };
   if (user.sid) claims.sid = user.sid;
+  // Support impersonation (plan epic 2.13): who is really behind this token
+  if (opts.impersonator) claims.imp = { id: opts.impersonator.id, email: opts.impersonator.email };
   return jwt.sign(claims, secret, { expiresIn });
 }
 

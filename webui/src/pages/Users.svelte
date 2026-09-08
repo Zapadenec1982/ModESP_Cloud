@@ -10,8 +10,17 @@
   import StatusDot from '../components/ui/StatusDot.svelte'
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
+  import ImpersonateModal from '../components/ImpersonateModal.svelte'
   import { toast } from '../lib/toast.js'
   import { t, locale } from '../lib/i18n.js'
+
+  // Support impersonation (plan epic 2.13): superadmin only
+  let showImpersonate = false
+  let impUser = null
+  function openImpersonate(user) {
+    impUser = { id: user.id, email: user.email, role: user.role }
+    showImpersonate = true
+  }
 
   let users = []
   let loading = true
@@ -705,6 +714,12 @@
                     <Icon name="map-pin" size={13} />
                   </Button>
                 {/if}
+                <!-- Sign in as the user (superadmin only, plan epic 2.13) -->
+                {#if $isSuperAdmin && user.role !== 'superadmin' && user.active}
+                  <Button variant="secondary" size="sm" on:click={() => openImpersonate(user)} aria-label="{$t('impersonation.title')} {user.email}" title={$t('impersonation.title')}>
+                    <Icon name="user-check" size={13} />
+                  </Button>
+                {/if}
                 <!-- Manage tenants (superadmin only, not for superadmin users) -->
                 {#if $isSuperAdmin && user.role !== 'superadmin'}
                   <Button variant="secondary" size="sm" on:click={() => openTenantModal(user)} aria-label="{$t('users.manage_tenants')} {user.email}">
@@ -1198,6 +1213,8 @@
     </div>
   </div>
 {/if}
+
+<ImpersonateModal bind:show={showImpersonate} user={impUser} />
 
 <style>
   .users-page {

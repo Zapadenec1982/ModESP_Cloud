@@ -16,6 +16,7 @@ const ALLOWED = [
   /^\/api\/profile(\/|$)/,
   /^\/api\/ws-ticket$/,
   /^\/api\/tenants\/[^/]+\/exports?(\/|$)/,
+  /^\/api\/support(\/|$)/,   // a closed organisation is the one most likely to need support (plan epic 2.13)
 ];
 
 function readOnlyWhenClosed() {

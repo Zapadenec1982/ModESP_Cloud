@@ -73,6 +73,13 @@ export const canWrite = derived(
 export const currentTenant = writable(null);
 
 /**
+ * Support impersonation (plan epic 2.13): set while a superadmin is signed in
+ * as a user — { user, tenant, impersonator, expires_at, reason }. The banner
+ * in App.svelte reads it; lib/api.js owns the token behind it.
+ */
+export const impersonation = writable(null);
+
+/**
  * Derived: does the current organisation run clients (plan feature `partner`,
  * plan epic 2.5)? The partner page and its nav item show only then, and only
  * to an admin of the partner organisation.
