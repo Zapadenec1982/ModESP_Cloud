@@ -31,8 +31,9 @@ function filterDeviceAccess() {
       return next();
     }
 
-    // Admin and superadmin see everything
-    if (req.user.role === 'admin' || req.user.role === 'superadmin') {
+    // Admin and superadmin see everything. So does an API key: it stands for
+    // the organisation (created by an admin), not for one person's grants.
+    if (req.user.role === 'admin' || req.user.role === 'superadmin' || req.user.apiKey) {
       req.deviceFilter = null;
       req.deviceMqttIds = null;
       return next();
@@ -90,8 +91,8 @@ function checkDeviceAccess() {
       return next();
     }
 
-    // Admin and superadmin bypass
-    if (req.user.role === 'admin' || req.user.role === 'superadmin') {
+    // Admin, superadmin and organisation-wide API keys bypass
+    if (req.user.role === 'admin' || req.user.role === 'superadmin' || req.user.apiKey) {
       return next();
     }
 

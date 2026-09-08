@@ -2736,6 +2736,97 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 
 ---
 
+## Інтеграції: API-ключі та вебхуки (plan epic 2.6)
+
+Адміністратор організації на плані з функцією `api` (Про, Мережа, Партнер; `402 plan_feature` інакше — наявні
+записи лишаються видимими). Сторінка «Інтеграції» (`#/integrations`).
+
+### API-ключі
+
+Ключ `modesp_<43 символи base64url>` передається в тому самому заголовку, що й токен людини:
+`Authorization: Bearer modesp_…`. У базі зберігається лише SHA-256 (`api_keys.key_hash`) і префікс для
+впізнавання; повний ключ є лише у відповіді на створення. Ключ представляє організацію цілком: бачить усі її
+пристрої (без грантів `user_devices`/`user_sites`), а роль випливає зі `scope` — `read` → переглядач,
+`write` → технік, `admin` → адміністратор. Заборонена поверхня для будь-якого ключа: `/auth/*` (з
+автентифікацією), `/profile`, `/api-keys`, `/users`, `/tenants`, `/billing`, `/audit-log`, `/pilot-requests`,
+`/partner`, `/onboarding`, `/ws-ticket` — `403 api_key_scope`. Відкликаний або прострочений ключ, а також
+ключ організації без функції `api` — `401 invalid_key` / `402 plan_feature`; у закритій організації ключ
+читає, але не пише (`423 organisation_closed`), у призупиненій — `401`. `last_used_at` оновлюється не частіше
+ніж раз на хвилину. У `audit_log` дії ключа підписані `user_email = apikey:<назва>`, `user_id = NULL`.
+
+#### `GET /api-keys`
+Ключі організації: `id, name, prefix, scope, created_by, created_at, last_used_at, expires_at, revoked_at,
+active`. Секрету у відповіді немає ніколи.
+
+#### `POST /api-keys`
+```json
+{ "name": "CMMS", "scope": "write", "expires_in_days": 90 }
+```
+`scope` — `read` (типово) | `write` | `admin`; `expires_in_days` 1–3650, без нього ключ безстроковий.
+`201` з рядком ключа плюс `key` — повний ключ, показаний один раз. До 20 активних ключів (`409 limit_reached`).
+Аудит `api_key.create`.
+
+#### `DELETE /api-keys/:id`
+Відкликання (`revoked_at`); системи, що ним користувалися, отримують `401 invalid_key` негайно. Аудит
+`api_key.revoke`.
+
+### Вебхуки
+
+Вебхук — HTTP POST на адресу клієнта на кожну підписану подію. Події: `alarm.raised`, `alarm.cleared`,
+`alarm.acknowledged`, `device.offline`, `device.online`, `work_order.created|updated|assigned|started|closed|cancelled`,
+`hint.opened`; `*` — усі. Тіло:
+
+```json
+{ "id": "7781e93b-…", "event": "alarm.acknowledged", "created_at": "2026-09-08T20:53:29.4Z",
+  "tenant_id": "cfe3f6f4-…",
+  "data": { "device_id": "E00118", "device_uuid": "af9b98f9-…", "device_name": "Бонета морозильна",
+            "site_id": "4f897f69-…", "site_name": "Морозко №212",
+            "alarm_id": 173, "alarm_code": "high_temp_alarm", "acknowledged_by": "apikey:CMMS", "note": "Заявка #4471" } }
+```
+
+Заголовки: `X-ModESP-Event`, `X-ModESP-Delivery` (id доставки — той самий при повторі), `X-ModESP-Timestamp`
+(unix-секунди), `X-ModESP-Signature: v1=<hex HMAC-SHA256(secret, "<timestamp>.<body>")>`,
+`User-Agent: ModESP-Cloud-Webhooks/1`. Одержувач перевіряє підпис і відкидає мітки, старіші за 5 хвилин.
+Відповідь 2xx протягом 10 с — успіх; редиректи не виконуються. Невдача → повтор через 1 хв, 5 хв, 30 хв,
+2 год, 12 год, після п'ятої спроби доставка `dead`. Десять невдач підряд вимикають вебхук
+(`enabled = false`, `disabled_reason = failures`); повторне увімкнення скидає лічильник. Адреса — лише
+публічний http(s) без облікових даних: приватні, loopback та link-local адреси (і за DNS) відхиляються
+`400 invalid_url` (`WEBHOOK_ALLOW_PRIVATE=true` лише для тестів). Черга обробляється одразу після події і
+таймером `WEBHOOK_INTERVAL_SEC` (30; 0 вимикає, для тестів).
+
+#### `GET /webhooks`
+`data`: `id, name, url, events, enabled, failures, disabled_at, disabled_reason, last_delivery_at, last_status,
+created_by, created_at, updated_at, pending, dead` (лічильники черги); `meta.events` — перелік подій.
+
+#### `POST /webhooks`
+```json
+{ "name": "CMMS", "url": "https://cmms.example.com/modesp", "events": ["alarm.raised", "alarm.cleared"], "enabled": true }
+```
+`secret` (16–128 символів) можна задати, інакше генерується; у базі він зашифрований, у відповіді `201` —
+один раз. До 10 вебхуків (`409 limit_reached`). Аудит `webhook.create`.
+
+#### `PATCH /webhooks/:id`
+Будь-яке з `name, url, events, enabled`. Вимкнення вручну ставить `disabled_reason = manual`; увімкнення
+скидає `failures`, `disabled_at`, `disabled_reason`. Аудит `webhook.update`.
+
+#### `DELETE /webhooks/:id`
+Разом із журналом доставок. Аудит `webhook.delete`.
+
+#### `POST /webhooks/:id/test`
+Надсилає подію `ping` негайно: `{ "ok": true, "status_code": 200, "error": null, "duration_ms": 3 }`.
+
+#### `POST /webhooks/:id/rotate-secret`
+Новий секрет у відповіді один раз; старий перестає діяти негайно. Аудит `webhook.rotate_secret`.
+
+#### `GET /webhooks/:id/deliveries?limit=50&status=`
+Останні доставки: `id, event, status (pending|ok|failed|dead), attempts, next_attempt_at, status_code, error,
+duration_ms, created_at, delivered_at, payload`.
+
+#### `POST /webhooks/:id/deliveries/:did/redeliver`
+`202` — копія доставки в черзі (`payload.redelivery_of` — id оригіналу), працює для `ok`, `failed` і `dead`.
+
+---
+
 ## WebSocket
 
 **URL:** `wss://cloud.example.com/ws`
@@ -2809,3 +2900,4 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 - 2026-09-08 — Сесії і другий фактор (епік 2.9): refresh-токен у httpOnly-cookie `modesp_rt` + `csrf_token`/`X-CSRF-Token` для браузера (тіло `refresh_token` для API-клієнтів лишається), одноразові refresh-токени з `401 token_reused`, `sid` у access-токені; `POST /auth/mfa/verify`, `GET /auth/mfa`, `POST /auth/mfa/setup | enable | disable | backup-codes`; `GET/DELETE /auth/sessions`, `DELETE /auth/sessions/:id`; `DELETE /users/:id/sessions`, `DELETE /users/:id/mfa`.
 - 2026-09-08 — Планові звіти (епік 2.7): `GET/POST /reports/schedules`, `PATCH/DELETE /reports/schedules/:id`, `POST /reports/schedules/:id/run`; архів `GET /reports` і `GET /reports/:code/download`; типи `haccp | alarms | energy`, щотижня/щомісяця, лист з PDF у вкладенні.
 - 2026-09-08 — Життєвий цикл організації та експорт даних (епік 2.10): `closed` = вхід лише на читання (`423 organisation_closed` на зміни), `read_only_until` у `tenant` відповіді входу, purge через `CLOSED_RETENTION_DAYS`; `POST /tenants/:id/export`, `GET /tenants/:id/exports`, `GET /tenants/:id/exports/:exportId/download`; `DELETE /tenants/bulk` через спільну процедуру; `DELETE /users/:id` псевдонімізує аудит-лог.
+- 2026-09-08 — Інтеграції (epic 2.6): API-ключі `GET/POST/DELETE /api-keys` (Bearer `modesp_…`, scope read|write|admin, заборонена поверхня `403 api_key_scope`), вебхуки `GET/POST/PATCH/DELETE /webhooks`, `POST /webhooks/:id/test|rotate-secret`, `GET /webhooks/:id/deliveries`, `POST /webhooks/:id/deliveries/:did/redeliver`; підпис `X-ModESP-Signature v1=HMAC-SHA256`.

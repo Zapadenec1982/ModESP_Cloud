@@ -67,6 +67,8 @@
     '/security':        wrap({ asyncComponent: () => import('./pages/Security.svelte') }),
     // Reports (plan epic 2.7): any role sees the archive of its sites; the schedules inside are admin-only
     '/reports':         wrap({ asyncComponent: () => import('./pages/Reports.svelte') }),
+    // Integrations (plan epic 2.6): API keys and webhooks of the organisation
+    '/integrations':    wrap({ asyncComponent: () => import('./pages/Integrations.svelte'), conditions: [isAdminCheck] }),
     '/audit-log':       wrap({ component: AuditLog, conditions: [isSuperAdminCheck] }),
   }
 
@@ -234,6 +236,7 @@
     '/settings': 'pages.settings',
     '/security': 'pages.security',
     '/reports': 'pages.reports',
+    '/integrations': 'pages.integrations',
     '/audit-log': 'pages.audit_log',
   }
 

@@ -175,5 +175,7 @@ async function verify(userId, code) {
 module.exports = {
   ISSUER, BACKUP_CODES, STEP_SECONDS,
   status, setup, enable, disable, regenerateBackupCodes, verify,
+  // the same at-rest encryption serves webhook secrets (plan epic 2.6)
+  encryptSecret: encrypt, decryptSecret: decrypt,
   __test: { encrypt, decrypt, newBackupCodes, currentStep, authenticator, setEpoch: applyOptions },
 };

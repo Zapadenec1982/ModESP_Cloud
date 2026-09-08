@@ -61,6 +61,9 @@ async function purgeTenant(client, id, { dropDevices = false, now = new Date() }
   await removeExportFiles(client, id);
   await wipe('tenant_exports');
   await wipe('invitations');
+  await wipe('webhook_deliveries');
+  await wipe('webhooks');
+  await wipe('api_keys');
   await wipe('user_devices',
     `DELETE FROM user_devices WHERE user_id IN (SELECT id FROM users WHERE tenant_id = $1)
                                  OR device_id IN (SELECT id FROM devices WHERE tenant_id = $1)`);

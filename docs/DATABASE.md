@@ -996,6 +996,52 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 
 ---
 
+## API-ключі та вебхуки (migration 042)
+
+```sql
+CREATE TABLE api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(80) NOT NULL,
+  prefix VARCHAR(16) NOT NULL,            -- modesp_ + 8 символів: щоб упізнати ключ у списку
+  key_hash CHAR(64) NOT NULL UNIQUE,      -- SHA-256 повного ключа; сам ключ ніде не зберігається
+  scope VARCHAR(8) NOT NULL DEFAULT 'read' CHECK (scope IN ('read','write','admin')),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), last_used_at TIMESTAMPTZ, expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE webhooks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(80) NOT NULL, url TEXT NOT NULL,
+  secret TEXT NOT NULL,                   -- зашифровано тим самим ключем, що й секрети MFA (v1:…)
+  events TEXT[] NOT NULL,                 -- перелік подій або '{*}'
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  failures INT NOT NULL DEFAULT 0,        -- невдачі підряд; 10 → enabled=false, disabled_reason='failures'
+  disabled_at TIMESTAMPTZ, disabled_reason VARCHAR(16), last_delivery_at TIMESTAMPTZ, last_status INT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE webhook_deliveries (
+  id UUID PRIMARY KEY,                    -- генерує застосунок: той самий X-ModESP-Delivery при кожній спробі
+  webhook_id UUID NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  event VARCHAR(40) NOT NULL, payload JSONB NOT NULL,
+  status VARCHAR(8) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','ok','failed','dead')),
+  attempts INT NOT NULL DEFAULT 0, next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status_code INT, error TEXT, duration_ms INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), delivered_at TIMESTAMPTZ
+);
+CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries (next_attempt_at) WHERE status = 'pending';
+```
+
+> Ключ і секрет не відновлюються: `api_keys` тримає лише хеш, `webhooks.secret` — шифротекст, який
+> розшифровує лише сервіс доставки для підпису. Експорт організації (`tenant_exports`) ховає обидва
+> (`HIDDEN`: `key_hash`, `secret`), purge (`tenant-delete.js`) видаляє всі три таблиці.
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Початкова схема.
@@ -1021,3 +1067,5 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 - 2026-09-08 — Міграція 041: життєвий цикл організації (`tenants.closed_at/purged_at`, тригер
   `trg_tenants_track_closed`), `tenant_exports`, псевдонімізація `audit_log` через
   `audit_log_scrub_user()` / `audit_log_detach_tenant()` без вимкнення тригера.
+- 2026-09-08 — Міграція 042: інтеграції (`api_keys` з хешем ключа, `webhooks` із зашифрованим
+  секретом, `webhook_deliveries` як черга доставки з ретраями).

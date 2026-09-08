@@ -1794,3 +1794,56 @@ export function getTenantExports(id) {
 export function downloadTenantExport(id, exportId, fileName) {
   return downloadFile(`/tenants/${id}/exports/${exportId}/download`, fileName || 'modesp-export.zip');
 }
+
+// ── Integrations: API keys and webhooks (plan epic 2.6) ──
+
+/** GET /api/api-keys — the organisation's keys (prefix only, never the secret). */
+export function getApiKeys() {
+  return request('/api-keys');
+}
+
+/** POST /api/api-keys — { name, scope, expires_in_days? }; the full key is in the answer once. */
+export function createApiKey(body) {
+  return request('/api-keys', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function revokeApiKey(id) {
+  return request(`/api-keys/${id}`, { method: 'DELETE' });
+}
+
+/** GET /api/webhooks — { data: [...], meta: { events } }. */
+export function getWebhooks() {
+  return requestFull('/webhooks');
+}
+
+/** POST /api/webhooks — { name, url, events, enabled? }; the signing secret is in the answer once. */
+export function createWebhook(body) {
+  return request('/webhooks', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateWebhook(id, body) {
+  return request(`/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteWebhook(id) {
+  return request(`/webhooks/${id}`, { method: 'DELETE' });
+}
+
+/** POST /api/webhooks/:id/test — send a ping now; { ok, status_code, error, duration_ms }. */
+export function testWebhook(id) {
+  return request(`/webhooks/${id}/test`, { method: 'POST' });
+}
+
+/** POST /api/webhooks/:id/rotate-secret — a new signing secret, shown once. */
+export function rotateWebhookSecret(id) {
+  return request(`/webhooks/${id}/rotate-secret`, { method: 'POST' });
+}
+
+export function getWebhookDeliveries(id, params = {}) {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null)).toString();
+  return request(`/webhooks/${id}/deliveries${qs ? '?' + qs : ''}`);
+}
+
+export function redeliverWebhook(id, deliveryId) {
+  return request(`/webhooks/${id}/deliveries/${deliveryId}/redeliver`, { method: 'POST' });
+}

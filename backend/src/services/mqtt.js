@@ -467,7 +467,7 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
 
   // Emit for WebSocket broadcast
   emitter.emit('device_status', {
-    tenantSlug, deviceId, online,
+    tenantSlug, tenantId: tenantInfo.id, deviceId, online,
     lastSeen: new Date().toISOString(),
   });
 
@@ -1474,7 +1474,7 @@ async function offlineDetector() {
     state._offlineAlarmed = false;
 
     emitter.emit('device_status', {
-      tenantSlug: state._tenantSlug, deviceId, online: false,
+      tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId, online: false,
       lastSeen: new Date(state._lastSeen).toISOString(),
     });
   }

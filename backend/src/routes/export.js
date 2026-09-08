@@ -382,7 +382,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
     }
     const site = siteRows[0];
     // Technicians / viewers need a site grant (admins see every site of their organisation)
-    if (req.user && req.user.role !== 'admin' && !isSuperadmin) {
+    if (req.user && req.user.role !== 'admin' && !isSuperadmin && !req.user.apiKey) {
       const { rows: grant } = await db.query(
         'SELECT 1 FROM user_sites WHERE site_id = $1 AND tenant_id = $2 AND user_id = $3', [site.id, site.tenant_id, req.user.id]);
       if (grant.length === 0) {
