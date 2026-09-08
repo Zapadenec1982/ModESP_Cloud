@@ -115,6 +115,13 @@ const L = {
     hint_count:     'Скільки разів',
     hint_reading:   '{0} разів за {1} дн. (межа {2})',
     hint_advice:    'Що зробити',
+    rollout_completed: 'Розгортання прошивки завершено',
+    rollout_paused: 'Розгортання прошивки зупинено',
+    rollout_firmware: 'Прошивка',
+    rollout_result: 'Результат',
+    rollout_result_fmt: '{0} успішно, {1} невдало з {2}',
+    rollout_paused_hint: '{0}% невдач при межі {1}%. Перевірте контролери зі збоєм і продовжте розгортання на сторінці «Прошивка».',
+    rollout_open: 'Відкрити сторінку «Прошивка»',
   },
   en: {
     test_subject:   'ModESP Cloud — Test notification',
@@ -144,6 +151,13 @@ const L = {
     hint_count:     'How often',
     hint_reading:   '{0} times in {1} days (limit {2})',
     hint_advice:    'What to do',
+    rollout_completed: 'Firmware rollout completed',
+    rollout_paused: 'Firmware rollout paused',
+    rollout_firmware: 'Firmware',
+    rollout_result: 'Result',
+    rollout_result_fmt: '{0} succeeded, {1} failed of {2}',
+    rollout_paused_hint: '{0}% failures against a limit of {1}%. Check the failed controllers, then resume the rollout on the Firmware page.',
+    rollout_open: 'Open the Firmware page',
   },
   pl: {
     test_subject:   'ModESP Cloud — Powiadomienie testowe',
@@ -173,6 +187,13 @@ const L = {
     hint_count:     'Ile razy',
     hint_reading:   '{0} razy w {1} dni (limit {2})',
     hint_advice:    'Co zrobić',
+    rollout_completed: 'Wdrożenie firmware zakończone',
+    rollout_paused: 'Wdrożenie firmware wstrzymane',
+    rollout_firmware: 'Firmware',
+    rollout_result: 'Wynik',
+    rollout_result_fmt: '{0} udanych, {1} nieudanych z {2}',
+    rollout_paused_hint: '{0}% niepowodzeń przy limicie {1}%. Sprawdź sterowniki z błędem i wznów wdrożenie na stronie „Firmware”.',
+    rollout_open: 'Otwórz stronę „Firmware”',
   },
   de: {
     test_subject:   'ModESP Cloud — Testbenachrichtigung',
@@ -202,6 +223,13 @@ const L = {
     hint_count:     'Wie oft',
     hint_reading:   '{0}-mal in {1} Tagen (Grenze {2})',
     hint_advice:    'Was zu tun ist',
+    rollout_completed: 'Firmware-Rollout abgeschlossen',
+    rollout_paused: 'Firmware-Rollout angehalten',
+    rollout_firmware: 'Firmware',
+    rollout_result: 'Ergebnis',
+    rollout_result_fmt: '{0} erfolgreich, {1} fehlgeschlagen von {2}',
+    rollout_paused_hint: '{0}% Fehler bei einer Grenze von {1}%. Prüfen Sie die fehlgeschlagenen Regler und setzen Sie den Rollout auf der Seite „Firmware“ fort.',
+    rollout_open: 'Seite „Firmware“ öffnen',
   },
 };
 
@@ -312,6 +340,7 @@ function buildEmail(payload) {
   if (payload.isTest) return buildTestEmail(payload, lang);
   if (payload.type === 'work_order') return buildWorkOrderEmail(payload, lang);
   if (payload.type === 'hint') return buildHintEmail(payload, lang);
+  if (payload.type === 'rollout') return buildRolloutEmail(payload, lang);
   if (payload.type === 'device_offline') return buildOfflineEmail(payload, lang);
   if (payload.active === false) return buildAlarmClearedEmail(payload, lang);
   return buildAlarmRaisedEmail(payload, lang);
@@ -466,6 +495,30 @@ function buildHintEmail(payload, lang) {
       ${infoRow(T.hint_advice, escHtml(advice[payload.ruleKey] || ''))}
       ${infoRow(T.time, formatTime(payload.timestamp, payload))}
       ${openDeviceButton(payload, T)}
+    </td></tr>
+  `, lang);
+  return { subject, html };
+}
+
+/** A firmware rollout completed or paused itself (plan epic 2.8). */
+function buildRolloutEmail(payload, lang) {
+  const T = L[lang];
+  const paused = payload.event === 'paused';
+  const title = paused ? T.rollout_paused : T.rollout_completed;
+  const colour = paused ? '#f59e0b' : '#22c55e';
+  const result = fmt(T.rollout_result_fmt, payload.succeeded ?? 0, payload.failed ?? 0, payload.total ?? 0);
+  const subject = `${paused ? '⚠️' : '✅'} ${title}: ${payload.firmwareVersion || '—'} — ${result}`;
+  const html = wrapHtml(`
+    <tr><td style="padding:0;"><div style="background:${colour};height:4px;border-radius:8px 8px 0 0;"></div></td></tr>
+    <tr><td style="padding:24px 32px;">
+      <h2 style="margin:0 0 12px;color:${colour};font-size:20px;">${paused ? '&#x26A0;&#xFE0F;' : '&#x2705;'} ${escHtml(title)}</h2>
+      ${infoRow(T.rollout_firmware, escHtml(payload.firmwareVersion || '—'))}
+      ${infoRow(T.rollout_result, escHtml(result))}
+      ${paused ? `<p style="margin:12px 0 0;color:#374151;font-size:14px;line-height:1.5;">${escHtml(fmt(T.rollout_paused_hint, payload.failPct ?? 0, payload.threshold ?? 0))}</p>` : ''}
+      ${infoRow(T.time, formatTime(payload.timestamp, payload))}
+      <div style="margin-top:20px;">
+        <a href="${appUrl}/app/#/firmware" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.rollout_open}</a>
+      </div>
     </td></tr>
   `, lang);
   return { subject, html };

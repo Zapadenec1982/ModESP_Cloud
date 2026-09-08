@@ -34,6 +34,7 @@ const EVENTS = [
   'device.offline', 'device.online',
   'work_order.created', 'work_order.updated', 'work_order.assigned', 'work_order.started', 'work_order.closed', 'work_order.cancelled',
   'hint.opened',
+  'ota.rollout_completed', 'ota.rollout_paused',
 ];
 const BACKOFF_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000];   // attempt 1..5 → next try; then dead
 const MAX_ATTEMPTS = BACKOFF_MS.length;
@@ -44,6 +45,7 @@ const BATCH = 50;
 let logger  = null;
 let timer   = null;
 let running = false;
+let rerun = false;      // work arrived while a pass was running: run once more when it ends
 let attached = false;
 
 function log() { return logger || { info() {}, warn() {}, error() {}, debug() {} }; }
@@ -157,26 +159,37 @@ async function recordAttempt(delivery, hook, result, now) {
 
 /** Send every pending delivery whose time has come. Resolves the number attempted. */
 async function deliverDue({ now = new Date() } = {}) {
-  if (running) return 0;
+  // One pass at a time; a delivery queued while a pass runs is not lost — the
+  // pass repeats once it is through (the timer alone would delay it by a whole
+  // WEBHOOK_INTERVAL_SEC, or forever in tests that disable the timer).
+  if (running) { rerun = true; return 0; }
   running = true;
+  let total = 0;
+  let at = now;
   try {
-    const { rows } = await db.query(
-      `SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret, w.tenant_id, w.enabled
-         FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-        WHERE d.status = 'pending' AND d.next_attempt_at <= $1
-        ORDER BY d.next_attempt_at LIMIT ${BATCH}`, [now]);
-    for (const d of rows) {
-      const hook = { id: d.webhook_id, tenant_id: d.tenant_id, url: d.url, enabled: d.enabled };
-      if (!hook.enabled) {
-        await db.query(`UPDATE webhook_deliveries SET status = 'dead', error = 'webhook disabled' WHERE id = $1`, [d.id]);
-        continue;
+    do {
+      rerun = false;
+      const { rows } = await db.query(
+        `SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret, w.tenant_id, w.enabled
+           FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
+          WHERE d.status = 'pending' AND d.next_attempt_at <= $1
+          ORDER BY d.next_attempt_at LIMIT ${BATCH}`, [at]);
+      for (const d of rows) {
+        const hook = { id: d.webhook_id, tenant_id: d.tenant_id, url: d.url, enabled: d.enabled };
+        if (!hook.enabled) {
+          await db.query(`UPDATE webhook_deliveries SET status = 'dead', error = 'webhook disabled' WHERE id = $1`, [d.id]);
+          continue;
+        }
+        const result = await post(hook.url, decryptSecret(d.secret), { id: d.id, event: d.event, payload: d.payload });
+        await recordAttempt(d, hook, result, at);
       }
-      const result = await post(hook.url, decryptSecret(d.secret), { id: d.id, event: d.event, payload: d.payload });
-      await recordAttempt(d, hook, result, now);
-    }
-    return rows.length;
+      total += rows.length;
+      at = new Date();
+    } while (rerun);
+    return total;
   } finally {
     running = false;
+    rerun = false;
   }
 }
 
@@ -257,6 +270,16 @@ async function onHint(evt) {
   await enqueue(tenantId, 'hint.opened', data);
 }
 
+/** A firmware rollout completed or paused itself (plan epic 2.8). */
+async function onRollout(evt) {
+  if (!evt.tenantId || !['completed', 'paused'].includes(evt.event)) return;
+  await enqueue(evt.tenantId, `ota.rollout_${evt.event}`, {
+    rollout_id: evt.rolloutId, firmware_version: evt.firmwareVersion || null,
+    total: evt.total ?? 0, succeeded: evt.succeeded ?? 0, failed: evt.failed ?? 0,
+    fail_pct: evt.failPct ?? 0, fail_threshold_pct: evt.threshold ?? null, paused_reason: evt.pausedReason || null,
+  });
+}
+
 const guard = (fn) => (evt) => fn(evt).catch(err => log().error({ err, event: evt }, 'Webhook mapping failed'));
 
 // ── Lifecycle ─────────────────────────────────────────────
@@ -269,6 +292,7 @@ function attach() {
   mqttSvc.on('device_status', guard(onDeviceStatus));
   mqttSvc.on('work_order',    guard(onWorkOrder));
   mqttSvc.on('hint',          guard(onHint));
+  mqttSvc.on('rollout',       guard(onRollout));
 }
 
 function start(log_) {

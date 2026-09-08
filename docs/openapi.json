@@ -1841,6 +1841,8 @@
           "work_order.closed",
           "work_order.cancelled",
           "hint.opened",
+          "ota.rollout_completed",
+          "ota.rollout_paused",
           "*"
         ],
         "description": "Subscribable events; `*` means all of them"
@@ -11196,6 +11198,346 @@
                       "value": 0.93,
                       "threshold": 0.85,
                       "window_hours": 24
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "event",
+                  "created_at",
+                  "tenant_id",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivered"
+          }
+        }
+      }
+    },
+    "ota.rollout_completed": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "A firmware rollout finished",
+        "description": "Answer `2xx` within 10 s. Anything else is retried after 1 min, 5 min, 30 min, 2 h and 12 h, then the delivery is `dead`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The event name",
+              "example": "alarm.raised"
+            },
+            "required": true,
+            "name": "X-ModESP-Event",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Delivery id — deduplicate on it, retries repeat it",
+              "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+            },
+            "required": true,
+            "name": "X-ModESP-Delivery",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Unix seconds when this attempt was signed; reject stale ones (> 5 min)",
+              "example": "1788900809"
+            },
+            "required": true,
+            "name": "X-ModESP-Timestamp",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`v1=` + hex HMAC-SHA256 over `\"<timestamp>.<raw body>\"` with the webhook secret",
+              "example": "v1=3f1c…"
+            },
+            "required": true,
+            "name": "X-ModESP-Signature",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "ModESP-Cloud-Webhooks/1"
+            },
+            "required": true,
+            "name": "User-Agent",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Delivery id, also in `X-ModESP-Delivery`",
+                    "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                  },
+                  "event": {
+                    "type": "string",
+                    "enum": [
+                      "ota.rollout_completed"
+                    ]
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-09-08T20:53:29.427Z"
+                  },
+                  "tenant_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "rollout_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                      },
+                      "firmware_version": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "succeeded": {
+                        "type": "integer"
+                      },
+                      "failed": {
+                        "type": "integer"
+                      },
+                      "fail_pct": {
+                        "type": "integer"
+                      },
+                      "fail_threshold_pct": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "paused_reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "manual",
+                          "failures"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "rollout_id",
+                      "firmware_version",
+                      "total",
+                      "succeeded",
+                      "failed",
+                      "fail_pct",
+                      "fail_threshold_pct",
+                      "paused_reason"
+                    ],
+                    "example": {
+                      "rollout_id": "9c1a0d2e-3b4f-4a5b-8c6d-7e8f9a0b1c2d",
+                      "firmware_version": "1.4.2",
+                      "total": 40,
+                      "succeeded": 38,
+                      "failed": 2,
+                      "fail_pct": 5,
+                      "fail_threshold_pct": 50,
+                      "paused_reason": null
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "event",
+                  "created_at",
+                  "tenant_id",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivered"
+          }
+        }
+      }
+    },
+    "ota.rollout_paused": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "A firmware rollout paused itself after too many failures",
+        "description": "Answer `2xx` within 10 s. Anything else is retried after 1 min, 5 min, 30 min, 2 h and 12 h, then the delivery is `dead`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The event name",
+              "example": "alarm.raised"
+            },
+            "required": true,
+            "name": "X-ModESP-Event",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Delivery id — deduplicate on it, retries repeat it",
+              "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+            },
+            "required": true,
+            "name": "X-ModESP-Delivery",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Unix seconds when this attempt was signed; reject stale ones (> 5 min)",
+              "example": "1788900809"
+            },
+            "required": true,
+            "name": "X-ModESP-Timestamp",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`v1=` + hex HMAC-SHA256 over `\"<timestamp>.<raw body>\"` with the webhook secret",
+              "example": "v1=3f1c…"
+            },
+            "required": true,
+            "name": "X-ModESP-Signature",
+            "in": "header"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "ModESP-Cloud-Webhooks/1"
+            },
+            "required": true,
+            "name": "User-Agent",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Delivery id, also in `X-ModESP-Delivery`",
+                    "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                  },
+                  "event": {
+                    "type": "string",
+                    "enum": [
+                      "ota.rollout_paused"
+                    ]
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "example": "2026-09-08T20:53:29.427Z"
+                  },
+                  "tenant_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "rollout_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                      },
+                      "firmware_version": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "total": {
+                        "type": "integer"
+                      },
+                      "succeeded": {
+                        "type": "integer"
+                      },
+                      "failed": {
+                        "type": "integer"
+                      },
+                      "fail_pct": {
+                        "type": "integer"
+                      },
+                      "fail_threshold_pct": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "paused_reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "manual",
+                          "failures"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "rollout_id",
+                      "firmware_version",
+                      "total",
+                      "succeeded",
+                      "failed",
+                      "fail_pct",
+                      "fail_threshold_pct",
+                      "paused_reason"
+                    ],
+                    "example": {
+                      "rollout_id": "9c1a0d2e-3b4f-4a5b-8c6d-7e8f9a0b1c2d",
+                      "firmware_version": "1.4.2",
+                      "total": 40,
+                      "succeeded": 4,
+                      "failed": 6,
+                      "fail_pct": 60,
+                      "fail_threshold_pct": 50,
+                      "paused_reason": "failures"
                     }
                   }
                 },

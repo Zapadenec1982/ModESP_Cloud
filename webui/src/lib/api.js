@@ -1245,11 +1245,32 @@ export function deleteFirmware(id) {
 
 // ── OTA (Phase 6) ──────────────────────────────────────
 
-export function deployOta(firmwareId, deviceId) {
+/** POST /api/ota/deploy — `force` (admin) skips the soft pre-OTA checks (defrost, critical alarm, OTA window), never `offline`. */
+export function deployOta(firmwareId, deviceId, force = false) {
   return request('/ota/deploy', {
     method: 'POST',
-    body: JSON.stringify({ firmware_id: firmwareId, device_id: deviceId }),
+    body: JSON.stringify({ firmware_id: firmwareId, device_id: deviceId, force: !!force }),
   });
+}
+
+/** GET /api/ota/rollback?device_id= — what a rollback would install (plan epic 2.8). */
+export function getRollbackTarget(deviceId) {
+  return request(`/ota/rollback?device_id=${encodeURIComponent(deviceId)}`);
+}
+
+/** POST /api/ota/rollback — return the device to the version it ran before its last successful update. */
+export function rollbackOta(deviceId, force = false) {
+  return request('/ota/rollback', { method: 'POST', body: JSON.stringify({ device_id: deviceId, force: !!force }) });
+}
+
+/** GET /api/firmware/:id — one firmware; a superadmin also gets `visible_to` of a platform firmware. */
+export function getFirmware(id) {
+  return request(`/firmware/${id}`);
+}
+
+/** PATCH /api/firmware/:id — notes; visibility and tenant_ids of a platform firmware (superadmin). */
+export function updateFirmware(id, body) {
+  return request(`/firmware/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 export function createRollout({ firmwareId, deviceIds, batchSize, batchIntervalS, failThresholdPct }) {

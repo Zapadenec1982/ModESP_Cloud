@@ -1,10 +1,11 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import {
-    getFirmwares, uploadFirmware, deleteFirmware,
+    getFirmwares, uploadFirmware, deleteFirmware, updateFirmware,
     getDevices, deployOta, createRollout,
     getOtaJobs, getRollouts,
     pauseRollout, resumeRollout, cancelRollout,
+    getRollbackTarget, rollbackOta, getTenants, getFirmware,
   } from '../lib/api.js'
   import { formatBytes, formatDate } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
@@ -16,7 +17,7 @@
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
   import { toast } from '../lib/toast.js'
-  import { isAdmin } from '../lib/stores.js'
+  import { isAdmin, isSuperAdmin } from '../lib/stores.js'
 
   // ── State ──────────────────────────────────────────────
 
@@ -34,6 +35,23 @@
   let uploadNotes = ''
   let uploadBoardType = ''
   let uploading = false
+  // Platform firmware (plan epic 2.8): superadmin only
+  let uploadGlobal = false
+  let uploadVisibility = 'all'
+  let uploadTenantIds = new Set()
+  let tenants = []
+
+  // Publication of a platform firmware (superadmin)
+  let visFw = null
+  let visMode = 'all'
+  let visTenantIds = new Set()
+  let visSaving = false
+
+  // Rollback (plan epic 2.8)
+  let rbDeviceId = ''
+  let rbTarget = null
+  let rbLoading = false
+  let rbBusy = false
 
   // Deploy modal
   let showDeploy = false
@@ -43,8 +61,13 @@
   let selectedDevices = new Set()
   let deployBatchSize = 5
   let deployIntervalS = 300
+  let deployFailThreshold = 50
   let deploying = false
   let deployError = null
+  // Pre-OTA checks (plan epic 2.8): what stopped the deploy, and whether an admin may override it
+  let precheckReasons = []
+  let precheckForceable = false
+  let deployForce = false
 
   // OTA activity tab
   let activeTab = 'jobs'
@@ -60,13 +83,15 @@
     loading = true
     error = null
     try {
-      const [fw, dev, j, r] = await Promise.all([
+      const [fw, dev, j, r, tn] = await Promise.all([
         getFirmwares().catch(() => []),
         getDevices().catch(() => []),
         getOtaJobs().catch(() => []),
         getRollouts().catch(() => []),
+        $isSuperAdmin ? getTenants().catch(() => []) : Promise.resolve([]),
       ])
       firmwares = fw || []
+      tenants = tn || []
       devices = (dev || []).filter(d => d.status === 'active' || d.online)
       jobs = j || []
       rollouts = r || []
@@ -107,12 +132,18 @@
     if (!uploadFile || !uploadVersion.trim()) return
     uploading = true
     try {
-      await uploadFirmware(uploadFile, uploadVersion.trim(), uploadNotes.trim(), uploadBoardType || null)
+      const opts = $isSuperAdmin && uploadGlobal
+        ? { global: true, visibility: uploadVisibility, tenantIds: [...uploadTenantIds] }
+        : {}
+      await uploadFirmware(uploadFile, uploadVersion.trim(), uploadNotes.trim(), uploadBoardType || null, opts)
       toast.success($t('firmware.firmware_uploaded', uploadVersion.trim()))
       uploadFile = null
       uploadVersion = ''
       uploadNotes = ''
       uploadBoardType = ''
+      uploadGlobal = false
+      uploadVisibility = 'all'
+      uploadTenantIds = new Set()
       const fileInput = document.querySelector('.upload-section input[type="file"]')
       if (fileInput) fileInput.value = ''
       await loadAll()
@@ -147,8 +178,12 @@
     selectedDevices = new Set()
     deployBatchSize = 5
     deployIntervalS = 300
+    deployFailThreshold = 50
     deploying = false
     deployError = null
+    precheckReasons = []
+    precheckForceable = false
+    deployForce = false
     showDeploy = true
   }
 
@@ -177,7 +212,7 @@
     try {
       if (deployMode === 'single') {
         if (!deployDeviceId) { deployError = $t('firmware.select_device_error'); deploying = false; return }
-        await deployOta(deployFirmware.id, deployDeviceId)
+        await deployOta(deployFirmware.id, deployDeviceId, $isAdmin && deployForce)
         toast.success($t('firmware.ota_deployed', deployDeviceId))
       } else {
         const ids = [...selectedDevices]
@@ -187,6 +222,7 @@
           deviceIds: ids,
           batchSize: deployBatchSize,
           batchIntervalS: deployIntervalS,
+          failThresholdPct: deployFailThreshold,
         })
         toast.success($t('firmware.rollout_started', ids.length))
       }
@@ -194,7 +230,14 @@
       await refreshActivity()
       startAutoRefresh()
     } catch (e) {
-      deployError = e.message
+      if (e.body && e.body.error === 'precheck_failed') {
+        // The device is not ready: name the reasons; an admin may force the soft ones
+        precheckReasons = e.body.reasons || []
+        precheckForceable = !!e.body.forceable && $isAdmin
+        deployError = null
+      } else {
+        deployError = e.message
+      }
     } finally {
       deploying = false
     }
@@ -232,6 +275,85 @@
     if (status === 'paused') return 'warning'
     if (status === 'cancelled') return 'neutral'
     return 'neutral'
+  }
+
+  const reasonText = (r) => $t('firmware.precheck_' + r)
+  const canDelete = (fw) => (fw.global ? $isSuperAdmin : $isAdmin)
+  const sourceText = (fw) => (fw.global ? $t('firmware.source_platform') : $t('firmware.source_own'))
+
+  function toggleSet(set, id) {
+    const next = new Set(set)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  }
+
+  // ── Rollback ───────────────────────────────────────────
+
+  $: if (rbDeviceId) loadRollback(rbDeviceId)
+  async function loadRollback(id) {
+    rbLoading = true
+    rbTarget = null
+    try { rbTarget = await getRollbackTarget(id) }
+    catch (e) { toast.error(e.message) }
+    finally { rbLoading = false }
+  }
+
+  async function handleRollback() {
+    if (!rbTarget || !rbTarget.available) return
+    if (!confirm($t('firmware.rollback_confirm', rbDeviceId, rbTarget.previous_version))) return
+    rbBusy = true
+    try {
+      const res = await rollbackOta(rbDeviceId, false)
+      toast.success($t('firmware.rollback_started', rbDeviceId, res.firmware_version))
+      await refreshActivity()
+      startAutoRefresh()
+      await loadRollback(rbDeviceId)
+    } catch (e) {
+      if (e.body && e.body.error === 'precheck_failed' && e.body.forceable && $isAdmin) {
+        const reasons = (e.body.reasons || []).map(reasonText).join(', ')
+        if (confirm(`${$t('firmware.precheck_title')}: ${reasons}. ${$t('firmware.force_label')}?`)) {
+          try {
+            const res = await rollbackOta(rbDeviceId, true)
+            toast.success($t('firmware.rollback_started', rbDeviceId, res.firmware_version))
+            await refreshActivity()
+            startAutoRefresh()
+          } catch (e2) { toast.error(e2.message) }
+        }
+      } else {
+        toast.error(e.body && e.body.reasons ? `${$t('firmware.precheck_title')}: ${e.body.reasons.map(reasonText).join(', ')}` : e.message)
+      }
+    } finally {
+      rbBusy = false
+    }
+  }
+
+  // ── Publication of a platform firmware (superadmin) ─────
+
+  function openVisibility(fw) {
+    visFw = fw
+    visMode = fw.visibility || 'all'
+    visTenantIds = new Set((fw.visible_to || []).map(v => v.tenant_id))
+    // the list carries only the count; the detail names the organisations
+    if (!fw.visible_to) {
+      getFirmware(fw.id).then(full => {
+        if (visFw && visFw.id === fw.id && full && full.visible_to) visTenantIds = new Set(full.visible_to.map(v => v.tenant_id))
+      }).catch(() => {})
+    }
+  }
+
+  async function saveVisibility() {
+    if (!visFw) return
+    visSaving = true
+    try {
+      await updateFirmware(visFw.id, { visibility: visMode, tenant_ids: visMode === 'selected' ? [...visTenantIds] : [] })
+      toast.success($t('firmware.visibility_saved'))
+      visFw = null
+      await loadAll()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      visSaving = false
+    }
   }
 
   // Unique board types from devices (for upload form select)
@@ -306,6 +428,30 @@
             disabled={!uploadFile || !uploadVersion.trim()}>{$t('common.upload')}</Button>
         </div>
       </div>
+      {#if $isSuperAdmin}
+        <div class="platform-opts">
+          <label class="check"><input type="checkbox" bind:checked={uploadGlobal} disabled={uploading} /> {$t('firmware.global_upload')}</label>
+          {#if uploadGlobal}
+            <label class="check">
+              <span>{$t('firmware.visibility')}</span>
+              <select class="input" bind:value={uploadVisibility} disabled={uploading}>
+                <option value="all">{$t('firmware.visibility_all')}</option>
+                <option value="selected">{$t('firmware.visibility_selected')}</option>
+              </select>
+            </label>
+            {#if uploadVisibility === 'selected'}
+              <div class="tenant-picker">
+                <span class="field-label">{$t('firmware.visibility_pick')}</span>
+                <div class="checklist-inner">
+                  {#each tenants as tn (tn.id)}
+                    <label class="device-check"><input type="checkbox" checked={uploadTenantIds.has(tn.id)} on:change={() => (uploadTenantIds = toggleSet(uploadTenantIds, tn.id))} /> <span>{tn.name}</span> <span class="font-mono text-muted">({tn.slug})</span></label>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {/if}
+        </div>
+      {/if}
     </section>
     {/if}
 
@@ -325,6 +471,7 @@
             <thead>
               <tr>
                 <th>{$t('firmware.col_version')}</th>
+                <th>{$t('firmware.source')}</th>
                 <th>{$t('firmware.board_type')}</th>
                 <th>{$t('firmware.col_size')}</th>
                 <th>{$t('firmware.col_checksum')}</th>
@@ -336,7 +483,13 @@
             <tbody>
               {#each firmwares as fw}
                 <tr>
-                  <td class="fw-version">{fw.version}</td>
+                  <td class="fw-version">{fw.version}{#if fw.active_job_count > 0} <Badge variant="info" size="sm">{$t('firmware.in_use')}</Badge>{/if}</td>
+                  <td>
+                    <Badge variant={fw.global ? 'info' : 'neutral'} size="sm">{sourceText(fw)}</Badge>
+                    {#if fw.global && $isSuperAdmin}
+                      <small class="text-muted">{fw.visibility === 'selected' ? $t('firmware.visible_to_count', fw.visible_to_count) : $t('firmware.visibility_all').toLowerCase()}</small>
+                    {/if}
+                  </td>
                   <td>
                     {#if fw.board_type}
                       <Badge variant="info" size="sm">{fw.board_type}</Badge>
@@ -350,7 +503,10 @@
                   <td class="text-muted">{formatDate(fw.created_at)}</td>
                   <td class="actions">
                     <Button variant="primary" size="sm" on:click={() => openDeploy(fw)}>{$t('common.deploy')}</Button>
-                    {#if $isAdmin}
+                    {#if fw.global && $isSuperAdmin}
+                      <Button variant="secondary" size="sm" on:click={() => openVisibility(fw)}>{$t('firmware.manage_visibility')}</Button>
+                    {/if}
+                    {#if canDelete(fw)}
                       <Button variant="danger" size="sm" on:click={() => handleDelete(fw)} aria-label="Delete firmware {fw.version}">
                         <Icon name="trash" size={13} />
                       </Button>
@@ -362,6 +518,47 @@
           </table>
         </div>
       {/if}
+    </section>
+
+    <!-- ── Rollback (plan epic 2.8) ───────────────────── -->
+    <section class="section-card">
+      <div class="section-header">
+        <Icon name="clock" size={16} />
+        <span>{$t('firmware.rollback_title')}</span>
+      </div>
+      <div class="rollback-form">
+        <p class="hint">{$t('firmware.rollback_intro')}</p>
+        <div class="rollback-row">
+          <div class="form-field">
+            <label class="field-label" for="rb-device">{$t('firmware.rollback_device')}</label>
+            <select id="rb-device" class="input" bind:value={rbDeviceId}>
+              <option value="">—</option>
+              {#each devices as d (d.mqtt_device_id)}
+                <option value={d.mqtt_device_id}>{d.name || d.mqtt_device_id} ({d.mqtt_device_id}){d.firmware_version ? ` · v${d.firmware_version}` : ''}</option>
+              {/each}
+            </select>
+          </div>
+          {#if rbDeviceId}
+            <div class="rollback-info">
+              {#if rbLoading}
+                <span class="text-muted">…</span>
+              {:else if rbTarget}
+                <span>{$t('firmware.rollback_current')}: <strong>{rbTarget.current_version || '—'}</strong></span>
+                <span>{$t('firmware.rollback_previous')}: <strong>{rbTarget.previous_version || '—'}</strong></span>
+                {#if !rbTarget.previous_version}
+                  <span class="text-muted">{$t('firmware.rollback_none')}</span>
+                {:else if rbTarget.previous_version === rbTarget.current_version}
+                  <span class="text-muted">{$t('firmware.rollback_same')}</span>
+                {:else if !rbTarget.firmware}
+                  <span class="warn">{$t('firmware.rollback_missing', rbTarget.previous_version)}</span>
+                {:else}
+                  <Button variant="secondary" size="sm" on:click={handleRollback} loading={rbBusy}>{$t('firmware.rollback_button', rbTarget.previous_version)}</Button>
+                {/if}
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
     </section>
 
     <!-- ── OTA Activity ──────────────────────────────── -->
@@ -389,6 +586,7 @@
                   <th>{$t('common.device')}</th>
                   <th>{$t('common.version')}</th>
                   <th>{$t('common.status')}</th>
+                  <th>{$t('firmware.col_actor')}</th>
                   <th>{$t('firmware.col_queued')}</th>
                   <th>{$t('firmware.col_completed')}</th>
                   <th>{$t('common.error')}</th>
@@ -398,8 +596,19 @@
                 {#each jobs as job}
                   <tr>
                     <td class="font-mono">{job.device_id}</td>
-                    <td>{job.firmware_version}</td>
-                    <td><Badge variant={jobStatusVariant(job.status)} size="sm">{job.status}</Badge></td>
+                    <td>
+                      {job.firmware_version}
+                      {#if job.kind === 'rollback'}<Badge variant="warning" size="sm">{$t('firmware.kind_rollback')}</Badge>{/if}
+                      {#if job.forced}<Badge variant="neutral" size="sm">{$t('firmware.forced')}</Badge>{/if}
+                      {#if job.firmware_deleted}<small class="text-muted">{$t('firmware.firmware_deleted')}</small>{/if}
+                    </td>
+                    <td>
+                      <Badge variant={jobStatusVariant(job.status)} size="sm">{job.status}</Badge>
+                      {#if job.status === 'queued' && job.deferrals > 0}
+                        <small class="text-muted" title={job.defer_reason}>{$t('firmware.deferred', job.deferrals)}{job.defer_reason ? ': ' + job.defer_reason.split(',').map(reasonText).join(', ') : ''}</small>
+                      {/if}
+                    </td>
+                    <td class="text-muted small-cell">{job.actor || '—'}</td>
                     <td class="text-muted">{formatDate(job.queued_at)}</td>
                     <td class="text-muted">{formatDate(job.completed_at)}</td>
                     <td class="error-cell">{job.error || ''}</td>
@@ -435,8 +644,12 @@
                     <td class="count-ok">{r.succeeded || 0}</td>
                     <td class="count-fail">{r.failed || 0}</td>
                     <td>{r.queued || 0}</td>
-                    <td><Badge variant={jobStatusVariant(r.status)} size="sm">{r.status}</Badge></td>
-                    <td class="text-muted">{formatDate(r.created_at)}</td>
+                    <td>
+                      <Badge variant={jobStatusVariant(r.status)} size="sm">{r.status}</Badge>
+                      {#if r.status === 'paused' && r.paused_reason}<small class="text-muted">{$t('firmware.paused_' + r.paused_reason)}</small>{/if}
+                      {#if r.deferred > 0}<small class="text-muted">{$t('firmware.deferred', r.deferred)}</small>{/if}
+                    </td>
+                    <td class="text-muted" title={r.created_by_email || ''}>{formatDate(r.created_at)}</td>
                     <td class="actions">
                       {#if r.status === 'running'}
                         <Button variant="secondary" size="sm" on:click={() => handlePause(r.id)}>{$t('common.pause')}</Button>
@@ -540,6 +753,20 @@
               <label class="field-label" for="batch-interval">{$t('firmware.interval_sec')}</label>
               <input id="batch-interval" type="number" bind:value={deployIntervalS} min="30" max="3600" class="input input-sm" />
             </div>
+            <div class="field">
+              <label class="field-label" for="fail-threshold">{$t('firmware.fail_threshold')}</label>
+              <input id="fail-threshold" type="number" bind:value={deployFailThreshold} min="1" max="100" class="input input-sm" />
+            </div>
+          </div>
+        {/if}
+
+        {#if precheckReasons.length > 0}
+          <div class="precheck" role="alert">
+            <div class="precheck-title"><Icon name="alert-triangle" size={14} /> {$t('firmware.precheck_title')}</div>
+            <ul>{#each precheckReasons as r}<li>{reasonText(r)}</li>{/each}</ul>
+            {#if precheckForceable}
+              <label class="check"><input type="checkbox" bind:checked={deployForce} /> {$t('firmware.force_label')}</label>
+            {/if}
           </div>
         {/if}
 
@@ -552,8 +779,42 @@
       </div>
 
       <div class="modal-actions">
-        <Button variant="secondary" on:click={closeDeploy} disabled={deploying}>Cancel</Button>
-        <Button variant="primary" on:click={handleDeploy} loading={deploying}>Deploy</Button>
+        <Button variant="secondary" on:click={closeDeploy} disabled={deploying}>{$t('common.cancel')}</Button>
+        <Button variant="primary" on:click={handleDeploy} loading={deploying}>{$t('common.deploy')}</Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ── Visibility modal (superadmin, platform firmware) ── -->
+{#if visFw}
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+  <div class="modal-backdrop" on:click={() => (visFw = null)} on:keydown={(e) => e.key === 'Escape' && (visFw = null)} role="dialog" aria-modal="true" tabindex="-1">
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div class="modal" role="document" on:click|stopPropagation on:keydown|stopPropagation>
+      <div class="modal-header">
+        <h3>{$t('firmware.visibility')}: {visFw.version}</h3>
+        <button class="close-btn" on:click={() => (visFw = null)} aria-label="Close dialog"><Icon name="x" size={18} /></button>
+      </div>
+      <div class="modal-body">
+        <div class="deploy-mode">
+          <label class="mode-option"><input type="radio" bind:group={visMode} value="all" /><span>{$t('firmware.visibility_all')}</span></label>
+          <label class="mode-option"><input type="radio" bind:group={visMode} value="selected" /><span>{$t('firmware.visibility_selected')}</span></label>
+        </div>
+        {#if visMode === 'selected'}
+          <div class="device-checklist">
+            <span class="field-label">{$t('firmware.visibility_pick')}</span>
+            <div class="checklist-inner">
+              {#each tenants as tn (tn.id)}
+                <label class="device-check"><input type="checkbox" checked={visTenantIds.has(tn.id)} on:change={() => (visTenantIds = toggleSet(visTenantIds, tn.id))} /> <span>{tn.name}</span> <span class="font-mono text-muted">({tn.slug})</span></label>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+      <div class="modal-actions">
+        <Button variant="secondary" on:click={() => (visFw = null)} disabled={visSaving}>{$t('common.cancel')}</Button>
+        <Button variant="primary" on:click={saveVisibility} loading={visSaving}>{$t('common.save')}</Button>
       </div>
     </div>
   </div>
@@ -856,6 +1117,31 @@
     padding: var(--space-4) var(--space-5);
     border-top: 1px solid var(--border-muted);
   }
+
+  .platform-opts {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    padding: 0 var(--space-4) var(--space-4);
+  }
+  .check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-primary); cursor: pointer; }
+  .tenant-picker { display: flex; flex-direction: column; gap: var(--space-1); max-width: 480px; }
+  .hint { margin: 0; font-size: var(--text-sm); color: var(--text-muted); line-height: 1.5; }
+  .rollback-form { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+  .rollback-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-4); }
+  .rollback-info { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); padding-bottom: 4px; }
+  .rollback-info strong { color: var(--text-primary); }
+  .warn { color: var(--accent-yellow, #f59e0b); }
+  .small-cell { font-size: var(--text-xs); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td small { display: block; font-size: var(--text-xs); }
+  .precheck {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    color: var(--text-primary); font-size: var(--text-sm);
+    padding: var(--space-2) var(--space-3);
+    background: color-mix(in srgb, var(--accent-yellow, #f59e0b) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-yellow, #f59e0b) 35%, transparent);
+    border-radius: var(--radius-sm);
+  }
+  .precheck-title { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; }
+  .precheck ul { margin: 0; padding-left: var(--space-5); color: var(--text-secondary); }
 
   @media (max-width: 640px) {
     .upload-form {

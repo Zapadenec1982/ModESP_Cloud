@@ -93,6 +93,12 @@ const STRINGS = {
     hint_times:              'разів за',
     hint_days:               'дн.',
     hint_line_label:         'межа',
+    rollout_completed:       '\u{2705} Розгортання прошивки завершено',
+    rollout_paused:          '\u{26A0}\u{FE0F} Розгортання прошивки зупинено',
+    rollout_firmware:        'Прошивка',
+    rollout_result:          '{0} успішно, {1} невдало з {2}',
+    rollout_paused_hint:     '{0}% невдач (межа {1}%). Перевірте контролери зі збоєм і продовжте розгортання на сторінці «Прошивка».',
+    rollout_open:            'Сторінка «Прошивка»',
     advice_alarm_repeat:     'Контролер піднімає цю аварію знову і знову. Ще одне підтвердження не допоможе — потрібен візит: створіть наряд.',
     // Alarm names
     alarm_high_temp:       'Висока температура',
@@ -180,6 +186,12 @@ const STRINGS = {
     hint_times:              'times in',
     hint_days:               'days',
     hint_line_label:         'limit',
+    rollout_completed:       '\u{2705} Firmware rollout completed',
+    rollout_paused:          '\u{26A0}\u{FE0F} Firmware rollout paused',
+    rollout_firmware:        'Firmware',
+    rollout_result:          '{0} succeeded, {1} failed of {2}',
+    rollout_paused_hint:     '{0}% failures (limit {1}%). Check the failed controllers, then resume the rollout on the Firmware page.',
+    rollout_open:            'Firmware page',
     advice_alarm_repeat:     'The controller keeps raising this alarm. Another acknowledgement will not fix it — plan a visit: create a work order.',
     alarm_high_temp:       'High temperature',
     alarm_low_temp:        'Low temperature',
@@ -265,6 +277,12 @@ const STRINGS = {
     hint_times:              'razy w ciągu',
     hint_days:               'dni',
     hint_line_label:         'limit',
+    rollout_completed:       '\u{2705} Wdrożenie firmware zakończone',
+    rollout_paused:          '\u{26A0}\u{FE0F} Wdrożenie firmware wstrzymane',
+    rollout_firmware:        'Firmware',
+    rollout_result:          '{0} udanych, {1} nieudanych z {2}',
+    rollout_paused_hint:     '{0}% niepowodzeń (limit {1}%). Sprawdź sterowniki z błędem i wznów wdrożenie na stronie „Firmware”.',
+    rollout_open:            'Strona „Firmware”',
     advice_alarm_repeat:     'Sterownik zgłasza ten alarm raz za razem. Kolejne potwierdzenie nic nie da — potrzebna wizyta: utwórz zlecenie.',
     alarm_high_temp:       'Wysoka temperatura',
     alarm_low_temp:        'Niska temperatura',
@@ -350,6 +368,12 @@ const STRINGS = {
     hint_times:              'mal in',
     hint_days:               'Tagen',
     hint_line_label:         'Grenze',
+    rollout_completed:       '\u{2705} Firmware-Rollout abgeschlossen',
+    rollout_paused:          '\u{26A0}\u{FE0F} Firmware-Rollout angehalten',
+    rollout_firmware:        'Firmware',
+    rollout_result:          '{0} erfolgreich, {1} fehlgeschlagen von {2}',
+    rollout_paused_hint:     '{0}% Fehler (Grenze {1}%). Prüfen Sie die fehlgeschlagenen Regler und setzen Sie den Rollout auf der Seite „Firmware“ fort.',
+    rollout_open:            'Seite „Firmware“',
     advice_alarm_repeat:     'Der Regler löst diesen Alarm immer wieder aus. Noch eine Quittierung hilft nicht — ein Einsatz ist nötig: Auftrag anlegen.',
     alarm_high_temp:       'Hohe Temperatur',
     alarm_low_temp:        'Niedrige Temperatur',
@@ -1094,6 +1118,8 @@ function renderNotification(chatId, payload) {
     message = buildWorkOrderMessage(chatId, payload);
   } else if (payload.type === 'hint') {
     message = buildHintMessage(chatId, payload);
+  } else if (payload.type === 'rollout') {
+    message = buildRolloutMessage(chatId, payload);
   } else if (payload.type === 'device_offline') {
     message = buildOfflineMessage(chatId, payload);
   } else if (payload.active === false) {
@@ -1137,6 +1163,23 @@ function buildHintMessage(chatId, payload) {
   lines.push(`\u{1F4A1} ${t(chatId, 'advice_' + payload.ruleKey)}`);
   lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
   return lines.join('\n');
+}
+
+/** A firmware rollout completed or paused itself (plan epic 2.8). */
+function buildRolloutMessage(chatId, payload) {
+  const paused = payload.event === 'paused';
+  const lines = [
+    t(chatId, paused ? 'rollout_paused' : 'rollout_completed'),
+    `${t(chatId, 'rollout_firmware')}: ${payload.firmwareVersion || '—'}`,
+    fmtStr(t(chatId, 'rollout_result'), payload.succeeded ?? 0, payload.failed ?? 0, payload.total ?? 0),
+  ];
+  if (paused) lines.push(fmtStr(t(chatId, 'rollout_paused_hint'), payload.failPct ?? 0, payload.threshold ?? 0));
+  lines.push(`\u{23F0} ${formatTime(chatId, payload.timestamp, payload.timezone)}`);
+  return lines.join('\n');
+}
+
+function fmtStr(template, ...args) {
+  return String(template).replace(/\{(\d+)\}/g, (_, i) => (args[i] !== undefined ? String(args[i]) : ''));
 }
 
 function buildTestMessage(chatId, payload) {
