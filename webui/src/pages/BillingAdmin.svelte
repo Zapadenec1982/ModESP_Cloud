@@ -8,6 +8,7 @@
            adminGetBillingSettings, adminSaveBillingSettings, adminGetPlanRequests, adminResolvePlanRequest,
            downloadInvoicePdf } from '../lib/api.js'
   import { t } from '../lib/i18n.js'
+  import { normalizeIban, looksLikeIban } from '../lib/iban.js'
   import { toast } from '../lib/toast.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import Button from '../components/ui/Button.svelte'
@@ -50,6 +51,9 @@
   // Automatic billing is armed by the seller requisites: without a beneficiary
   // and an IBAN the backend issues nothing (services/billing.js sellerReady).
   $: sellerMissing = !loading && !((settings.seller_name || '').trim() && (settings.seller_iban || '').trim())
+  // A typo in the IBAN arms billing with an account nobody can pay into, so it
+  // is caught in the form; the server re-checks it with the country registry.
+  $: ibanBad = !looksLikeIban(settings.seller_iban)
   // An issued-but-unsent invoice is capped at past_due by the backend; say so where it shows.
   $: anyHeld = invoices.some(i => i.status === 'issued' && !i.sent_at && i.overdue)
   const skipLabel = (code) => code === 'seller_not_configured' ? $t('billing.skip_seller_not_configured')
@@ -124,7 +128,8 @@
     savingSettings = true
     try {
       const body = {}
-      for (const k of ['seller_name', 'seller_tax_id', 'seller_iban', 'seller_bank', 'seller_address', 'seller_email', 'invoice_note']) body[k] = (settings[k] || '').trim() || null
+      for (const k of ['seller_name', 'seller_tax_id', 'seller_bank', 'seller_address', 'seller_email', 'invoice_note']) body[k] = (settings[k] || '').trim() || null
+      body.seller_iban = normalizeIban(settings.seller_iban) || null
       body.due_days = Number(settings.due_days) || 14
       settings = { ...(await adminSaveBillingSettings(body)) }
       toast.success($t('billing.settings_saved'))
@@ -239,14 +244,16 @@
         <div class="form-grid">
           <div class="form-group"><label for="s-name">{$t('billing.seller_name')}</label><input id="s-name" type="text" bind:value={settings.seller_name} maxlength="256" /></div>
           <div class="form-group"><label for="s-tax">{$t('billing.tax_id')}</label><input id="s-tax" type="text" bind:value={settings.seller_tax_id} maxlength="32" /></div>
-          <div class="form-group"><label for="s-iban">{$t('billing.iban')}</label><input id="s-iban" type="text" bind:value={settings.seller_iban} maxlength="64" /></div>
+          <div class="form-group"><label for="s-iban">{$t('billing.iban')}</label>
+            <input id="s-iban" type="text" class:bad={ibanBad} bind:value={settings.seller_iban} maxlength="64" spellcheck="false" autocomplete="off" />
+            {#if ibanBad}<small class="err">{$t('billing.iban_invalid')}</small>{/if}</div>
           <div class="form-group"><label for="s-bank">{$t('billing.seller_bank')}</label><input id="s-bank" type="text" bind:value={settings.seller_bank} maxlength="128" /></div>
           <div class="form-group"><label for="s-addr">{$t('billing.seller_address')}</label><input id="s-addr" type="text" bind:value={settings.seller_address} maxlength="256" /></div>
           <div class="form-group"><label for="s-email">{$t('billing.seller_email')}</label><input id="s-email" type="email" bind:value={settings.seller_email} maxlength="256" /></div>
           <div class="form-group"><label for="s-due">{$t('billing.due_days')}</label><input id="s-due" type="number" min="1" max="90" bind:value={settings.due_days} /></div>
           <div class="form-group wide"><label for="s-note">{$t('billing.invoice_note')}</label><input id="s-note" type="text" bind:value={settings.invoice_note} maxlength="2000" /></div>
         </div>
-        <div class="card-actions"><Button size="sm" variant="primary" disabled={savingSettings} on:click={saveSettings}>{$t('common.save')}</Button></div>
+        <div class="card-actions"><Button size="sm" variant="primary" disabled={savingSettings || ibanBad} on:click={saveSettings}>{$t('common.save')}</Button></div>
       </section>
     </div>
   {/if}
@@ -282,6 +289,8 @@
   .form-group { display: flex; flex-direction: column; gap: var(--space-1); }
   .form-group.wide { grid-column: 1 / -1; }
   .form-group label { font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); }
+  .form-group input.bad { border-color: var(--accent-red, #f85149); }
+  .err { color: var(--accent-red, #f85149); font-size: var(--text-xs); }
   .form-group input { padding: var(--space-2) var(--space-3); background: var(--bg-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--text-sm); font-family: inherit; }
   .card-actions { display: flex; justify-content: flex-end; padding-top: var(--space-2); }
   @media (max-width: 1000px) { .two-col { grid-template-columns: 1fr; } .form-grid { grid-template-columns: 1fr; } }

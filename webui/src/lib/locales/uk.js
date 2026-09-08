@@ -1197,6 +1197,7 @@ export default {
     due_days: 'Строк оплати, днів',
     invoice_note: 'Примітка на рахунку (напр. «Без ПДВ»)',
     settings_saved: 'Реквізити збережено',
+    iban_invalid: 'Некоректний IBAN: перевірте код країни, довжину і контрольні цифри.',
     skip_period_not_over: 'місяць ще не завершився',
     skip_seller_not_configured: 'не заповнені реквізити постачальника',
     admin_run_held: 'утримано: {0}',
