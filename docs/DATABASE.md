@@ -1107,6 +1107,22 @@ CREATE INDEX idx_imports_active ON imports (status) WHERE status IN ('pending','
 
 ---
 
+## Критичні межі HACCP на обладнанні (migration 046)
+
+```sql
+ALTER TABLE devices ADD COLUMN haccp_min NUMERIC(6,2);        -- нижня критична межа, °C (NULL = не задано)
+ALTER TABLE devices ADD COLUMN haccp_max NUMERIC(6,2);        -- верхня критична межа, °C
+ALTER TABLE devices ADD COLUMN haccp_product VARCHAR(96);     -- що зберігається («заморожені напівфабрикати»)
+ALTER TABLE devices ADD CONSTRAINT devices_haccp_limits_check CHECK (haccp_min IS NULL OR haccp_max IS NULL OR haccp_min < haccp_max);
+```
+
+> Межі задає підприємство згідно з власною програмою HACCP; журнал контролю температури
+> (`services/haccp-report.js`) порівнює з ними кожен інтервал. Без них беруться межі тривог самого
+> контролера з `devices.last_state` (`protection.low_limit`/`high_limit`); без жодних — звіт пише
+> «не задано» і не оцінює відхилення.
+
+---
+
 ## Інструменти підтримки (migration 045)
 
 ```sql
@@ -1172,3 +1188,5 @@ CREATE INDEX idx_support_requests_status ON support_requests (status, created_at
   й одноразовими зашифрованими обліковими даними.
 - 2026-09-08 — Міграція 045: `audit_log.impersonator_id/impersonator_email` (дії підтримки від імені користувача,
   тригер і псевдонімізація знають про них), `support_requests` — звернення з форми «Підтримка».
+- 2026-09-09 — Міграція 046: `devices.haccp_min/haccp_max/haccp_product` — критичні межі й призначення обладнання
+  для журналу контролю температури HACCP.

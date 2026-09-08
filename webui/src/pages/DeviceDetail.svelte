@@ -48,6 +48,7 @@
   // ── Edit modal state ──
   let showEdit = false
   let editForm = { name: '', location: '', serial_number: '', model: '', comment: '', manufactured_at: '',
+    haccp_min: '', haccp_max: '', haccp_product: '',
     model_id: null, compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '',
     site_id: '' }
   // AddressPicker mode="point" binds this shape; `display_name` has no column on
@@ -103,6 +104,10 @@
       model: device.model || '',
       comment: device.comment || '',
       manufactured_at: device.manufactured_at ? device.manufactured_at.slice(0, 10) : '',
+      // HACCP critical limits (migration 046)
+      haccp_min: device.haccp_min ?? '',
+      haccp_max: device.haccp_max ?? '',
+      haccp_product: device.haccp_product || '',
       model_id: device.model_id || '',
       compressor_kw: device.compressor_kw ?? '',
       defrost_heater_kw: device.defrost_heater_kw ?? '',
@@ -138,6 +143,13 @@
       if (editForm.comment !== (device.comment || '')) changes.comment = editForm.comment
       const currentMfg = device.manufactured_at ? device.manufactured_at.slice(0, 10) : ''
       if (editForm.manufactured_at !== currentMfg) changes.manufactured_at = editForm.manufactured_at || null
+      // HACCP critical limits: empty = clear (the journal then uses the controller's own limits)
+      for (const f of ['haccp_min', 'haccp_max']) {
+        const val = editForm[f] === '' || editForm[f] === null ? null : Number(editForm[f])
+        const cur = device[f] == null ? null : Number(device[f])
+        if (val !== cur) changes[f] = val
+      }
+      if ((editForm.haccp_product || '').trim() !== (device.haccp_product || '')) changes.haccp_product = editForm.haccp_product.trim() || null
 
       // Power profile fields
       const modelId = editForm.model_id || null
@@ -777,6 +789,12 @@
             {device.manufactured_at.slice(0, 10)}
           </span>
         {/if}
+        {#if device.haccp_min != null || device.haccp_max != null}
+          <span class="meta-item" title={$t('device.haccp_section')}>
+            <Icon name="thermometer" size={12} />
+            HACCP {device.haccp_min != null ? Number(device.haccp_min) : '…'}…{device.haccp_max != null ? Number(device.haccp_max) : '…'} °C{device.haccp_product ? ` · ${device.haccp_product}` : ''}
+          </span>
+        {/if}
         {#if device.site_name}
           <span class="meta-item">
             <Icon name="building" size={12} />
@@ -1236,6 +1254,25 @@
           <label for="edit-manufactured">{$t('device.manufactured_at')}</label>
           <input id="edit-manufactured" type="date" bind:value={editForm.manufactured_at} />
         </div>
+
+        <!-- HACCP critical limits (migration 046): what the temperature journal checks every row against -->
+        <div class="form-section-title">{$t('device.haccp_section')}</div>
+        <div class="form-group">
+          <label for="edit-haccp-product">{$t('device.haccp_product')}</label>
+          <input id="edit-haccp-product" type="text" maxlength="96" bind:value={editForm.haccp_product}
+            placeholder={$t('device.haccp_product_placeholder')} />
+        </div>
+        <div class="form-row-power">
+          <div class="form-group">
+            <label for="edit-haccp-min">{$t('device.haccp_min')}</label>
+            <input id="edit-haccp-min" type="number" step="0.5" min="-99" max="99" bind:value={editForm.haccp_min} placeholder="−18" />
+          </div>
+          <div class="form-group">
+            <label for="edit-haccp-max">{$t('device.haccp_max')}</label>
+            <input id="edit-haccp-max" type="number" step="0.5" min="-99" max="99" bind:value={editForm.haccp_max} placeholder="−15" />
+          </div>
+        </div>
+        <p class="form-hint">{$t('device.haccp_hint')}</p>
 
         <!-- Power Profile -->
         <div class="form-section-title">{$t('energy.power_profile')}</div>
@@ -1762,6 +1799,7 @@
     grid-template-columns: 1fr 1fr;
     gap: var(--space-3);
   }
+  .form-hint { margin: calc(-1 * var(--space-2)) 0 0; font-size: var(--text-xs); color: var(--text-muted); line-height: 1.4; }
 
   .model-select-row {
     display: flex;

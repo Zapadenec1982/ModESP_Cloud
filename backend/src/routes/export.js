@@ -38,7 +38,7 @@ async function resolveDevice(id, tenantId, isSuperadmin) {
     params.push(tenantId);
   }
   const { rows } = await db.query(
-    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model
+    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
      FROM devices WHERE ${where}`,
     params
   );
@@ -399,7 +399,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
       return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
     }
     const { rows: devices } = await db.query(
-      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
          FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
       [site.id, site.tenant_id]
     );

@@ -100,6 +100,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
       const filterTenant = req.query.tenant_id;
       sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
                     d.model, d.comment, d.manufactured_at, d.firmware_version,
+                    d.haccp_min, d.haccp_max, d.haccp_product,
                     d.online, d.status, d.last_seen, d.created_at,
                     d.latitude, d.longitude,
                     ${SITE_COLUMNS},
@@ -118,6 +119,7 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
       // `id` column into scope, so every reference must be qualified.
       sql = `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
                     d.model, d.comment, d.manufactured_at, d.firmware_version,
+                    d.haccp_min, d.haccp_max, d.haccp_product,
                     d.online, d.status, d.last_seen, d.created_at,
                     d.latitude, d.longitude,
                     ${SITE_COLUMNS}
@@ -913,6 +915,7 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
     const { rows } = await db.query(
       `SELECT d.id, d.mqtt_device_id, d.name, d.location, d.serial_number,
               d.model, d.comment, d.manufactured_at, d.firmware_version, d.proto_version,
+              d.haccp_min, d.haccp_max, d.haccp_product,
               d.online, d.status, d.last_seen, d.last_state, d.created_at,
               d.latitude, d.longitude,
               ${SITE_COLUMNS},
@@ -1082,8 +1085,14 @@ const updateDeviceSchema = z.object({
   latitude:          z.number().min(-90).max(90).nullable().optional(),
   longitude:         z.number().min(-180).max(180).nullable().optional(),
   site_id:           z.string().uuid().nullable().optional(),
+  // HACCP critical limits of what the equipment stores (migration 046); null = use the controller's own limits
+  haccp_min:         z.number().min(-99).max(99).nullable().optional(),
+  haccp_max:         z.number().min(-99).max(99).nullable().optional(),
+  haccp_product:     z.string().trim().max(96).nullable().optional().transform(v => (v === '' ? null : v)),
 }).refine(data => Object.keys(data).length > 0, {
   message: 'At least one field is required',
+}).refine(data => data.haccp_min == null || data.haccp_max == null || data.haccp_min < data.haccp_max, {
+  message: 'haccp_min must be below haccp_max',
 });
 
 router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
@@ -1160,6 +1169,7 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
        WHERE ${shiftedWhere}
        RETURNING id, mqtt_device_id, name, location, serial_number,
                  model, comment, manufactured_at, firmware_version, status, created_at,
+                 haccp_min, haccp_max, haccp_product,
                  latitude, longitude, site_id`,
       [...values, ...whereParams]
     );

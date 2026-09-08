@@ -718,6 +718,12 @@ export default {
     model_placeholder: 'напр. ModESP-4R',
     comment_placeholder: 'Нотатки про пристрій...',
     manufactured_at: 'Дата виготовлення',
+    haccp_section: 'HACCP: критичні межі',
+    haccp_product: 'Продукція / призначення',
+    haccp_product_placeholder: 'напр. заморожені напівфабрикати',
+    haccp_min: 'Нижня межа, °C',
+    haccp_max: 'Верхня межа, °C',
+    haccp_hint: 'Журнал контролю температури позначає відхиленням кожен інтервал, коли температура повітря виходить за ці межі. Порожньо — беруться межі тривог самого контролера.',
     manufactured_placeholder: 'РРРР-ММ-ДД',
     // Service records
     tab_service: 'Сервіс',

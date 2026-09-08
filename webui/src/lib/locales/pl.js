@@ -718,6 +718,12 @@ export default {
     model_placeholder: 'np. ModESP-4R',
     comment_placeholder: 'Notatki o tym urządzeniu...',
     manufactured_at: 'Data produkcji',
+    haccp_section: 'HACCP: limity krytyczne',
+    haccp_product: 'Produkt / przeznaczenie',
+    haccp_product_placeholder: 'np. mrożone półprodukty',
+    haccp_min: 'Dolny limit, °C',
+    haccp_max: 'Górny limit, °C',
+    haccp_hint: 'Dziennik kontroli temperatury oznacza jako odchylenie każdy interwał, w którym temperatura powietrza wychodzi poza te limity. Puste — używane są limity alarmowe samego sterownika.',
     manufactured_placeholder: 'RRRR-MM-DD',
     // Service records
     tab_service: 'Serwis',
