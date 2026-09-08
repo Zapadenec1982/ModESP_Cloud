@@ -1,6 +1,7 @@
 'use strict';
 
 const { verifyAccessToken } = require('../services/auth');
+const apiKeys = require('../services/api-keys');
 
 /**
  * JWT authentication middleware.
@@ -18,6 +19,24 @@ function authenticate(req, res, next) {
   }
 
   const token = header.slice(7);
+
+  // An API key (plan epic 2.6): the organisation's machine identity, scoped
+  // onto a role; the account and organisation surface is out of its reach.
+  if (apiKeys.looksLikeKey(token)) {
+    return apiKeys.authenticate(token).then((k) => {
+      if (apiKeys.isDeniedPath(req.originalUrl || req.url)) {
+        return res.status(403).json({ error: 'api_key_scope', message: 'This endpoint is not available to API keys', status: 403 });
+      }
+      req.user = { id: null, email: `apikey:${k.name}`, role: k.role, tenantId: k.tenantId, sid: null, apiKey: { id: k.id, name: k.name, scope: k.scope } };
+      req.tenantId = k.tenantId;
+      next();
+    }).catch((err) => {
+      if (err.code === 'api_disabled') return res.status(402).json({ error: 'plan_feature', message: err.message, status: 402, feature: 'api' });
+      if (err.code === 'invalid_key') return res.status(401).json({ error: 'unauthorized', message: err.message, status: 401 });
+      next(err);
+    });
+  }
+
   try {
     const payload = verifyAccessToken(token);
     // Block pending tokens (tenant selection flow) from accessing API routes

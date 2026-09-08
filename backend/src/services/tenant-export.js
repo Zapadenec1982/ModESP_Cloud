@@ -32,7 +32,7 @@ const HIDDEN = new Set([
   'password_hash', 'mfa_secret', 'mfa_pending_secret', 'mfa_backup_codes', 'mfa_last_step',
   'mqtt_password_hash', 'token_hash', 'pdf', 'email_verify_hash', 'email_verify_expires',
   'password_reset_code', 'password_reset_expires', 'telegram_link_code', 'telegram_link_expires',
-  'push_token', 'tenant_id',
+  'push_token', 'tenant_id', 'secret', 'key_hash',
 ]);
 
 // Order of the archive; keys are the page order when the table has no primary key
@@ -41,7 +41,7 @@ const TABLES = [
   { name: 'alarms' }, { name: 'events' }, { name: 'service_records' }, { name: 'work_orders' },
   { name: 'maintenance_hints' }, { name: 'notification_subscribers' }, { name: 'notification_log' },
   { name: 'invoices' }, { name: 'usage_snapshots' }, { name: 'report_schedules' }, { name: 'report_exports' },
-  { name: 'audit_log' },
+  { name: 'audit_log' }, { name: 'webhooks' },
   { name: 'telemetry_hourly', keys: ['hour', 'device_id', 'channel'] },
   { name: 'telemetry',        keys: ['time', 'device_id', 'channel'] },
 ];

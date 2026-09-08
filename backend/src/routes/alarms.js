@@ -249,7 +249,7 @@ async function loadAlarmForCaller(req, alarmId) {
   if (rows.length === 0) return { status: 404, error: 'not_found', message: 'Alarm not found' };
   const alarm = rows[0];
 
-  if (AUTH_ENABLED && req.user && req.user.role !== 'admin' && !isSuperadmin) {
+  if (AUTH_ENABLED && req.user && req.user.role !== 'admin' && !isSuperadmin && !req.user.apiKey) {
     if (!alarm.device_uuid) return { status: 403, error: 'forbidden', message: 'Device access denied' };
     const { rows: access } = await db.query(
       `SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2
@@ -292,6 +292,7 @@ router.post('/:id/ack', maybeAuthorize('admin', 'technician'), async (req, res, 
     mqttSvc.emit('alarm_ack', {
       tenantSlug: alarm.tenant_slug, tenantId: alarm.tenant_id, deviceId: alarm.device_id,
       alarmId: alarm.id, alarmCode: alarm.alarm_code, acknowledgedBy: req.user ? req.user.email : null,
+      note: parsed.data.note?.trim() || null,
     });
     res.json({ data: { ...rows[0], acknowledged_by_email: req.user ? req.user.email : null } });
   } catch (err) {

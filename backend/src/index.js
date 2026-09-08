@@ -24,6 +24,7 @@ const maintenanceSvc = require('./services/maintenance');
 const billingSvc  = require('./services/billing');
 const lifecycleSvc = require('./services/tenant-lifecycle');
 const tenantExportSvc = require('./services/tenant-export');
+const webhooksSvc = require('./services/webhooks');
 const { readOnlyWhenClosed } = require('./middleware/tenant-status');
 const reportSchedulerSvc = require('./services/report-scheduler');
 const registrationSvc = require('./services/registration');
@@ -472,6 +473,9 @@ if (AUTH_ENABLED) {
   app.use('/api/onboarding', authorize('admin'), require('./routes/onboarding'));
   // Scheduled reports and the report archive (plan epic 2.7); the router gates the schedule routes to admins
   app.use('/api/reports', require('./routes/reports'));
+  // Integrations (plan epic 2.6): the organisation's API keys and webhooks
+  app.use('/api/api-keys', authorize('admin'), require('./routes/api-keys'));
+  app.use('/api/webhooks', authorize('admin'), require('./routes/webhooks'));
 
   // Admin-only routes (superadmin inherits admin via authorize)
   app.use('/api/tenants',  authorize('admin'), require('./routes/tenants'));
@@ -589,6 +593,8 @@ async function main() {
   logger.info({ mode: registrationMode, trialDays: registrationSvc.trialDays(), emailVerification: emailSvc.isConfigured() }, 'Self-registration');
   lifecycleSvc.start(logger);
   tenantExportSvc.init(logger);
+  // Webhooks (plan epic 2.6): signed deliveries of alarms, presence, work orders and hints
+  webhooksSvc.start(logger);
   // Scheduled reports (plan epic 2.7): weekly/monthly PDFs, archived and e-mailed
   reportSchedulerSvc.start(logger);
 
@@ -609,6 +615,7 @@ async function shutdown(signal) {
     billingSvc.shutdown(),
     lifecycleSvc.shutdown(),
     reportSchedulerSvc.shutdown(),
+    webhooksSvc.shutdown(),
     geocodeSvc.shutdown(),
     pushSvc.shutdown(),
     telegramSvc.shutdown(),

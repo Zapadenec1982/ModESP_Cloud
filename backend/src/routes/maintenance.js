@@ -116,7 +116,7 @@ async function loadHintForCaller(req, hintId) {
   );
   if (rows.length === 0) return { status: 404, error: 'not_found', message: 'Hint not found' };
   const hint = rows[0];
-  if (AUTH_ENABLED && req.user && req.user.role !== 'admin' && !isSuperadmin) {
+  if (AUTH_ENABLED && req.user && req.user.role !== 'admin' && !isSuperadmin && !req.user.apiKey) {
     if (!hint.device_uuid) return { status: 403, error: 'forbidden', message: 'Device access denied' };
     const { rows: access } = await db.query(
       `SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2

@@ -108,6 +108,8 @@ function createTestApp() {
   app.use('/api/billing',  authorize('admin'), require('../../src/routes/billing'));
   app.use('/api/onboarding', authorize('admin'), require('../../src/routes/onboarding'));
   app.use('/api/reports',  require('../../src/routes/reports'));
+  app.use('/api/api-keys', authorize('admin'), require('../../src/routes/api-keys'));
+  app.use('/api/webhooks', authorize('admin'), require('../../src/routes/webhooks'));
   app.use('/api/tenants',  authorize('admin'), require('../../src/routes/tenants'));
   app.use('/api/users',    authorize('admin'), require('../../src/routes/users'));
 

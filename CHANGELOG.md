@@ -8,6 +8,20 @@
 ## [Unreleased]
 
 ### Додано
+- API-ключі та вебхуки (епік 2.6 плану, міграція 042). Сторінка «Інтеграції» (`#/integrations`, адміністратор,
+  функція плану `api`: Про/Мережа/Партнер). API-ключ (`api_keys`, у базі лише SHA-256, показується один раз)
+  ходить у тому самому заголовку `Authorization: Bearer modesp_…`, представляє організацію цілком (усі
+  пристрої, без грантів особи) з правами `read` → переглядач, `write` → технік, `admin` → адміністратор, але
+  ніколи не дістає користувачів, ключів, вебхуків, організацій, оплати, профілю чи сесій (`403 api_key_scope`); термін
+  дії, відкликання, `last_used_at`, дії в аудит-лозі як `apikey:<назва>`. Вебхук (`webhooks`, секрет
+  зашифровано) отримує POST на кожну підписану подію — `alarm.raised/cleared/acknowledged`,
+  `device.offline/online`, `work_order.*`, `hint.opened` — із заголовками `X-ModESP-Event/Delivery/Timestamp/
+  Signature` (`v1=HMAC-SHA256(secret, "<timestamp>.<body>")`), ретраями 1 хв → 5 хв → 30 хв → 2 год → 12 год
+  (`webhook_deliveries`, потім `dead`), вимкненням після 10 невдач підряд, захистом від SSRF (лише публічні
+  http(s), `WEBHOOK_ALLOW_PRIVATE` для тестів), перевіркою «ping», ротацією секрету, журналом доставок і
+  повторною доставкою. API: `GET/POST/DELETE /api-keys`, `GET/POST/PATCH/DELETE /webhooks`,
+  `POST /webhooks/:id/test|rotate-secret`, `GET /webhooks/:id/deliveries`,
+  `POST /webhooks/:id/deliveries/:did/redeliver`. Таймер `WEBHOOK_INTERVAL_SEC` (30; 0 вимикає).
 - Життєвий цикл організації та експорт даних (епік 2.10 плану, міграція 041). Закрита організація
   (`status = closed`) лишається відкритою для входу, але лише на читання: банер із датою, `423
   organisation_closed` на будь-яку зміну, топіки брокера закриті. Через `CLOSED_RETENTION_DAYS` (30) сторож
