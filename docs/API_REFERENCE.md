@@ -2424,115 +2424,133 @@ Superadmin, plan epic 2.1. Організація, що зареєструвал
 
 ## Firmware (OTA)
 
+Маршрути `/firmware/*` і `/ota/*` доступні адміністратору й техніку (переглядач — `403`). Технік
+розгортає лише на пристрої зі своїх грантів (`user_devices` ∪ `user_sites`); адміністратор — на будь-який
+пристрій організації. API-ключ (епік 2.6) працює як організація.
+
+### Бібліотека прошивок (plan epic 2.8)
+Прошивка належить організації (`tenant_id`) **або платформі** (`tenant_id IS NULL`, `global: true`).
+Платформенну прошивку завантажує лише superadmin; вона видима всім організаціям (`visibility: all`)
+або лише обраним (`visibility: selected` + `firmware_visibility`). Список організації = власні +
+платформенні, опубліковані для неї; superadmin бачить усі платформенні. Кожен рядок містить
+`global`, `visibility`, `uploaded_by_email`, `job_count`, `active_job_count`, `visible_to_count`.
+
 ### `POST /firmware/upload`
-Завантажити новий firmware binary (тільки admin).
+**Ролі:** admin (власна), superadmin (платформенна).
 
 **Content-Type:** multipart/form-data
-**Fields:** `file` (.bin, ≤ 4MB), `version` (string), `notes` (optional), `board_type` (optional — модель плати, наприклад "ModESP-4R"; якщо не вказано — firmware universal для всіх плат)
+**Fields:** `file` (.bin, ≤ 4MB), `version`, `notes` (optional), `board_type` (optional — модель плати;
+порожньо — універсальна), `global` (`true` — платформенна, лише superadmin), `visibility` (`all` |
+`selected`), `tenant_ids` (JSON-масив id організацій для `selected`).
+
+Версія унікальна в межах організації і окремо — в межах платформи (`409 duplicate_version`).
 
 **Response 201:**
 ```json
 {
   "data": {
-    "id": "uuid",
-    "version": "1.2.3",
-    "filename": "tenant_1.2.3_1709827200.bin",
-    "original_name": "modesp_v4_1.2.3.bin",
-    "size_bytes": 1548288,
-    "checksum": "sha256:a1b2c3d4...",
-    "board_type": "ModESP-4R",
-    "notes": "Fix sensor calibration",
-    "created_at": "2026-03-08T10:00:00Z"
+    "id": "uuid", "tenant_id": null, "global": true, "visibility": "selected",
+    "version": "1.4.2", "filename": "global_1.4.2_1757370000000.bin", "original_name": "modesp_1.4.2.bin",
+    "size_bytes": 1548288, "checksum": "sha256:a1b2c3d4...", "board_type": "ModESP-VM4", "notes": "Fix sensor calibration",
+    "uploaded_by": "uuid", "uploaded_by_email": "root@modesp.com.ua", "created_at": "2026-09-08T10:00:00Z",
+    "job_count": 0, "active_job_count": 0, "visible_to_count": 1,
+    "visible_to": [{ "tenant_id": "uuid", "name": "Морозко", "slug": "morozko" }]
   }
 }
 ```
 
-### `GET /firmware`
-Список доступних версій для тенанта.
+### `GET /firmware` · `GET /firmware/:id`
+Видимі прошивки (власні + платформенні для цієї організації), платформенні першими. `GET /:id` для
+superadmin і платформенної прошивки додає `visible_to`.
+
+### `PATCH /firmware/:id`
+`{ "notes" }` — власник; `{ "visibility": "all" | "selected", "tenant_ids": [...] }` — лише superadmin і лише
+для платформенної прошивки (`403 forbidden` адміністратору, `400` при спробі задати видимість власній).
 
 ### `DELETE /firmware/:id`
-Видалити firmware (тільки якщо немає активних OTA jobs).
+Адміністратор — власну, superadmin — платформенну. `409 firmware_in_use` (з `active_jobs`,
+`active_rollouts`), поки є завдання `queued`/`sent` або розгортання `running`/`paused`. Після видалення
+завершені завдання й розгортання зберігають `firmware_version` (`firmware_id` стає NULL,
+`firmware_deleted: true`).
+
+### Перевірки перед OTA (plan epic 2.8)
+Перед командою пристрій має бути **онлайн**; без `force` — також не в розморожуванні
+(`defrost.active`), без активної критичної аварії і всередині вікна оновлень організації
+(`tenant_settings.ota_window_from/to`, хвилини від місцевої півночі, вікно може переходити через північ).
+Порушення — `409 precheck_failed`:
+```json
+{ "error": "precheck_failed", "status": 409, "reasons": ["defrost", "outside_window"], "forceable": true,
+  "window": { "timezone": "Europe/Kyiv", "from": 1320, "to": 360 } }
+```
+`forceable: true` означає, що адміністратор може повторити запит із `"force": true` (техніку `force`
+ігнорується); `offline` не обходиться ніколи. Завдання із `force` позначене `forced: true`.
 
 ### `POST /ota/deploy`
-Запустити OTA на одному пристрої.
-
-**Ролі:** admin
-
-**Board Compatibility:** Якщо firmware має `board_type`, а пристрій має `model` — вони повинні збігатись. При невідповідності повертається 400.
+**Ролі:** admin, technician (свої пристрої).
 
 ```json
-{ "firmware_id": "uuid", "device_id": "F27FCD" }
+{ "firmware_id": "uuid", "device_id": "F27FCD", "force": false }
 ```
 
 **Response 201:**
 ```json
-{
-  "data": {
-    "job_id": "uuid",
-    "device_id": "F27FCD",
-    "firmware_version": "1.2.3",
-    "status": "sent"
-  }
-}
+{ "data": { "job_id": "uuid", "device_id": "F27FCD", "firmware_version": "1.2.3", "status": "sent",
+            "kind": "deploy", "forced": false, "overridden": [] } }
 ```
+`400 board_mismatch` (плата прошивки ≠ модель пристрою), `404 firmware_not_found` (у т.ч. платформенна,
+не опублікована для організації), `404 device_not_found`, `409 ota_in_progress`, `409 precheck_failed`.
 
-**Response 400 (board mismatch):**
+### `GET /ota/rollback?device_id=` · `POST /ota/rollback`
+Відкат до версії, яку пристрій мав до останнього успішного оновлення (`pre_ota_version` останнього
+завдання `succeeded`). `GET` — попередній перегляд:
 ```json
-{
-  "error": "board_mismatch",
-  "message": "Board mismatch: firmware targets \"ModESP-4R\", device is \"ModESP-2R\"",
-  "status": 400
-}
+{ "data": { "device_id": "F27FCD", "current_version": "1.4.2", "previous_version": "1.3.9",
+            "last_update": { "job_id": "uuid", "version": "1.4.2", "completed_at": "…", "kind": "deploy" },
+            "firmware": { "id": "uuid", "version": "1.3.9", "board_type": "ModESP-VM4", "global": false },
+            "available": true } }
 ```
+`POST { "device_id", "force" }` — ті самі ролі й перевірки, що `/deploy`; створює завдання `kind: rollback`.
+`404 rollback_unavailable` (немає успішного оновлення або версії вже немає в бібліотеці — з
+`previous_version`), `409 already_on_version`.
 
 ### `POST /ota/rollout`
-Груповий OTA rollout з batching.
-
-**Ролі:** admin
+Груповий OTA rollout з batching. **Ролі:** admin.
 
 ```json
-{
-  "firmware_id": "uuid",
-  "device_ids": ["F27FCD", "A4CF12"],
-  "batch_size": 2,
-  "batch_interval_s": 300,
-  "fail_threshold_pct": 50
-}
+{ "firmware_id": "uuid", "device_ids": ["F27FCD", "A4CF12"], "batch_size": 2, "batch_interval_s": 300, "fail_threshold_pct": 50 }
 ```
+`batch_size` 1–100 (5), `batch_interval_s` 30–86400 (300), `fail_threshold_pct` 1–100 (50). Несумісні
+плати виключаються (`skipped_incompatible`). Пристрій, що не проходить перевірки на момент пакета,
+**відкладається** на наступний пакет (`deferrals`, `defer_reason`), після `OTA_MAX_DEFERRALS` (12)
+завдання завершується `failed` з `error: "precheck: …"`. Поза вікном оновлень розгортання чекає
+(опитування не рідше ніж раз на 5 хв), нічого не відкладаючи.
 
-**Board Compatibility:** Якщо firmware має `board_type`, несумісні пристрої (device.model ≠ firmware.board_type) автоматично виключаються з rollout. Кількість виключених повертається в `skipped_incompatible`.
+Автопауза: коли частка невдач серед завершених ≥ `fail_threshold_pct` — `status: paused`,
+`paused_reason: failures`; адміністраторам іде сповіщення (Telegram / e-mail / web push), вебхукам —
+`ota.rollout_paused`. `resume` приймає наявні невдачі (`acked_failures`) — поріг спрацьовує знову лише
+на нових. Завершення — сповіщення і `ota.rollout_completed`. Ручна пауза — `paused_reason: manual`.
 
 **Response 201:**
 ```json
-{
-  "data": {
-    "rollout_id": "uuid",
-    "firmware_version": "1.2.3",
-    "total_devices": 2,
-    "skipped_incompatible": 1,
-    "batch_size": 2,
-    "status": "running"
-  }
-}
+{ "data": { "rollout_id": "uuid", "firmware_version": "1.2.3", "total_devices": 2, "skipped_incompatible": 1,
+            "batch_size": 2, "batch_interval_s": 300, "fail_threshold_pct": 50, "status": "running" } }
 ```
 
 ### `GET /ota/jobs`
-Список OTA jobs. Query: `?status=sent&rollout_id=uuid&device_id=F27FCD`
+Query: `?status=sent&rollout_id=uuid&device_id=F27FCD&limit=100`. Рядок: `id, device_id, rollout_id, status,
+kind (deploy|rollback), forced, deferrals, defer_reason, actor (e-mail або apikey:<назва>), queued_at, sent_at,
+completed_at, error, pre_ota_version, firmware_id, firmware_version, firmware_deleted`.
 
 ### `GET /ota/rollouts`
-Список rollouts з агрегованими count (succeeded/failed/queued).
+Список з лічильниками `queued, deferred, sent, succeeded, failed, cancelled`, `paused_reason`,
+`created_by_email`, `firmware_deleted`.
 
 ### `GET /ota/rollouts/:id`
-Деталі rollout з per-device breakdown.
+Деталі з переліком завдань (`kind`, `deferrals`, `defer_reason`).
 
-### `POST /ota/rollouts/:id/pause`
-Призупинити running rollout.
-
-### `POST /ota/rollouts/:id/resume`
-Продовжити paused rollout.
-
-### `POST /ota/rollouts/:id/cancel`
-Скасувати rollout, всі queued jobs → cancelled.
+### `POST /ota/rollouts/:id/pause` · `/resume` · `/cancel`
+**Ролі:** admin. `pause` ставить `paused_reason: manual`; `resume` знімає причину і приймає невдачі, що вже
+сталися; `cancel` переводить `queued` завдання в `cancelled`.
 
 ---
 
@@ -2909,3 +2927,4 @@ duration_ms, created_at, delivered_at, payload`.
 - 2026-09-08 — Життєвий цикл організації та експорт даних (епік 2.10): `closed` = вхід лише на читання (`423 organisation_closed` на зміни), `read_only_until` у `tenant` відповіді входу, purge через `CLOSED_RETENTION_DAYS`; `POST /tenants/:id/export`, `GET /tenants/:id/exports`, `GET /tenants/:id/exports/:exportId/download`; `DELETE /tenants/bulk` через спільну процедуру; `DELETE /users/:id` псевдонімізує аудит-лог.
 - 2026-09-08 — Інтеграції (epic 2.6): API-ключі `GET/POST/DELETE /api-keys` (Bearer `modesp_…`, scope read|write|admin, заборонена поверхня `403 api_key_scope`), вебхуки `GET/POST/PATCH/DELETE /webhooks`, `POST /webhooks/:id/test|rotate-secret`, `GET /webhooks/:id/deliveries`, `POST /webhooks/:id/deliveries/:did/redeliver`; підпис `X-ModESP-Signature v1=HMAC-SHA256`.
 - 2026-09-08 — OpenAPI 3.1 інтеграційної поверхні: `GET /api/docs` (Swagger UI), `GET /api/docs/openapi.json`, `docs/openapi.json` з перевіркою в CI (`npm run openapi:check`).
+- 2026-09-08 — Прошивки (epic 2.8): платформенна бібліотека (`global`, `visibility`, `PATCH /firmware/:id`), перевірки перед OTA (`409 precheck_failed`, `force`), `GET/POST /ota/rollback`, відкладання в розгортанні, `paused_reason`, `acked_failures`, `kind/forced/actor` у завданнях, безпечне `DELETE /firmware/:id`, вікно оновлень у `tenants/:id/settings` (`ota_window_from/to`).

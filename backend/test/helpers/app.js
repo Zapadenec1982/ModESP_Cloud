@@ -28,6 +28,8 @@ mqttAuth.revokeCredentials = async () => {};
 
 // Stub OTA service
 const otaSvc = require('../../src/services/ota');
+// The real implementation stays reachable for suites that exercise it (firmware-library.test.js)
+otaSvc.__real = { deploySingle: otaSvc.deploySingle, rollback: otaSvc.rollback, rollbackTarget: otaSvc.rollbackTarget, createRollout: otaSvc.createRollout, pauseRollout: otaSvc.pauseRollout, resumeRollout: otaSvc.resumeRollout, cancelRollout: otaSvc.cancelRollout };
 otaSvc.deploySingle = async (tenantId, slug, fwId, devId) => ({
   job_id: '00000000-0000-0000-0000-000000000099', device_id: devId,
   firmware_version: '1.0.0', status: 'sent',
@@ -116,8 +118,8 @@ function createTestApp() {
   app.use('/api/users',    authorize('admin'), require('../../src/routes/users'));
 
   // Admin-only routes (continued)
-  app.use('/api/firmware', authorize('admin'), require('../../src/routes/firmware'));
-  app.use('/api/ota',      authorize('admin'), require('../../src/routes/ota'));
+  app.use('/api/firmware', require('../../src/routes/firmware'));
+  app.use('/api/ota',      require('../../src/routes/ota'));
 
   // Superadmin-only
   app.use('/api/audit-log', requireSuperadmin, require('../../src/routes/audit'));

@@ -101,8 +101,13 @@
       brand_name: data.brand_name || '',
       brand_logo_url: data.brand_logo_url || '',
       brand_url: data.brand_url || '',
+      ota_from: toHm(data.ota_window_from),
+      ota_to: toHm(data.ota_window_to),
     }
   }
+  // OTA window (plan epic 2.8): minutes after local midnight ↔ "HH:MM"
+  const toHm = (m) => (m === null || m === undefined ? '' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
+  const fromHm = (v) => { if (!v) return null; const [h, mm] = String(v).split(':').map(Number); return Number.isFinite(h) && Number.isFinite(mm) ? h * 60 + mm : null }
   // Branding (plan feature `branding`, plan epic 2.5) — shown on public status
   // pages and HACCP PDFs of this organisation and of the clients it runs.
   $: canBrand = !!tenant && Array.isArray(tenant.features) && tenant.features.includes('branding')
@@ -134,6 +139,8 @@
         offline_threshold_ms: fromSec(form.offline_sec),
         offline_alarm_delay_ms: fromMin(form.offline_alarm_min),
         ack_escalation_min: form.ack_min === '' ? null : Number(form.ack_min),
+        ota_window_from: fromHm(form.ota_from),
+        ota_window_to: fromHm(form.ota_to),
         ...($isSuperAdmin ? { raw_retention_days: form.raw_retention_days === '' ? null : Number(form.raw_retention_days) } : {}),
         ...(canBrand ? { brand_name: form.brand_name.trim() || null, brand_logo_url: form.brand_logo_url.trim() || null, brand_url: form.brand_url.trim() || null } : {}),
       })
@@ -226,6 +233,13 @@
         <label class="field"><span>{$t('settings.offline_threshold')}</span><input class="input" type="number" min="30" max="3600" bind:value={form.offline_sec} placeholder={toSec(settings.defaults.offline_threshold_ms)} /></label>
         <label class="field"><span>{$t('settings.offline_alarm_delay')}</span><input class="input" type="number" min="0" max="1440" bind:value={form.offline_alarm_min} placeholder={toMin(settings.defaults.offline_alarm_delay_ms)} /></label>
         <label class="field"><span>{$t('settings.ack_escalation')}</span><input class="input" type="number" min="1" max="1440" bind:value={form.ack_min} placeholder={settings.defaults.ack_escalation_min} /></label>
+      </div>
+
+      <div class="section-header"><Icon name="upload" size={16} /><span>{$t('settings.ota_title')}</span></div>
+      <p class="hint">{$t('settings.ota_hint')}</p>
+      <div class="form-grid">
+        <label class="field"><span>{$t('settings.ota_from')}</span><input class="input" type="time" bind:value={form.ota_from} /></label>
+        <label class="field"><span>{$t('settings.ota_to')}</span><input class="input" type="time" bind:value={form.ota_to} /></label>
       </div>
 
       {#if canBrand}

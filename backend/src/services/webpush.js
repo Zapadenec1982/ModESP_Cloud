@@ -41,19 +41,19 @@ const ALARM_NAMES = {
 
 const W = {
   uk: { test_title: 'ModESP Cloud — Тест', test_body: 'Тестове сповіщення надіслано успішно.',
-        wo_title: '📋 Наряд #{0}: {1}', hint_title: '🔧 Аварія повторюється', hint_body: '{0}× за {1} дн.',
+        wo_title: '📋 Наряд #{0}: {1}', hint_title: '🔧 Аварія повторюється', hint_body: '{0}× за {1} дн.', rollout_completed: '✅ Розгортання {0} завершено', rollout_paused: '⚠️ Розгортання {0} зупинено', rollout_body: '{0} успішно, {1} невдало з {2}',
         offline_title: '⚠️ {0} — офлайн', offline_body: 'Пристрій не відповідає',
         cleared: '✅ {0} — знято', escalation: '⏫ {0} хв без підтвердження: {1}' },
   en: { test_title: 'ModESP Cloud — Test', test_body: 'Test notification sent successfully.',
-        wo_title: '📋 Work order #{0}: {1}', hint_title: '🔧 Recurring alarm', hint_body: '{0}× in {1} days',
+        wo_title: '📋 Work order #{0}: {1}', hint_title: '🔧 Recurring alarm', hint_body: '{0}× in {1} days', rollout_completed: '✅ Rollout {0} completed', rollout_paused: '⚠️ Rollout {0} paused', rollout_body: '{0} succeeded, {1} failed of {2}',
         offline_title: '⚠️ {0} — offline', offline_body: 'Device is not responding',
         cleared: '✅ {0} — cleared', escalation: '⏫ {0} min unacknowledged: {1}' },
   pl: { test_title: 'ModESP Cloud — Test', test_body: 'Powiadomienie testowe wysłane pomyślnie.',
-        wo_title: '📋 Zlecenie #{0}: {1}', hint_title: '🔧 Alarm się powtarza', hint_body: '{0}× w {1} dni',
+        wo_title: '📋 Zlecenie #{0}: {1}', hint_title: '🔧 Alarm się powtarza', hint_body: '{0}× w {1} dni', rollout_completed: '✅ Wdrożenie {0} zakończone', rollout_paused: '⚠️ Wdrożenie {0} wstrzymane', rollout_body: '{0} udanych, {1} nieudanych z {2}',
         offline_title: '⚠️ {0} — offline', offline_body: 'Urządzenie nie odpowiada',
         cleared: '✅ {0} — ustąpił', escalation: '⏫ {0} min bez potwierdzenia: {1}' },
   de: { test_title: 'ModESP Cloud — Test', test_body: 'Testbenachrichtigung erfolgreich gesendet.',
-        wo_title: '📋 Auftrag #{0}: {1}', hint_title: '🔧 Alarm wiederholt sich', hint_body: '{0}× in {1} Tagen',
+        wo_title: '📋 Auftrag #{0}: {1}', hint_title: '🔧 Alarm wiederholt sich', hint_body: '{0}× in {1} Tagen', rollout_completed: '✅ Rollout {0} abgeschlossen', rollout_paused: '⚠️ Rollout {0} angehalten', rollout_body: '{0} erfolgreich, {1} fehlgeschlagen von {2}',
         offline_title: '⚠️ {0} — offline', offline_body: 'Gerät antwortet nicht',
         cleared: '✅ {0} — behoben', escalation: '⏫ {0} Min. nicht quittiert: {1}' },
 };
@@ -94,6 +94,11 @@ function buildNotification(payload) {
     title = `${T.hint_title}${repeatName ? ': ' + repeatName : ''}`;
     body  = `${deviceName}${location}${payload.value != null ? ` · ${fmt(T.hint_body, payload.value, days)}` : ''}`;
     tag   = `hint-${payload.deviceId}-${src || payload.ruleKey}`;
+  } else if (payload.type === 'rollout') {
+    // A firmware rollout completed or paused itself (plan epic 2.8)
+    title = fmt(payload.event === 'paused' ? T.rollout_paused : T.rollout_completed, payload.firmwareVersion || '—');
+    body  = fmt(T.rollout_body, payload.succeeded ?? 0, payload.failed ?? 0, payload.total ?? 0);
+    tag   = `rollout-${payload.rolloutId}`;
   } else if (payload.type === 'device_offline') {
     title = fmt(T.offline_title, `${deviceName}${location}`);
     body  = T.offline_body;

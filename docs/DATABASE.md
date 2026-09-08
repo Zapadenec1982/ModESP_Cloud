@@ -1042,6 +1042,44 @@ CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries (next_attempt_at) 
 
 ---
 
+## Бібліотека прошивок, відкат і цілісність FK (migration 043)
+
+```sql
+ALTER TABLE firmwares ALTER COLUMN tenant_id DROP NOT NULL;                 -- NULL = платформенна прошивка
+ALTER TABLE firmwares ADD COLUMN visibility VARCHAR(8) NOT NULL DEFAULT 'all' CHECK (visibility IN ('all','selected'));
+CREATE UNIQUE INDEX uq_firmwares_global_version ON firmwares (version) WHERE tenant_id IS NULL;
+
+CREATE TABLE firmware_visibility (                                           -- вибіркова публікація
+  firmware_id UUID NOT NULL REFERENCES firmwares(id) ON DELETE CASCADE,
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  granted_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (firmware_id, tenant_id)
+);
+
+ALTER TABLE ota_jobs
+  ADD COLUMN firmware_version VARCHAR(32),          -- знімок: історія читається після видалення прошивки
+  ALTER COLUMN firmware_id DROP NOT NULL,           -- FK тепер ON DELETE SET NULL
+  ADD COLUMN created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN actor VARCHAR(255),                    -- e-mail або apikey:<назва>
+  ADD COLUMN kind VARCHAR(8) NOT NULL DEFAULT 'deploy' CHECK (kind IN ('deploy','rollback')),
+  ADD COLUMN deferrals INT NOT NULL DEFAULT 0, ADD COLUMN defer_reason VARCHAR(32),
+  ADD COLUMN forced BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE ota_rollouts
+  ADD COLUMN firmware_version VARCHAR(32), ALTER COLUMN firmware_id DROP NOT NULL,   -- FK ON DELETE SET NULL
+  ADD COLUMN paused_reason VARCHAR(16) CHECK (paused_reason IN ('manual','failures')),
+  ADD COLUMN acked_failures INT NOT NULL DEFAULT 0;  -- невдачі, прийняті адміністратором при resume
+
+ALTER TABLE tenant_settings ADD COLUMN ota_window_from SMALLINT, ADD COLUMN ota_window_to SMALLINT;  -- хвилини від місцевої півночі
+```
+
+> `UNIQUE (tenant_id, version)` не стримує рядки з `tenant_id IS NULL` (NULL ≠ NULL), тому платформенні
+> версії має окремий частковий унікальний індекс. `DELETE` прошивки більше не падає на FK: активні
+> завдання й розгортання блокують видалення на рівні маршруту (`409`), завершені зберігають версію.
+
+---
+
 ## Changelog
 
 - 2026-03-07 — Створено. Початкова схема.
@@ -1069,3 +1107,6 @@ CREATE INDEX idx_webhook_deliveries_due ON webhook_deliveries (next_attempt_at) 
   `audit_log_scrub_user()` / `audit_log_detach_tenant()` без вимкнення тригера.
 - 2026-09-08 — Міграція 042: інтеграції (`api_keys` з хешем ключа, `webhooks` із зашифрованим
   секретом, `webhook_deliveries` як черга доставки з ретраями).
+- 2026-09-08 — Міграція 043: бібліотека прошивок (`firmwares.tenant_id` NULL = платформенна, `visibility`,
+  `firmware_visibility`), `ota_jobs`/`ota_rollouts` з `firmware_version`, FK `ON DELETE SET NULL`, актор,
+  `kind`, відкладання; `paused_reason`/`acked_failures`; вікно оновлень `tenant_settings.ota_window_*`.

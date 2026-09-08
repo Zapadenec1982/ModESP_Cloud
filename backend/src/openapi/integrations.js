@@ -187,5 +187,12 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
   hook('hint.opened', 'A maintenance hint opened',
     z.object({ ...base, hint_id: z.number().int(), rule_key: z.string(), alarm_code: z.string().nullable(), severity: z.string().nullable(), value: z.number().nullable(), threshold: z.number().nullable(), window_hours: z.number().nullable() }),
     { ...woEx, work_order_id: undefined, status: undefined, assigned_to: undefined, hint_id: 12, rule_key: 'compressor_runtime', alarm_code: null, severity: 'warning', value: 0.93, threshold: 0.85, window_hours: 24 });
+  const rolloutData = z.object({
+    rollout_id: uuid, firmware_version: z.string().nullable(), total: z.number().int(), succeeded: z.number().int(), failed: z.number().int(),
+    fail_pct: z.number().int(), fail_threshold_pct: z.number().int().nullable(), paused_reason: z.enum(['manual', 'failures']).nullable(),
+  });
+  const rolloutEx = { rollout_id: '9c1a0d2e-3b4f-4a5b-8c6d-7e8f9a0b1c2d', firmware_version: '1.4.2', total: 40, succeeded: 38, failed: 2, fail_pct: 5, fail_threshold_pct: 50, paused_reason: null };
+  hook('ota.rollout_completed', 'A firmware rollout finished', rolloutData, rolloutEx);
+  hook('ota.rollout_paused', 'A firmware rollout paused itself after too many failures', rolloutData, { ...rolloutEx, succeeded: 4, failed: 6, fail_pct: 60, paused_reason: 'failures' });
   hook('ping', 'The test event from the Integrations page', z.object({}), {});
 };

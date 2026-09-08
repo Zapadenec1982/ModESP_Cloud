@@ -485,6 +485,35 @@ async function notifyHint(evt) {
 }
 
 /**
+ * A firmware rollout completed or paused itself (plan epic 2.8): the
+ * organisation's admins, no device (the rollout spans many), severity
+ * `warning` for a pause so a "critical only" preference mutes it and
+ * quiet hours apply — an admin reads it in the morning either way.
+ */
+async function notifyRollout(evt) {
+  if (channels.size === 0) return [];
+  const payload = {
+    type:            'rollout',
+    event:           evt.event,                       // completed | paused
+    rolloutId:       evt.rolloutId,
+    firmwareVersion: evt.firmwareVersion || null,
+    total:           evt.total ?? 0,
+    succeeded:       evt.succeeded ?? 0,
+    failed:          evt.failed ?? 0,
+    failPct:         evt.failPct ?? 0,
+    threshold:       evt.threshold ?? null,
+    deviceId:        null,
+    deviceName:      null,
+    location:        null,
+    alarmCode:       `rollout:${evt.event}`,
+    severity:        evt.event === 'paused' ? 'warning' : 'info',
+    active:          true,
+    timestamp:       new Date().toISOString(),
+  };
+  return dispatchToLinkedUsers(evt.tenantId, null, null, payload, { roleFilter: ['admin', 'superadmin'] });
+}
+
+/**
  * Work order assigned (plan epic 2.3): tell the assignee where to go. One
  * addressee, their own channel preferences, severity `warning` so a
  * "critical only" preference mutes it and quiet hours still apply (an order
@@ -625,7 +654,7 @@ function channelHealth() {
 }
 
 module.exports = {
-  registerChannel, start, shutdown, testSend, channelHealth, notifyHint, notifyWorkOrder,
+  registerChannel, start, shutdown, testSend, channelHealth, notifyHint, notifyRollout, notifyWorkOrder,
   // test/notifications-dispatch.test.js drives the dispatch without a broker
   __test: { withUserLocale, tenantLocale,
     handleAlarm, dispatchToLinkedUsers, runEscalations, evaluatePrefs, inQuietHours,

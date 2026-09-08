@@ -34,6 +34,7 @@ const EVENTS = [
   'device.offline', 'device.online',
   'work_order.created', 'work_order.updated', 'work_order.assigned', 'work_order.started', 'work_order.closed', 'work_order.cancelled',
   'hint.opened',
+  'ota.rollout_completed', 'ota.rollout_paused',
 ];
 const BACKOFF_MS = [60_000, 300_000, 1_800_000, 7_200_000, 43_200_000];   // attempt 1..5 → next try; then dead
 const MAX_ATTEMPTS = BACKOFF_MS.length;
@@ -257,6 +258,16 @@ async function onHint(evt) {
   await enqueue(tenantId, 'hint.opened', data);
 }
 
+/** A firmware rollout completed or paused itself (plan epic 2.8). */
+async function onRollout(evt) {
+  if (!evt.tenantId || !['completed', 'paused'].includes(evt.event)) return;
+  await enqueue(evt.tenantId, `ota.rollout_${evt.event}`, {
+    rollout_id: evt.rolloutId, firmware_version: evt.firmwareVersion || null,
+    total: evt.total ?? 0, succeeded: evt.succeeded ?? 0, failed: evt.failed ?? 0,
+    fail_pct: evt.failPct ?? 0, fail_threshold_pct: evt.threshold ?? null, paused_reason: evt.pausedReason || null,
+  });
+}
+
 const guard = (fn) => (evt) => fn(evt).catch(err => log().error({ err, event: evt }, 'Webhook mapping failed'));
 
 // ── Lifecycle ─────────────────────────────────────────────
@@ -269,6 +280,7 @@ function attach() {
   mqttSvc.on('device_status', guard(onDeviceStatus));
   mqttSvc.on('work_order',    guard(onWorkOrder));
   mqttSvc.on('hint',          guard(onHint));
+  mqttSvc.on('rollout',       guard(onRollout));
 }
 
 function start(log_) {
