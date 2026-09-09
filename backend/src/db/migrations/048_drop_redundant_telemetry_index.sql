@@ -1,0 +1,20 @@
+-- 048: drop the redundant telemetry lookup index.
+--
+-- Every monthly partition carried two indexes with the same leading columns:
+--
+--   idx_telemetry_lookup          (tenant_id, device_id, channel, time DESC)  -- schema.sql, propagated to each partition
+--   idx_telemetry_YYYY_MM_unique  (tenant_id, device_id, channel, time)       -- create_telemetry_partition(), needed for ON CONFLICT
+--
+-- A btree serves a range scan equally well in either direction, so the planner
+-- already chose the unique index and never touched the other one: EXPLAIN on the
+-- reports' own query (one device, one channel, a time range, ORDER BY time DESC)
+-- produces an identical "Index Scan Backward using idx_telemetry_YYYY_MM_unique"
+-- plan with and without it.
+--
+-- Measured on a 500k-row database: 69 MB of data carried 175 MB of indexes, half
+-- of that the copy this migration removes — 36% of the table's total footprint,
+-- plus the write cost of maintaining a second btree on every sample.
+--
+-- Dropping the index on the partitioned parent drops its child on every
+-- partition. The unique index stays: it is what dedups a buffered resync.
+DROP INDEX IF EXISTS idx_telemetry_lookup;

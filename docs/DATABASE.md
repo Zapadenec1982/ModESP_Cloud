@@ -179,8 +179,11 @@ CREATE TABLE telemetry_2026_03
   PARTITION OF telemetry
   FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
 
-CREATE INDEX idx_telemetry_lookup
-  ON telemetry(tenant_id, device_id, channel, time DESC);
+-- Індексу на батьківській таблиці немає: create_telemetry_partition() створює
+-- на кожній партиції унікальний індекс (tenant_id, device_id, channel, time),
+-- який обслуговує і дедуплікацію при досинку, і всі читання.
+CREATE UNIQUE INDEX idx_telemetry_2026_03_unique
+  ON telemetry_2026_03 (tenant_id, device_id, channel, time);
 ```
 
 > **Семплування:** Cloud кожні 5 хвилин зберігає snapshot temperature channels
