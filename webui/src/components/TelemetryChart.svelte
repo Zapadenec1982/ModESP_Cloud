@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import uPlot from 'uplot';
   import 'uplot/dist/uPlot.min.css';
-  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf, getSiteWeatherHistory } from '../lib/api.js';
+  import { getTelemetry, getDeviceEvents, exportTelemetryCsv, exportTelemetryPdf, exportServicePdf, getSiteWeatherHistory } from '../lib/api.js';
   import { liveState } from '../lib/stores.js';
   import { t, locale } from '../lib/i18n.js';
   import { toast } from '../lib/toast.js';
@@ -826,12 +826,14 @@
     }
   }
 
-  async function handleExportPdf() {
+  async function handleExportPdf(kind = 'haccp') {
     exporting = true;
     try {
       const fromISO = new Date(range.from).toISOString();
       const toISO = new Date(range.to).toISOString();
-      const meta = await exportTelemetryPdf(deviceId, fromISO, toISO, '1h', $locale);
+      const meta = kind === 'service'
+        ? await exportServicePdf(deviceId, fromISO, toISO, '1h', $locale)
+        : await exportTelemetryPdf(deviceId, fromISO, toISO, '1h', $locale);
       if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000);
       else toast.success($t('export.export_success'));
       if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000);
@@ -902,8 +904,11 @@
       <button class="btn-export" on:click={handleExportCsv} disabled={exporting || loading} title={$t('export.export_csv')}>
         CSV
       </button>
-      <button class="btn-export btn-export-pdf" on:click={handleExportPdf} disabled={exporting || loading} title={$t('export.export_pdf')}>
-        {exporting ? $t('export.exporting') : 'PDF'}
+      <button class="btn-export btn-export-pdf" on:click={() => handleExportPdf('haccp')} disabled={exporting || loading} title={$t('export.export_pdf')}>
+        {exporting ? $t('export.exporting') : 'HACCP PDF'}
+      </button>
+      <button class="btn-export" on:click={() => handleExportPdf('service')} disabled={exporting || loading} title={$t('export.service_pdf')}>
+        {$t('export.service_short')}
       </button>
     </div>
   </div>

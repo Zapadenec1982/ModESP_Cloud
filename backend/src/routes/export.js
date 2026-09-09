@@ -6,6 +6,7 @@ const db            = require('../services/db');
 const planMw        = require('../middleware/plan');
 const { requireFeature } = planMw;
 const haccp         = require('../services/haccp-report');
+const serviceReport = require('../services/service-report');
 const { checkDeviceAccess, filterDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
 
@@ -366,6 +367,46 @@ deviceRouter.get('/:id/telemetry/export.pdf', requireFeature('reports'), checkDe
   }
 });
 
+// ── GET /api/devices/:id/telemetry/service.pdf — the technician's report from the same data ──
+deviceRouter.get('/:id/telemetry/service.pdf', requireFeature('reports'), checkDeviceAccess(), async (req, res, next) => {
+  try {
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const device = await resolveDevice(req.params.id, req.tenantId, isSuperadmin);
+    if (!device) {
+      return res.status(404).json({ error: 'not_found', message: `Device ${req.params.id} not found`, status: 404 });
+    }
+    const tenant = await loadTenant(device.tenant_id);
+    const range = parseTimeRange(req.query, haccp.HOURLY_MAX_DAYS);
+    if (!range) {
+      return res.status(400).json({ error: 'validation_failed', message: 'Invalid from/to dates', status: 400 });
+    }
+    const bucketKey = req.query.bucket || '1h';
+    if (!haccp.BUCKETS[bucketKey]) {
+      return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
+    }
+    const lang = haccp.pickLang(req.query.lang);
+    const { rows: siteRows } = await db.query('SELECT site_id FROM devices WHERE id = $1', [device.id]);
+    const site = await loadSite(siteRows[0]?.site_id, device.tenant_id);
+
+    const result = await serviceReport.generate({
+      query: (sql, params) => db.query(sql, params),
+      kind: 'device', tenant, site, devices: [device], channels: parseChannels(req.query),
+      from: range.from, to: range.to, bucketKey, lang, rawRetentionDays: tenant.retention_days,
+      generatedBy: req.user?.email || 'system',
+    });
+    if (result.empty) {
+      return res.status(404).json({ error: 'no_data', message: 'No telemetry data for this period', status: 404 });
+    }
+    req.auditContext = {
+      action: 'export.service_pdf', entityId: device.mqtt_device_id,
+      changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, lang },
+    };
+    sendPdf(res, result, `service_${device.mqtt_device_id}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`);
+  } catch (err) {
+    reportError(res, err, next);
+  }
+});
+
 // ── GET /api/sites/:id/export.pdf — one document for every device of a site ──
 siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, next) => {
   try {
@@ -422,6 +463,67 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
       changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, devices: devices.length, lang },
     };
     sendPdf(res, result, `haccp_site_${site.name.replace(/[^\w-]+/g, '_')}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`);
+  } catch (err) {
+    reportError(res, err, next);
+  }
+});
+
+// ── GET /api/sites/:id/service.pdf — service report for every device of a site ──
+siteRouter.get('/:id/service.pdf', requireFeature('reports'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!isUuidFormat(id)) {
+      return res.status(404).json({ error: 'not_found', message: 'Site not found', status: 404 });
+    }
+    const isSuperadmin = req.user && req.user.role === 'superadmin';
+    const { rows: siteRows } = await db.query(
+      `SELECT id, tenant_id, name, address_line, city, region, country, timezone, haccp_excursion_min FROM sites WHERE id = $1${isSuperadmin ? '' : ' AND tenant_id = $2'}`,
+      isSuperadmin ? [id] : [id, req.tenantId]
+    );
+    if (siteRows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: 'Site not found', status: 404 });
+    }
+    const site = siteRows[0];
+    // Technicians / viewers need a site grant (admins see every site of their organisation)
+    if (req.user && req.user.role !== 'admin' && !isSuperadmin && !req.user.apiKey) {
+      const { rows: grant } = await db.query(
+        'SELECT 1 FROM user_sites WHERE site_id = $1 AND tenant_id = $2 AND user_id = $3', [site.id, site.tenant_id, req.user.id]);
+      if (grant.length === 0) {
+        return res.status(403).json({ error: 'forbidden', message: 'Site access denied', status: 403 });
+      }
+    }
+    const tenant = await loadTenant(site.tenant_id);
+    const range = parseTimeRange(req.query, haccp.HOURLY_MAX_DAYS);
+    if (!range) {
+      return res.status(400).json({ error: 'validation_failed', message: 'Invalid from/to dates', status: 400 });
+    }
+    const bucketKey = req.query.bucket || '1h';
+    if (!haccp.BUCKETS[bucketKey]) {
+      return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
+    }
+    const { rows: devices } = await db.query(
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
+         FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
+      [site.id, site.tenant_id]
+    );
+    if (devices.length === 0) {
+      return res.status(404).json({ error: 'no_data', message: 'No devices on this site', status: 404 });
+    }
+    const lang = haccp.pickLang(req.query.lang);
+    const result = await serviceReport.generate({
+      query: (sql, params) => db.query(sql, params),
+      kind: 'site', tenant, site, devices, channels: parseChannels(req.query),
+      from: range.from, to: range.to, bucketKey, lang, rawRetentionDays: tenant.retention_days,
+      generatedBy: req.user?.email || 'system',
+    });
+    if (result.empty) {
+      return res.status(404).json({ error: 'no_data', message: 'No telemetry data for this period', status: 404 });
+    }
+    req.auditContext = {
+      action: 'export.service_site_pdf', entityId: site.id,
+      changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, devices: devices.length, lang },
+    };
+    sendPdf(res, result, `service_site_${site.name.replace(/[^\w-]+/g, '_')}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`);
   } catch (err) {
     reportError(res, err, next);
   }

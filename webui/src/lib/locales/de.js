@@ -1791,6 +1791,7 @@ export default {
     type_haccp: 'HACCP (Temperatur)',
     type_alarms: 'Alarme',
     type_energy: 'Energieverbrauch',
+    type_service: 'Service',
     cadence_monthly: 'Monatlich',
     cadence_weekly: 'Wöchentlich',
     form_hint: 'Der Bericht geht um 06:00 Ortszeit des Standorts am 1. (monatlich) oder am Montag (wöchentlich) für den gerade beendeten Zeitraum hinaus. „Alle Standorte“ schickt eine E-Mail mit einem eigenen PDF je Standort.',
@@ -1853,6 +1854,13 @@ export default {
     site_report_hint: 'Ein Dokument für alle aktiven Geräte des Standorts ({0}). Der Bericht verwendet die aktuelle Oberflächensprache.',
     verify_hint: 'Jeder Bericht erhält einen Prüfcode und einen SHA-256-Fingerabdruck, die ein Prüfer auf der öffentlichen Seite abgleichen kann.',
     no_data: 'Keine Daten für den gewählten Zeitraum',
+    service_pdf: 'Servicebericht (PDF)',
+    service_short: 'Service-PDF',
+    service_report: 'Servicebericht',
+    report_type: 'Berichtstyp',
+    type_haccp: 'HACCP-Protokoll — für den Prüfer',
+    type_service: 'Servicebericht — für den Techniker',
+    service_hint: 'Reglereinstellungen, alle Temperaturkanäle mit Diagramm, Verdichter- und Abtaubetrieb, Alarme, Verbindung, Hinweise, Aufträge und Serviceeinträge, technisches Protokoll.',
   },
 
   // ── Energieüberwachung ──

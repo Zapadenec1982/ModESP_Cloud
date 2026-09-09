@@ -821,6 +821,9 @@ module.exports = {
   BUCKETS, RAW_MAX_DAYS, HOURLY_MAX_DAYS, HOURLY_RETENTION_DAYS,
   // scripts/check-locales.js
   STRINGS,
+  // shared with services/service-report.js
+  helpers: { fetchSeries, summarize, fetchRaw, stepOf, defrostIntervals, detectExcursions, detectGaps, limitsFor, toleranceOf, limitSentence,
+             localParts, fmtDuration, tpl, num, fmt1, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS },
   __test: { limitsFor, toleranceOf, limitSentence, limitShort, stepOf, defrostIntervals, detectExcursions, detectGaps, actionFor,
             buildRows, collectDevice, buildDocument, localParts, fmtDuration, tpl },
 };

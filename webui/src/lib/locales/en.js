@@ -1791,6 +1791,7 @@ export default {
     type_haccp: 'HACCP (temperature)',
     type_alarms: 'Alarms',
     type_energy: 'Energy',
+    type_service: 'Service',
     cadence_monthly: 'Monthly',
     cadence_weekly: 'Weekly',
     form_hint: 'The report goes out at 06:00 site local time on the 1st (monthly) or on Monday (weekly) for the period that has just ended. "All sites" sends one e-mail with a separate PDF per site.',
@@ -1853,6 +1854,13 @@ export default {
     site_report_hint: 'One document for every active device of the site ({0}). The report uses the current interface language.',
     verify_hint: 'Every report gets a verification code and a SHA-256 fingerprint that an inspector can check on the public page.',
     no_data: 'No data for the selected period',
+    service_pdf: 'Service report (PDF)',
+    service_short: 'Service PDF',
+    service_report: 'Service report',
+    report_type: 'Report type',
+    type_haccp: 'HACCP log — for the inspector',
+    type_service: 'Service report — for the technician',
+    service_hint: 'Controller settings, every temperature channel with a chart, compressor and defrost operation, alarms, connectivity, hints, work orders and service records, engineering log.',
   },
 
   // ── Energy Monitoring ──

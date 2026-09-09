@@ -202,7 +202,7 @@ router.get('/', filterDeviceAccess(), async (req, res) => {
   try {
     const params = [req.tenantId];
     let where = 'WHERE r.tenant_id = $1';
-    if (req.query.type && scheduler.TYPES.includes(req.query.type)) { params.push(req.query.type); where += ` AND r.report_type = $${params.length}`; }
+    if (req.query.type && [...scheduler.TYPES, 'service'].includes(req.query.type)) { params.push(req.query.type); where += ` AND r.report_type = $${params.length}`; }
     if (req.query.site_id && isUuidFormat(req.query.site_id)) { params.push(req.query.site_id); where += ` AND r.site_id = $${params.length}`; }
     if (req.query.scheduled === 'true') where += ' AND r.schedule_id IS NOT NULL';
     where += accessScope(req, params);
