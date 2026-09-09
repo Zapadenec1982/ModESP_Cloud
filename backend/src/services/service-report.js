@@ -35,6 +35,7 @@ const STRINGS = {
     summary: 'Температури за період', channel: 'Канал', min: 'Мін °C', max: 'Макс °C', avg: 'Сер. °C', samples: 'Вимірювань',
     ch: { air: 'Повітря', evap: 'Випарник', cond: 'Конденсатор', setpoint: 'Уставка', comp: 'Компресор', defrost: 'Відтайка' },
     delta_t: 'ΔT повітря − випарник (сер.)', cond_max: 'Конденсатор, макс.',
+    channels_absent: 'Канали {0} за цей період відсутні: їх або не передає прилад, або період старший за термін зберігання інженерних каналів (повітря і відтайка зберігаються довше — їх потребує HACCP-журнал).',
     chart: 'Графік', chart_legend: 'синя — повітря, зелена — випарник, сіра пунктирна — уставка, червона — межа HACCP',
     operation: 'Робота обладнання', comp_duty: 'Компресор: частка часу', comp_starts: 'Пусків компресора', comp_longest: 'Найдовша робота без зупинки', comp_per_hour: 'пусків/год',
     defrost_cycles: 'Циклів відтайки', defrost_total: 'Загальна тривалість відтайки', defrost_avg: 'Середня тривалість відтайки',
@@ -66,6 +67,7 @@ const STRINGS = {
     summary: 'Temperatures over the period', channel: 'Channel', min: 'Min °C', max: 'Max °C', avg: 'Avg °C', samples: 'Samples',
     ch: { air: 'Air', evap: 'Evaporator', cond: 'Condenser', setpoint: 'Setpoint', comp: 'Compressor', defrost: 'Defrost' },
     delta_t: 'ΔT air − evaporator (avg)', cond_max: 'Condenser, max',
+    channels_absent: 'Channels {0} are absent for this period: either the controller does not report them, or the period predates the retention of the engineering channels (air and defrost are kept longer — the HACCP journal needs them).',
     chart: 'Chart', chart_legend: 'blue — air, green — evaporator, grey dashed — setpoint, red — HACCP limit',
     operation: 'Equipment operation', comp_duty: 'Compressor: share of time', comp_starts: 'Compressor starts', comp_longest: 'Longest uninterrupted run', comp_per_hour: 'starts/h',
     defrost_cycles: 'Defrost cycles', defrost_total: 'Total defrost time', defrost_avg: 'Average defrost duration',
@@ -97,6 +99,7 @@ const STRINGS = {
     summary: 'Temperatury w okresie', channel: 'Kanał', min: 'Min °C', max: 'Maks °C', avg: 'Śr. °C', samples: 'Pomiary',
     ch: { air: 'Powietrze', evap: 'Parownik', cond: 'Skraplacz', setpoint: 'Nastawa', comp: 'Sprężarka', defrost: 'Odszranianie' },
     delta_t: 'ΔT powietrze − parownik (śr.)', cond_max: 'Skraplacz, maks.',
+    channels_absent: 'Kanały {0} są nieobecne w tym okresie: albo sterownik ich nie przesyła, albo okres jest starszy niż czas przechowywania kanałów inżynierskich (powietrze i odszranianie są przechowywane dłużej — potrzebuje ich dziennik HACCP).',
     chart: 'Wykres', chart_legend: 'niebieska — powietrze, zielona — parownik, szara przerywana — nastawa, czerwona — limit HACCP',
     operation: 'Praca urządzenia', comp_duty: 'Sprężarka: udział czasu', comp_starts: 'Startów sprężarki', comp_longest: 'Najdłuższa praca bez przerwy', comp_per_hour: 'startów/h',
     defrost_cycles: 'Cykli odszraniania', defrost_total: 'Łączny czas odszraniania', defrost_avg: 'Średni czas odszraniania',
@@ -128,6 +131,7 @@ const STRINGS = {
     summary: 'Temperaturen im Zeitraum', channel: 'Kanal', min: 'Min °C', max: 'Max °C', avg: 'Mittel °C', samples: 'Messungen',
     ch: { air: 'Luft', evap: 'Verdampfer', cond: 'Verflüssiger', setpoint: 'Sollwert', comp: 'Verdichter', defrost: 'Abtauung' },
     delta_t: 'ΔT Luft − Verdampfer (Mittel)', cond_max: 'Verflüssiger, max.',
+    channels_absent: 'Die Kanäle {0} fehlen für diesen Zeitraum: Entweder meldet der Regler sie nicht, oder der Zeitraum liegt vor der Aufbewahrungsfrist der technischen Kanäle (Luft und Abtauung werden länger gespeichert — das HACCP-Protokoll braucht sie).',
     chart: 'Diagramm', chart_legend: 'blau — Luft, grün — Verdampfer, grau gestrichelt — Sollwert, rot — HACCP-Grenzwert',
     operation: 'Betrieb der Anlage', comp_duty: 'Verdichter: Zeitanteil', comp_starts: 'Verdichterstarts', comp_longest: 'Längster Lauf ohne Pause', comp_per_hour: 'Starts/h',
     defrost_cycles: 'Abtauzyklen', defrost_total: 'Abtauzeit gesamt', defrost_avg: 'Mittlere Abtaudauer',
@@ -451,6 +455,14 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
   if (d.summary.cond) derived.push(`${S.cond_max}: ${fmt1(Number(d.summary.cond.max))} °C`);
   const derivedLine = derived.length ? { text: derived.join('   ·   '), fontSize: 8, color: GREY, margin: [0, 0, 0, 8] } : { text: '', margin: [0, 0, 0, 4] };
 
+  // Empty engineering columns are a fact worth explaining: a technician reading
+  // dashes should not conclude the sensors failed.
+  const ENGINEERING = ['evap', 'cond', 'setpoint', 'comp'];
+  const absent = d.summary.air ? ENGINEERING.filter(c => !d.summary[c]) : [];
+  const absentLine = absent.length
+    ? [{ text: tpl(S.channels_absent, absent.map(c => S.ch[c] || c).join(', ')), fontSize: 8, italics: true, color: GREY, margin: [0, 0, 0, 8] }]
+    : [];
+
   const svg = chartSvg({ buckets: d.buckets, from, to, tz, limits: d.limits, tolerance: d.tolerance });
   const chartBlock = svg ? [{ svg, width: CHART.w, margin: [0, 2, 0, 2] }, { text: S.chart_legend, fontSize: 7, color: GREY, margin: [0, 0, 0, 10] }] : [];
 
@@ -588,7 +600,7 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
   return [
     ...head,
     { text: S.settings, style: 'subHeader' }, settingsBlock,
-    { text: S.summary, style: 'subHeader' }, summaryTable, derivedLine,
+    { text: S.summary, style: 'subHeader' }, summaryTable, derivedLine, ...absentLine,
     ...(svg ? [{ text: S.chart, style: 'subHeader' }] : []), ...chartBlock,
     { text: S.operation, style: 'subHeader' }, opBlock,
     { text: S.alarms, style: 'subHeader' }, alarmsBlock,
