@@ -1791,6 +1791,7 @@ export default {
     type_haccp: 'HACCP (temperatura)',
     type_alarms: 'Alarmy',
     type_energy: 'Zużycie energii',
+    type_service: 'Serwisowy',
     cadence_monthly: 'Co miesiąc',
     cadence_weekly: 'Co tydzień',
     form_hint: 'Raport wychodzi o 06:00 czasu lokalnego lokalizacji 1. dnia miesiąca (miesięczny) lub w poniedziałek (tygodniowy) za właśnie zakończony okres. „Wszystkie lokalizacje” — jeden e-mail z osobnym PDF na każdą lokalizację.',
@@ -1853,6 +1854,13 @@ export default {
     site_report_hint: 'Jeden dokument dla wszystkich aktywnych urządzeń lokalizacji ({0}). Raport używa bieżącego języka interfejsu.',
     verify_hint: 'Każdy raport otrzymuje kod weryfikacyjny i odcisk SHA-256, które inspektor może sprawdzić na stronie publicznej.',
     no_data: 'Brak danych za wybrany okres',
+    service_pdf: 'Raport serwisowy (PDF)',
+    service_short: 'Serwis PDF',
+    service_report: 'Raport serwisowy',
+    report_type: 'Typ raportu',
+    type_haccp: 'Dziennik HACCP — dla inspektora',
+    type_service: 'Raport serwisowy — dla technika',
+    service_hint: 'Ustawienia sterownika, wszystkie kanały temperatur z wykresem, praca sprężarki i odszraniania, alarmy, łączność, wskazówki, zlecenia i wpisy serwisowe, dziennik inżynierski.',
   },
 
   // ── Monitorowanie energii ──

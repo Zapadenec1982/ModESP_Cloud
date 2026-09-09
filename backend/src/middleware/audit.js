@@ -73,7 +73,7 @@ function createAuditMiddleware(logger) {
   };
 }
 
-const EXPORT_PATH_RE = /\/export(\.(pdf|csv)|\/)/;
+const EXPORT_PATH_RE = /\/(export|service)(\.(pdf|csv)|\/)/;
 function isExportPath(req) {
   const fullPath = (req.baseUrl || '') + (req.path || '');
   return req.method === 'GET' && EXPORT_PATH_RE.test(fullPath);

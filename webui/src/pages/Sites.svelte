@@ -22,6 +22,7 @@
     getGeocodeStatus, geocodePendingSites,
     getSitePublicLinks, createSitePublicLink, revokeSitePublicLink,
     exportSitePdf,
+    exportSiteServicePdf,
   } from '../lib/api.js'
   import { isAdmin, canWrite } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
@@ -260,6 +261,7 @@
   let reportFrom = ''
   let reportTo = ''
   let reportBusy = false
+  let reportType = 'haccp'   // haccp | service
 
   function isoDay(d) { return d.toISOString().slice(0, 10) }
 
@@ -275,7 +277,9 @@
     try {
       const from = new Date(reportFrom + 'T00:00:00').toISOString()
       const to = new Date(reportTo + 'T23:59:59').toISOString()
-      const meta = await exportSitePdf(reportSite.id, from, to, '1h', $locale)
+      const meta = reportType === 'service'
+        ? await exportSiteServicePdf(reportSite.id, from, to, '1h', $locale)
+        : await exportSitePdf(reportSite.id, from, to, '1h', $locale)
       if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000)
       else toast.success($t('export.export_success'))
       if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000)
@@ -617,6 +621,14 @@
       </div>
       <div class="modal-body">
         <p class="hint">{$t('export.site_report_hint', reportSite.device_count)}</p>
+        <div class="form-group">
+          <label for="report-type">{$t('export.report_type')}</label>
+          <select id="report-type" bind:value={reportType} disabled={reportBusy}>
+            <option value="haccp">{$t('export.type_haccp')}</option>
+            <option value="service">{$t('export.type_service')}</option>
+          </select>
+          <p class="hint">{reportType === 'service' ? $t('export.service_hint') : $t('export.verify_hint')}</p>
+        </div>
         <div class="form-row">
           <div class="form-group grow">
             <label for="report-from">{$t('export.period_from')}</label>
@@ -627,14 +639,13 @@
             <input id="report-to" type="date" bind:value={reportTo} min={reportFrom} disabled={reportBusy} />
           </div>
         </div>
-        <p class="hint">{$t('export.verify_hint')}</p>
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" on:click={() => (reportSite = null)} disabled={reportBusy}>
           {$t('common.cancel')}
         </button>
         <button class="btn btn-primary" on:click={runReport} disabled={reportBusy || !reportFrom || !reportTo}>
-          {reportBusy ? $t('export.exporting') : $t('export.export_pdf')}
+          {reportBusy ? $t('export.exporting') : (reportType === 'service' ? $t('export.service_pdf') : $t('export.export_pdf'))}
         </button>
       </div>
     </div>

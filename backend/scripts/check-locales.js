@@ -20,6 +20,7 @@ const webpush  = require('../src/services/webpush');
 const invoicePdf = require('../src/services/invoice-pdf');
 const periodReports = require('../src/services/period-reports');
 const haccpReport = require('../src/services/haccp-report');
+const serviceReport = require('../src/services/service-report');
 
 const flatten = (obj, prefix = '', out = new Set()) => {
   for (const [k, v] of Object.entries(obj)) {
@@ -50,5 +51,6 @@ for (const [name, dict] of Object.entries(webpush.__strings)) check(`webpush.${n
 check('invoice-pdf.STRINGS', invoicePdf.STRINGS);
 check('period-reports.STRINGS', periodReports.STRINGS);
 check('haccp-report.STRINGS', haccpReport.STRINGS);
+check('service-report.STRINGS', serviceReport.STRINGS);
 
 process.exit(failed ? 1 : 0);

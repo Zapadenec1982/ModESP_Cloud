@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql)](https://www.postgresql.org/)
 [![Svelte](https://img.shields.io/badge/Svelte-4-FF3E00?logo=svelte)](https://svelte.dev/)
 [![License](https://img.shields.io/badge/License-PolyForm%20NC-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-870-brightgreen)](backend/test)
+[![Tests](https://img.shields.io/badge/Tests-880-brightgreen)](backend/test)
 
 > **Production-deployed** on Hetzner VPS — managing real ESP32 controllers via MQTT over TLS.
 
@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 870 tests across 72 test files
+│   ├── test/                        # 880 tests across 73 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -204,7 +204,7 @@ ModESP_Cloud/
 | **OTA** | `POST /ota/deploy`, `/ota/rollout`, rollout lifecycle | Single + batch deployment with board validation |
 | **Discovery** | `GET /devices/pending`, `POST .../assign`, `POST /devices/register` | Zero-touch onboarding with bootstrap provisioning |
 | **Events** | `GET /devices/:id/events` | Compressor cycles, defrost events, alarm transitions |
-| **Export** | `GET .../export.csv`, `GET .../export.pdf` | HACCP CSV/PDF reports (telemetry, alarms, devices) |
+| **Export** | `GET .../export.csv`, `GET .../export.pdf`, `GET .../service.pdf` | HACCP CSV/PDF reports (telemetry, alarms, devices) and the technician's service report |
 | **Notifications** | `GET/POST/DELETE /notifications/subscribers` | FCM + Telegram + Web Push subscriptions |
 | **Audit** | `GET /audit-log` | Immutable audit trail (superadmin, filterable) |
 
@@ -249,7 +249,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**870 integration tests** across 72 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**880 integration tests** across 73 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|

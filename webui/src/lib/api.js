@@ -1567,6 +1567,24 @@ export function exportTelemetryPdf(deviceId, from, to, bucket = '1h', lang) {
   return downloadFile(`/devices/${deviceId}/telemetry/export.pdf?${qs}`, fname);
 }
 
+/** The technician's service report for one device — same data set, engineering view. */
+export function exportServicePdf(deviceId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
+  const fname = `service_${deviceId}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/devices/${deviceId}/telemetry/service.pdf?${qs}`, fname);
+}
+
+/** Service report for every active device of a site. */
+export function exportSiteServicePdf(siteId, from, to, bucket = '1h', lang) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
+  const fname = `service_site_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+  return downloadFile(`/sites/${siteId}/service.pdf?${qs}`, fname);
+}
+
 /** One HACCP document for every active device of a site (admins, or a granted technician). */
 export function exportSitePdf(siteId, from, to, bucket = '1h', lang) {
   const params = { from, to, bucket };
