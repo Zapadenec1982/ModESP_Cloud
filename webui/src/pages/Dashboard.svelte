@@ -142,7 +142,7 @@
     }
     if (f === 'online')  result = result.filter(d => d.online)
     if (f === 'offline') result = result.filter(d => !d.online && d.status !== 'pending')
-    if (f === 'alarm')   result = result.filter(d => d.alarm_active)
+    if (f === 'alarm')   result = result.filter(d => (d.alarms_open || 0) > 0)
     return result
   }
 
@@ -159,7 +159,11 @@
   // Fleet stats derived from device list
   $: onlineCount = $devices.filter(d => d.online).length
   $: totalCount = $devices.length
-  $: alarmCount = $devices.filter(d => d.alarm_active).length
+  // Аварії = записи, які платформа відкрила і ще не закрила, тобто рівно те, що
+  // показує сторінка «Аварії». Зведений прапорець контролера (alarm_active) сюди
+  // не входить: він піднімається щойно відчиняються двері, до того як затримка
+  // вирішить, чи це взагалі аварія.
+  $: alarmCount = $devices.filter(d => (d.alarms_open || 0) > 0).length
   $: hintCount = $devices.filter(d => (d.hints_open || 0) > 0).length
 
   async function load() {
@@ -233,10 +237,12 @@
       ))
     }))
 
+    // Подія alarm несе запис аварії, а не стан приладу. Точне число приходить із
+    // наступним опитуванням; тут досить тримати ознаку живою.
     wsUnsubs.push(on('alarm', (msg) => {
       devices.update(list => list.map(d =>
         d.mqtt_device_id === msg.device_id
-          ? { ...d, alarm_active: msg.active }
+          ? { ...d, alarms_open: msg.active ? Math.max(1, d.alarms_open || 0) : 0 }
           : d
       ))
     }))

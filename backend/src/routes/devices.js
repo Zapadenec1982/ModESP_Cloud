@@ -141,16 +141,26 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
 
     const { rows } = await db.query(sql, params);
 
-    // Open maintenance hints per device (plan epic 2.4) — one grouped query,
-    // mqtt_device_id is unique platform-wide so no tenant key is needed here.
+    // Open hints and open alarms per device — two grouped queries. Both join back
+    // to devices on (mqtt_device_id, tenant_id): the id is unique platform-wide, but
+    // rows keyed by it survive a move to another organisation, so without the tenant
+    // leg the new owner would inherit the previous one's counters.
     const hintsOpen = new Map();
+    const alarmsOpen = new Map();
     if (rows.length > 0) {
-      const { rows: hintRows } = await db.query(
-        `SELECT device_id, count(*)::int AS n FROM maintenance_hints
-          WHERE closed_at IS NULL AND device_id = ANY($1) GROUP BY device_id`,
-        [rows.map(r => r.mqtt_device_id)]
-      );
+      const ids = rows.map(r => r.mqtt_device_id);
+      const [{ rows: hintRows }, { rows: alarmRows }] = await Promise.all([
+        db.query(
+          `SELECT h.device_id, count(*)::int AS n FROM maintenance_hints h
+             JOIN devices d ON d.mqtt_device_id = h.device_id AND d.tenant_id = h.tenant_id
+            WHERE h.closed_at IS NULL AND h.device_id = ANY($1) GROUP BY h.device_id`, [ids]),
+        db.query(
+          `SELECT a.device_id, count(*)::int AS n FROM alarms a
+             JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
+            WHERE a.active = true AND a.device_id = ANY($1) GROUP BY a.device_id`, [ids]),
+      ]);
       for (const h of hintRows) hintsOpen.set(h.device_id, h.n);
+      for (const a of alarmRows) alarmsOpen.set(a.device_id, a.n);
     }
 
     // Augment with live alarm_active from stateMap
@@ -160,6 +170,12 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
       return {
         ...row,
         hints_open:   hintsOpen.get(row.mqtt_device_id) || 0,
+        // alarms_open counts what the platform recorded and has not cleared — the
+        // same rows GET /alarms lists. alarm_active below is a different thing: the
+        // controller's own aggregate flag, true the moment a door opens, before the
+        // nuisance delay decides whether that is an alarm at all. Anything the UI
+        // labels "аварія" reads alarms_open; alarm_active is a live-state readout.
+        alarms_open:  alarmsOpen.get(row.mqtt_device_id) || 0,
         // Override online status with live data if available
         online:       meta ? meta.online : row.online,
         last_seen:    meta ? new Date(meta.lastSeen).toISOString() : row.last_seen,
