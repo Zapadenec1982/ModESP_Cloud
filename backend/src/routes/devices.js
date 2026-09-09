@@ -1521,12 +1521,21 @@ router.post('/:id/service-records', maybeAuthorize('admin', 'technician'), check
 // Remove a service record.
 router.delete('/:id/service-records/:recordId', maybeAuthorize('admin', 'technician'), checkDeviceAccess(), async (req, res, next) => {
   try {
-    const { recordId } = req.params;
-    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+    const { id, recordId } = req.params;
 
-    const { rowCount } = isSuperAdmin
-      ? await db.query(`DELETE FROM service_records WHERE id = $1`, [recordId])
-      : await db.query(`DELETE FROM service_records WHERE id = $1 AND tenant_id = $2`, [recordId, req.tenantId]);
+    // Resolve the device checkDeviceAccess() authorised and delete only ITS
+    // record. Without the device_id predicate a technician granted one device
+    // could delete any service record of the organisation, including the ones
+    // written automatically when a work order is closed.
+    const { where, params } = buildDeviceWhere(id, req);
+    const devRes = await db.query(`SELECT id, tenant_id FROM devices WHERE ${where}`, params);
+    if (devRes.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found', message: `Device ${id} not found`, status: 404 });
+    }
+
+    const { rowCount } = await db.query(
+      `DELETE FROM service_records WHERE id = $1 AND device_id = $2 AND tenant_id = $3`,
+      [recordId, devRes.rows[0].id, devRes.rows[0].tenant_id]);
 
     if (rowCount === 0) {
       return res.status(404).json({

@@ -245,6 +245,9 @@ router.get('/:code/download', filterDeviceAccess(), async (req, res) => {
     res.setHeader('X-Report-Sha256', row.sha256);
     res.setHeader('X-Report-Source', row.source);
     res.setHeader('Access-Control-Expose-Headers', 'X-Report-Code, X-Report-Sha256, X-Report-Source');
+    // An archived HACCP PDF leaving the system is the same compliance event as
+    // the on-demand export, which audits at export.haccp_pdf.
+    req.auditContext = { action: 'report.download', entityType: 'report', entityId: row.code, changes: { code: row.code, sha256: row.sha256, source: row.source } };
     res.end(row.pdf);
   } catch (err) {
     req.log?.error?.({ err }, 'Download report failed');

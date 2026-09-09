@@ -27,14 +27,21 @@ async function cleanDatabase() {
   // Disable audit immutability trigger temporarily
   await db.query('ALTER TABLE audit_log DISABLE TRIGGER trg_audit_log_immutable');
 
-  // geocode_cache is listed explicitly because it is the one new table with no
-  // foreign key — TRUNCATE ... CASCADE reaches sites, user_sites,
-  // weather_observations and site_public_links through tenants/users/devices,
-  // but a cached geocoder response would otherwise survive into the next test
-  // file and turn a stubbed provider miss into a silent cache hit.
+  // TRUNCATE ... CASCADE reaches sites, user_sites, weather_observations and
+  // site_public_links through tenants/users/devices. The tables below it cannot
+  // reach — the ones with no foreign key into that graph — are listed by name,
+  // or a row written by one test file survives into the next: a cached geocoder
+  // response turning a stubbed provider miss into a silent cache hit, an hourly
+  // archive row, seller requisites, a bootstrap password, a pilot request.
+  // plan_limits is deliberately NOT here: it is reference data seeded by
+  // migration 027 that tenants.plan points at.
   await db.query(`
     TRUNCATE TABLE
       geocode_cache,
+      telemetry_hourly,
+      billing_settings,
+      mqtt_bootstrap,
+      pilot_requests,
       audit_log,
       notification_log,
       notification_subscribers,
@@ -70,6 +77,10 @@ async function cleanDatabase() {
     VALUES ('00000000-0000-0000-0000-000000000000', 'System', 'system', 'system', true)
     ON CONFLICT (id) DO NOTHING
   `);
+
+  // billing_settings is a singleton (id = 1) every billing read expects to exist;
+  // put back the row migration 037 seeds, with its column defaults.
+  await db.query(`INSERT INTO billing_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
 
   // TRUNCATE tenants CASCADE reaches maintenance_rules through its FK and takes
   // the platform default (tenant_id NULL) with it; put back what migration 034 seeds.
