@@ -5,6 +5,7 @@ const { WebSocketServer } = require('ws');
 const mqttSvc = require('./mqtt');
 const db      = require('./db');
 const { verifyAccessToken } = require('./auth');
+const { grantedDeviceId, grantedMqttIds } = require('../middleware/device-access');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
@@ -23,6 +24,34 @@ const subscriptions = new Map();
  * @type {Set<import('ws').WebSocket>}
  */
 const globalListeners = new Set();
+
+/**
+ * How long a client's grant set is trusted before it is rebuilt. Grants change
+ * rarely (an admin edits them), so a minute of staleness costs a technician at
+ * most a minute before a newly granted device starts reporting live. The refresh
+ * runs off the broadcast path; the current set keeps being used until it lands.
+ */
+const DEVICE_SCOPE_TTL_MS = 60_000;
+
+/** Admins and superadmins see the whole organisation and need no per-device set. */
+function scopedByGrants(user) {
+  return AUTH_ENABLED && user && user.role !== 'admin' && user.role !== 'superadmin';
+}
+
+async function loadDeviceScope(ws) {
+  ws._deviceScopeAt = Date.now();
+  ws._deviceScope = await grantedMqttIds(ws._user.id, ws._user.tenantId);
+}
+
+/** Rebuild in the background when stale; never blocks a broadcast. */
+function refreshDeviceScopeIfStale(ws) {
+  if (ws._deviceScopeLoading) return;
+  if (Date.now() - (ws._deviceScopeAt || 0) < DEVICE_SCOPE_TTL_MS) return;
+  ws._deviceScopeLoading = true;
+  loadDeviceScope(ws)
+    .catch(err => logger.warn({ err, user: ws._user?.email }, 'WS device scope refresh failed'))
+    .finally(() => { ws._deviceScopeLoading = false; });
+}
 
 /**
  * Attach WebSocket server to an existing http.Server.
@@ -166,9 +195,7 @@ function handleClientMessage(ws, msg) {
       unsubscribe(ws, device_id);
       break;
     case 'subscribe_global':
-      globalListeners.add(ws);
-      sendJSON(ws, { type: 'subscribed_global' });
-      logger.debug({ user: ws._user?.email }, 'WS subscribe_global');
+      subscribeGlobal(ws);
       break;
     case 'unsubscribe_global':
       globalListeners.delete(ws);
@@ -176,6 +203,26 @@ function handleClientMessage(ws, msg) {
     default:
       sendJSON(ws, { type: 'error', message: `Unknown action: ${action}` });
   }
+}
+
+/**
+ * The tenant-wide feed the Alarms page and the map listen on. A client whose
+ * access is limited to certain devices gets its grant set loaded BEFORE the
+ * subscription is confirmed, so there is never a window in which events go out
+ * unfiltered — broadcastGlobal fails closed on a socket with no set.
+ */
+async function subscribeGlobal(ws) {
+  if (scopedByGrants(ws._user)) {
+    try {
+      await loadDeviceScope(ws);
+    } catch (err) {
+      logger.warn({ err, user: ws._user?.email }, 'WS subscribe_global: failed to load device scope');
+      return sendJSON(ws, { type: 'error', message: 'Failed to load access scope' });
+    }
+  }
+  globalListeners.add(ws);
+  sendJSON(ws, { type: 'subscribed_global' });
+  logger.debug({ user: ws._user?.email, scope: ws._deviceScope ? ws._deviceScope.size : 'all' }, 'WS subscribe_global');
 }
 
 async function subscribe(ws, deviceId) {
@@ -198,13 +245,13 @@ async function subscribe(ws, deviceId) {
       dbState = rows[0].last_state;
     }
 
-    // Per-device access check for non-admin/non-superadmin users
-    if (AUTH_ENABLED && ws._user && ws._user.role !== 'admin' && ws._user.role !== 'superadmin') {
-      const access = await db.query(
-        'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2',
-        [ws._user.id, rows[0].id]
-      );
-      if (access.rows.length === 0) {
+    // Per-device access check for non-admin/non-superadmin users. The same
+    // user_devices ∪ user_sites union REST uses: this used to read user_devices
+    // alone, so a technician who reaches a device through a site grant could open
+    // its page over REST and was refused live data on that very device.
+    if (scopedByGrants(ws._user)) {
+      const granted = await grantedDeviceId(ws._user.id, ws._user.tenantId, deviceId);
+      if (!granted) {
         return sendJSON(ws, { type: 'error', message: 'Device access denied' });
       }
     }
@@ -377,8 +424,37 @@ function broadcast(deviceId, payload) {
 }
 
 /**
- * Broadcast to all global listeners with tenant isolation.
- * Superadmins receive all events; others only receive events matching their tenantId.
+ * May this client see one tenant-wide event?
+ *
+ * Tenant isolation alone was not enough. The global channel carries every alarm,
+ * hint and work order of the organisation, and every signed-in user subscribes to
+ * it, so a viewer holding no grant at all was fed the device id, alarm code and
+ * severity of every cabinet in the company — while GET /alarms, filtered by the
+ * same grants, showed them nothing. The feed now answers the same question the
+ * REST list does.
+ *
+ * Fail closed: an event carrying no device_id reaches a grant-limited client only
+ * when it is addressed to them personally (their own work order). Anything new
+ * without device context stays inside the organisation's admins.
+ */
+function mayReceiveGlobal(ws, payload) {
+  const user = ws._user;
+  if (!AUTH_ENABLED || !user) return true;
+  if (user.role === 'superadmin') return true;
+
+  // Tenant isolation: default deny — an event without tenant context
+  // (pending_device, anything new) never leaves the platform scope.
+  if (!payload.tenant_id || payload.tenant_id !== user.tenantId) return false;
+  if (!scopedByGrants(user)) return true;          // admin: the whole organisation
+
+  refreshDeviceScopeIfStale(ws);
+  if (!ws._deviceScope) return false;              // no set loaded → nothing goes out
+  if (payload.device_id) return ws._deviceScope.has(payload.device_id);
+  return payload.type === 'work_order' && payload.assigned_to === user.id;
+}
+
+/**
+ * Broadcast to all global listeners, filtered per recipient by mayReceiveGlobal().
  */
 function broadcastGlobal(payload) {
   // debug, not info: the hourly maintenance sweep emits one of these per hint
@@ -390,13 +466,7 @@ function broadcastGlobal(payload) {
   let sent = 0;
   for (const ws of globalListeners) {
     if (ws.readyState !== 1 || ws.bufferedAmount >= WS_BACKPRESSURE_BYTES) continue;
-
-    // Tenant isolation: superadmin sees all; everyone else only events that
-    // carry their own tenant_id. Default deny — an event type without tenant
-    // context (pending_device, anything new) never leaves the platform scope.
-    if (AUTH_ENABLED && ws._user && ws._user.role !== 'superadmin') {
-      if (!payload.tenant_id || payload.tenant_id !== ws._user.tenantId) continue;
-    }
+    if (!mayReceiveGlobal(ws, payload)) continue;
 
     ws.send(data);
     sent++;
@@ -427,5 +497,5 @@ function shutdown() {
 module.exports = {
   attach, shutdown, issueWsTicket,
   // test/ws-isolation.test.js drives broadcastGlobal with fake sockets
-  __test: { broadcastGlobal, globalListeners, setLogger(l) { logger = l; } },
+  __test: { broadcastGlobal, mayReceiveGlobal, loadDeviceScope, globalListeners, DEVICE_SCOPE_TTL_MS, setLogger(l) { logger = l; } },
 };

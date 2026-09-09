@@ -45,6 +45,7 @@ function init(log_) {
 // Header aliases: export format → internal name (unlisted headers are
 // lower-cased with spaces → underscores, so "Site Name" needs no alias)
 const haccpPresets = require('../lib/haccp-presets');
+const { normalizeClaimCode, generateClaimCode } = require('../lib/claim-code');
 
 const CSV_HEADER_ALIASES = {
   'device id':        'mqtt_device_id',
@@ -64,6 +65,13 @@ const CSV_HEADER_ALIASES = {
 const CSV_FIELDS = {
   mqtt_device_id:  { required: true,  pattern: /^[A-Fa-f0-9]{6,12}$/, maxLen: 12 },
   name:            { required: true,  maxLen: 128 },
+  // The code printed on the controller. A pending controller belongs to the
+  // organisation that claims it with this code, and the import may take one only
+  // when that organisation is this one — either because it was claimed already
+  // (POST /devices/claim) or because the row carries the code. Without it the CSV
+  // was a way around the claim entirely: an admin who listed someone else's
+  // six-digit ids took their controllers out of their queue.
+  claim_code:      { required: false, pattern: /^[A-Za-z0-9\s-]{6,14}$/, maxLen: 14 },
   serial_number:   { required: false, maxLen: 64 },
   location:        { required: false, maxLen: 256 },
   model:           { required: false, maxLen: 64 },
@@ -85,7 +93,7 @@ const CSV_FIELDS = {
   haccp_product:   { required: false, maxLen: 96 },
 };
 const COLUMNS = Object.keys(CSV_FIELDS);
-const TEMPLATE_EXAMPLE = ['A1B2C3', 'Вітрина 1', 'SN-000123', 'Торговий зал, ліворуч', 'ModESP-VM4', '', '2026-01-15',
+const TEMPLATE_EXAMPLE = ['A1B2C3', 'Вітрина 1', 'K7M2QPXR', 'SN-000123', 'Торговий зал, ліворуч', 'ModESP-VM4', '', '2026-01-15',
   'Магазин №12', 'UA', 'Львівська область', 'Львів', 'вул. Городоцька 15', '79000',
   'freezer', '', '', '', 'заморожені напівфабрикати'];
 
@@ -318,24 +326,61 @@ async function recordImportGeocodeFailure(site, reason) {
 // ── Planning (in the request) ─────────────────────────────
 
 /**
+ * Would this row assign, pre-register, or be skipped — and why?
+ *
+ * One decision shared by the preview and the run, so the operator is never
+ * promised an assignment the run then refuses.
+ *
+ * A pending controller may be taken only by the organisation that claimed it.
+ * POST /devices/pending/:mqttId/assign has always enforced that; the import did
+ * not, so an admin who listed someone else's six-digit ids took their controllers
+ * out of their queue. A row may claim as it imports by carrying the code printed
+ * on the controller — the bulk form of POST /devices/claim, and the only way in
+ * besides having claimed the device beforehand.
+ *
+ * @param {object} row  the CSV row
+ * @param {object|undefined} dev  the devices row for this id, if any
+ * @returns {{action: 'assign'|'pre_register'|'skip', reason?: string}}
+ */
+function decideRow(row, dev, tenantId) {
+  if (!dev) return { action: 'pre_register' };
+  if (!(dev.status === 'pending' && dev.tenant_id === db.SYSTEM_TENANT_ID)) {
+    return { action: 'skip', reason: 'Device already active' };
+  }
+  if (dev.claimed_by_tenant_id === tenantId) return { action: 'assign' };
+  if (dev.claimed_by_tenant_id) return { action: 'skip', reason: 'Claimed by another organization' };
+
+  const rowCode = normalizeClaimCode(csvField(row, 'claim_code'));
+  if (rowCode && dev.claim_code && rowCode === dev.claim_code) return { action: 'assign' };
+  return {
+    action: 'skip',
+    reason: rowCode
+      ? 'Claim code does not match this controller'
+      : 'Not claimed by your organization — add the claim_code column or claim it first',
+  };
+}
+
+const CLAIM_COLUMNS = 'id, status, tenant_id, claim_code, claimed_by_tenant_id';
+
+/**
  * Decide what each row would do today and count what the import would add:
  * the plan capacity check needs the numbers before anything is written.
  */
 async function plan(tenantId, rows) {
   const ids = rows.map(r => r.mqtt_device_id.trim().toUpperCase());
   const { rows: known } = await db.query(
-    `SELECT mqtt_device_id, status, tenant_id FROM devices WHERE mqtt_device_id = ANY($1)`, [ids]);
+    `SELECT mqtt_device_id, ${CLAIM_COLUMNS} FROM devices WHERE mqtt_device_id = ANY($1)`, [ids]);
   const byId = new Map(known.map(d => [d.mqtt_device_id, d]));
   let assign = 0, preRegister = 0, skip = 0;
   const siteNames = new Set();
   for (const row of rows) {
     const id = row.mqtt_device_id.trim().toUpperCase();
-    const d = byId.get(id);
-    if (d && d.status === 'pending' && d.tenant_id === db.SYSTEM_TENANT_ID) {
+    const { action } = decideRow(row, byId.get(id), tenantId);
+    if (action === 'assign') {
       assign++;
       const s = csvField(row, 'site_name');
       if (s) siteNames.add(s.toLowerCase().trim());
-    } else if (d) skip++;
+    } else if (action === 'skip') skip++;
     else preRegister++;
   }
   let newSites = 0;
@@ -433,19 +478,17 @@ async function run(importId) {
   try {
     if (!tenantSlug) throw new Error('Tenant not found');
 
-    // Decide each row's action now (the world may have moved since planning) and
+    // Decide each row's action now — the world may have moved since planning — and
     // hash the passwords of the rows to assign, eight at a time.
     for (const row of rows) {
       const mqttId = row.mqtt_device_id.trim().toUpperCase();
       row._mqttId = mqttId;
-      const { rows: devRows } = await db.query(`SELECT id, status, tenant_id FROM devices WHERE mqtt_device_id = $1`, [mqttId]);
-      if (devRows.length > 0 && devRows[0].status === 'pending' && devRows[0].tenant_id === db.SYSTEM_TENANT_ID) {
-        row._action = 'assign'; row._dbId = devRows[0].id; row._password = mqttAuth.generatePassword();
-      } else if (devRows.length > 0) {
-        row._action = 'skip'; row._skipReason = 'Device already active';
-      } else {
-        row._action = 'pre_register';
-      }
+      const { rows: devRows } = await db.query(
+        `SELECT ${CLAIM_COLUMNS} FROM devices WHERE mqtt_device_id = $1`, [mqttId]);
+      const decision = decideRow(row, devRows[0], tenantId);
+      row._action = decision.action;
+      if (decision.reason) row._skipReason = decision.reason;
+      if (decision.action === 'assign') { row._dbId = devRows[0].id; row._password = mqttAuth.generatePassword(); }
     }
     const toAssign = rows.filter(r => r._action === 'assign');
     for (let i = 0; i < toAssign.length; i += HASH_BATCH) {
@@ -512,6 +555,7 @@ async function run(importId) {
           await db.query(
             `UPDATE devices
                 SET tenant_id = $1, status = 'active', mqtt_username = $2, mqtt_password_hash = $3,
+                    claimed_by_tenant_id = $1,
                     name = COALESCE($4, name), location = COALESCE($5, location), model = COALESCE($6, model),
                     serial_number = COALESCE($7, serial_number), comment = COALESCE($8, comment),
                     manufactured_at = COALESCE($9, manufactured_at), site_id = $10, assigned_at = NOW(),
@@ -530,13 +574,19 @@ async function run(importId) {
           // Let the controller take its credentials and reconnect before the next one
           if (paceMs() > 0) await new Promise(resolve => setTimeout(resolve, paceMs()));
         } else {
+          // The row is claimed for the organisation that listed it, exactly as
+          // POST /devices/bootstrap does for a device an admin registers by hand.
+          // Without it the pre-registered controller stayed unclaimed and invisible:
+          // the pending queue only shows what the organisation has claimed, so the
+          // operator could not assign the very row they had just created.
           const { rowCount } = await db.query(
             `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at,
-                                  haccp_min, haccp_max, haccp_tolerance, haccp_product)
-             VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                  haccp_min, haccp_max, haccp_tolerance, haccp_product, claim_code, claimed_by_tenant_id)
+             VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (mqtt_device_id) DO NOTHING`,
             [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment, manufacturedAt,
-             haccp.haccp_min, haccp.haccp_max, haccp.haccp_tolerance, haccp.haccp_product]);
+             haccp.haccp_min, haccp.haccp_max, haccp.haccp_tolerance, haccp.haccp_product,
+             normalizeClaimCode(csvField(row, 'claim_code')) || generateClaimCode(), tenantId]);
           if (rowCount === 0) {
             counters.skipped++;
             results.push({ ...base, status: 'skipped', error: 'Device appeared during processing' });
@@ -603,6 +653,6 @@ function summaryOf(job) {
 
 module.exports = {
   init, parseCsv, validateRows, plan, create, schedule, run, requestCancel, takeCredentials: takeCredentialsTx, template, summaryOf,
-  CSV_FIELDS, COLUMNS, JOB_COLUMNS, jobColumns, maxRows, haccpOf,
+  CSV_FIELDS, COLUMNS, JOB_COLUMNS, jobColumns, maxRows, haccpOf, decideRow,
   __test: { setAutoRun(v) { autoRun = !!v; }, setLogger(l) { logger = l; }, findOrCreateImportSite, geocodeImportedSite, splitCountry },
 };

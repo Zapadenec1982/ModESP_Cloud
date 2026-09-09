@@ -1099,7 +1099,7 @@ export default {
     batch_validation_failed: 'Validation errors. Fix the CSV and try again.',
     batch_row: 'Row',
     batch_success: 'Batch registration completed',
-    batch_csv_format: 'Required: mqtt_device_id, name. Device: serial_number, location, model, comment, manufactured_at (DD-MM-YYYY). Site: site_name, country, region, city, address_line, postal_code — a new site is created and geocoded automatically.',
+    batch_csv_format: 'Required: mqtt_device_id, name. Claim: claim_code — the code printed on the controller, needed unless your organisation has already claimed it. Device: serial_number, location, model, comment, manufactured_at (DD-MM-YYYY). Site: site_name, country, region, city, address_line, postal_code — a new site is created and geocoded automatically. HACCP: haccp_preset, haccp_min, haccp_max, haccp_tolerance, haccp_product.',
     batch_max_rows: 'up to {0} rows, file up to 2 MB',
     batch_queued: 'Import accepted: {0} rows. Processing continues in the background.',
     batch_progress_title: 'Import in progress',

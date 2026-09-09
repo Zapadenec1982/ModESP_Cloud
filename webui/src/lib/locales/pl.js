@@ -1099,7 +1099,7 @@ export default {
     batch_validation_failed: 'Błędy walidacji. Popraw plik CSV i spróbuj ponownie.',
     batch_row: 'Wiersz',
     batch_success: 'Rejestracja zbiorcza zakończona',
-    batch_csv_format: 'Wymagane: mqtt_device_id, name. Urządzenie: serial_number, location, model, comment, manufactured_at (DD-MM-RRRR). Obiekt: site_name, country, region, city, address_line, postal_code — nowy obiekt jest tworzony i geokodowany automatycznie.',
+    batch_csv_format: 'Wymagane: mqtt_device_id, name. Przejęcie: claim_code — kod z naklejki na sterowniku, potrzebny, jeśli organizacja jeszcze go nie przejęła. Urządzenie: serial_number, location, model, comment, manufactured_at (DD-MM-RRRR). Obiekt: site_name, country, region, city, address_line, postal_code — nowy obiekt jest tworzony i geokodowany automatycznie. HACCP: haccp_preset, haccp_min, haccp_max, haccp_tolerance, haccp_product.',
     batch_max_rows: 'do {0} wierszy, plik do 2 MB',
     batch_queued: 'Import przyjęty: {0} wierszy. Przetwarzanie trwa w tle.',
     batch_progress_title: 'Import w toku',

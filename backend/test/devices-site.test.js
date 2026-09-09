@@ -52,11 +52,15 @@ async function createSite(tenantId, overrides = {}) {
   return rows[0];
 }
 
-async function createPendingDevice(mqttId) {
+// claimedBy: the organisation that typed the code printed on the controller
+// (POST /devices/claim). A pending controller is only ever taken — by hand or by
+// CSV — by the organisation that claimed it, so a test that imports one must say
+// whose it is.
+async function createPendingDevice(mqttId, claimedBy = null) {
   const { rows } = await db.query(
-    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online)
-     VALUES ($1, $2, 'pending', false) RETURNING *`,
-    [db.SYSTEM_TENANT_ID, mqttId]
+    `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, claim_code, claimed_by_tenant_id)
+     VALUES ($1, $2, 'pending', false, $3, $4) RETURNING *`,
+    [db.SYSTEM_TENANT_ID, mqttId, `CODE${mqttId}`, claimedBy]
   );
   return rows[0];
 }
@@ -453,7 +457,7 @@ describe('Devices ↔ sites', () => {
   describe('POST /api/devices/pending/batch — site columns', () => {
     it('creates an unknown site, links the device and geocodes nothing when bulk is off', async () => {
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -492,7 +496,7 @@ describe('Devices ↔ sites', () => {
 
     it('stores a multi-letter country as the country name, not the ISO code', async () => {
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -514,8 +518,8 @@ describe('Devices ↔ sites', () => {
     it('reuses one site for several rows, case- and whitespace-insensitively', async () => {
       const idA = nextMqttId();
       const idB = nextMqttId();
-      await createPendingDevice(idA);
-      await createPendingDevice(idB);
+      await createPendingDevice(idA, tenantA.id);
+      await createPendingDevice(idB, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -554,7 +558,7 @@ describe('Devices ↔ sites', () => {
         latitude: 50.4501, longitude: 30.5234, geo_source: 'manual',
       });
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -614,7 +618,7 @@ describe('Devices ↔ sites', () => {
 
     it('creates the site under the target tenant, never the caller tenant', async () => {
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantB.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -634,7 +638,7 @@ describe('Devices ↔ sites', () => {
 
     it('rejects a site_name longer than the sites.name column', async () => {
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')
@@ -651,7 +655,7 @@ describe('Devices ↔ sites', () => {
 
     it('imports normally when the site columns are absent (existing CSVs keep working)', async () => {
       const mqttId = nextMqttId();
-      await createPendingDevice(mqttId);
+      await createPendingDevice(mqttId, tenantA.id);
 
       const res = await completed(await request(app)
         .post('/api/devices/pending/batch')

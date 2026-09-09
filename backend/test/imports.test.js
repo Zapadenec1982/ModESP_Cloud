@@ -23,8 +23,14 @@ mqttSvc.sendJsonCommand = async (slug, id, key, payload) => { sent.push({ slug, 
 
 let seq = 0x100;
 const nextId = () => (seq++).toString(16).toUpperCase().padStart(6, '0');
-const pending = async (id) => (await db.query(
-  `INSERT INTO devices (tenant_id, mqtt_device_id, status, online) VALUES ($1, $2, 'pending', false) RETURNING id`, [db.SYSTEM_TENANT_ID, id])).rows[0];
+// A pending controller as the platform holds it: in the system tenant, carrying
+// the code printed on its label. claimedBy = the organisation that has already
+// typed that code (POST /devices/claim) — the import may only take a controller
+// its own organisation has claimed, or one whose code the CSV row carries.
+const pending = async (id, claimedBy = null, claimCode = `CODE${id}`) => (await db.query(
+  `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, claim_code, claimed_by_tenant_id)
+   VALUES ($1, $2, 'pending', false, $3, $4) RETURNING id, claim_code`,
+  [db.SYSTEM_TENANT_ID, id, claimCode, claimedBy])).rows[0];
 const csv = (header, ...rows) => Buffer.from('﻿' + [header, ...rows].map(r => r.map(c => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n'), 'utf8');
 const post = (user, tenantId, buf, name = 'devices.csv') => request(app).post('/api/devices/pending/batch').set(authHeader(user, tenantId)).attach('file', buf, name);
 const HEADER = ['mqtt_device_id', 'name', 'serial_number', 'site_name', 'country', 'city', 'address_line', 'postal_code'];
@@ -68,7 +74,7 @@ describe('CSV import jobs (plan epic 2.12)', () => {
 
   it('checks the plan before creating the job', async () => {
     const ids = [nextId(), nextId(), nextId(), nextId()];
-    for (const id of ids) await pending(id);
+    for (const id of ids) await pending(id, small.id);
     const res = await post(smallAdmin, small.id, csv(HEADER, ...ids.map(id => [id, 'n', '', '', '', '', '', ''])));
     expect(res.status).toBe(402);
     expect(res.body).toMatchObject({ error: 'plan_limit', resource: 'devices', limit: 3 });
@@ -77,7 +83,7 @@ describe('CSV import jobs (plan epic 2.12)', () => {
 
   it('runs as a job: progress, results without secrets, credentials once, sites created', async () => {
     const a = nextId(), b = nextId(), active = nextId(), fresh = nextId();
-    await pending(a); await pending(b);
+    await pending(a, tenant.id); await pending(b, tenant.id);
     await db.query(`INSERT INTO devices (tenant_id, mqtt_device_id, status, online, name) VALUES ($1, $2, 'active', false, 'Already')`, [tenant.id, active]);
     sent.length = 0;
 
@@ -132,7 +138,7 @@ describe('CSV import jobs (plan epic 2.12)', () => {
 
   it('cancels: a pending job ends at once, a running one after the current row', async () => {
     const ids = [nextId(), nextId(), nextId()];
-    for (const id of ids) await pending(id);
+    for (const id of ids) await pending(id, tenant.id);
     const res = await post(admin, tenant.id, csv(HEADER, ...ids.map(id => [id, 'n', '', '', '', '', '', ''])));
     expect(res.status).toBe(202);
     const cancel = await request(app).post(`/api/imports/${res.body.data.id}/cancel`).set(authHeader(admin, tenant.id));
@@ -162,7 +168,7 @@ describe('CSV import jobs (plan epic 2.12)', () => {
     };
     try {
       const a = nextId(), b = nextId();
-      await pending(a); await pending(b);
+      await pending(a, tenant.id); await pending(b, tenant.id);
       const res = await post(admin, tenant.id, csv(HEADER,
         [a, 'A', '', 'Geo shop', 'UA', 'Львів', 'вул. Зелена 1', ''],
         [b, 'B', '', 'Lost shop', 'UA', 'Nowhere', 'nowhere 1', '']));
