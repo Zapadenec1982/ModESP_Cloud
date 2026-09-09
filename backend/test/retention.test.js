@@ -266,3 +266,64 @@ describe('cleanup-aux.js', () => {
     expect(tokens.map(t => t.token_hash)).toEqual(['valid-hash']);
   });
 });
+
+// ── purgeRaw across partitions ─────────────────────────────
+//
+// telemetry is partitioned by month, and a ctid is unique only inside one
+// partition. Batching the retention delete on a bare ctid therefore matched
+// rows at the same physical address in *every* partition and destroyed live
+// measurements of other organisations. The test DB carries a single default
+// partition, so this needs two real ones to reproduce.
+describe('cleanup-telemetry.js: purgeRaw stays inside the organisation and the period', () => {
+  let old, fresh, oldPart, freshPart;
+
+  const count = async (tenantId) => (await db.query(
+    'SELECT count(*)::int AS n FROM telemetry WHERE tenant_id = $1', [tenantId])).rows[0].n;
+
+  beforeAll(async () => {
+    await cleanDatabase();
+    old   = await createTenant({ slug: 'purge-old' });
+    fresh = await createTenant({ slug: 'purge-fresh' });
+
+    oldPart   = partitionName(new Date(2022, 2, 1));
+    freshPart = CURRENT;
+    await db.query('SELECT create_telemetry_partition(2022, 3)');
+    await db.query('SELECT create_telemetry_partition($1, $2)', [now.getFullYear(), now.getMonth() + 1]);
+
+    // Same row count in both partitions, so the physical addresses collide.
+    for (let i = 1; i <= 5; i++) {
+      await db.query(
+        `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
+         VALUES ($1, $2, 'PURGE01', 'air', $3)`,
+        [new Date(Date.UTC(2022, 2, 10, i)), old.id, -18 - i]);
+      await db.query(
+        `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
+         VALUES ($1, $2, 'PURGE02', 'air', $3)`,
+        [new Date(Date.now() - i * 60000), fresh.id, -20 - i]);
+    }
+  });
+
+  afterAll(async () => {
+    await db.query('DELETE FROM telemetry WHERE device_id IN ($1, $2)', ['PURGE01', 'PURGE02']);
+    if (oldPart !== freshPart) await dropPartitionIfExists(oldPart);
+    await cleanDatabase();
+  });
+
+  it('deletes the expired rows of one organisation and leaves every other partition untouched', async () => {
+    expect(await count(old.id)).toBe(5);
+    expect(await count(fresh.id)).toBe(5);
+
+    const report = await cleanupTelemetry.purgeRaw({ query, apply: true, now });
+    const oldEntry   = report.find(r => r.tenant_id === old.id);
+    const freshEntry = report.find(r => r.tenant_id === fresh.id);
+
+    // The 2022 rows are past every plan retention; today's rows are past none.
+    expect(oldEntry.candidates).toBe(5);
+    expect(freshEntry.candidates).toBe(0);
+
+    // Deleting more rows than it counted is the signature of the cross-partition bug.
+    expect(oldEntry.deleted).toBe(oldEntry.candidates);
+    expect(await count(old.id)).toBe(0);
+    expect(await count(fresh.id)).toBe(5);
+  });
+});

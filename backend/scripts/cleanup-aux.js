@@ -89,8 +89,8 @@ async function run({ query, apply = false, now = new Date(), env = process.env, 
     for (;;) {
       const res = await query(
         `DELETE FROM ${sweep.table}
-          WHERE ctid IN (
-            SELECT ctid FROM ${sweep.table}
+          WHERE (tableoid, ctid) IN (
+            SELECT tableoid, ctid FROM ${sweep.table}
              WHERE ${where}
              LIMIT ${BATCH_SIZE}
           )`,
