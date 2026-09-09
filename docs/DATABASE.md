@@ -961,7 +961,7 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 | Скрипт | Таймер | Що робить |
 |---|---|---|
 | `backend/src/scripts/ensure-partitions.js` | `modesp-telemetry-partition.timer`, 25-го | партиції на поточний місяць + `PARTITION_MONTHS_AHEAD` (6) уперед |
-| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`; видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90), а інженерні канали (`evap`, `cond`, `setpoint`, `comp`) — уже за `RAW_ENGINEERING_RETENTION_DAYS` (30), не довше за план; `air` і `defrost` живуть повну ретенцію плану, бо їх читає HACCP-журнал; скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
+| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`, а слідом — години з `telemetry_dirty_hours`, хоч би скільки їм було (міграція 050); видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90), а інженерні канали (`evap`, `cond`, `setpoint`, `comp`) — уже за `RAW_ENGINEERING_RETENTION_DAYS` (30), не довше за план; `air` і `defrost` живуть повну ретенцію плану, бо їх читає HACCP-журнал; скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
 
 ---
 
@@ -1171,6 +1171,42 @@ CREATE INDEX idx_support_requests_status ON support_requests (status, created_at
 > `support_requests` — «спочатку зберегти, потім надіслати»: звернення не губиться без налаштованої пошти.
 
 ---
+
+## Догнані з буфера години (migration 050)
+
+Контролер, який втратив звʼязок, накопичує вимірювання і досилає до 90 днів
+(`MAX_BACKFILL_AGE` у `services/mqtt.js`), коли повертається. Нічна згортка в
+`telemetry_hourly` брала лише `DOWNSAMPLE_LOOKBACK_DAYS` — три дні. Усе старше лягало в
+`telemetry`, дочікувалося ретенції плану і зникало, **жодного разу не потрапивши в архів**.
+
+Діра в архіві припадала рівно на той період, коли обладнання працювало автономно — тобто
+на той, про який питає інспектор. HACCP-звіт друкував його як розрив запису, і після
+ретенції відновити було вже нізвідки. Ручний `--backfill-days N` міг би згорнути, але
+тільки якби хтось здогадався запустити його вчасно.
+
+```sql
+CREATE TABLE telemetry_dirty_hours (
+  tenant_id  UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  device_id  VARCHAR(16)  NOT NULL,
+  hour       TIMESTAMPTZ  NOT NULL,
+  noticed_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_id, device_id, hour)
+);
+```
+
+Обидва шляхи догону — `backfill` (повітря, випарник, конденсатор, уставка) і
+`backfill/events`, звідки відновлюються `comp` і `defrost` — записують сюди години, які
+заповнили. Згортка бере цю таблицю **на додачу** до свого вікна і видаляє рядок одразу
+після згортання. Самозагойне: прогін, що впав, лишає годину в черзі до наступного разу.
+
+Година, чиї сирі рядки ретенція вже забрала, згортається в ніщо і **все одно** видаляється:
+рятувати нічого, а маркер, що лишився б, ростив би чергу вічно.
+
+Таблиця транзитна — вона спорожнюється зі швидкістю згортки, — тож не має індексів, крім
+ключа, за яким її читають і видаляють. Один прогін бере до 2 000 годин за раз і не більше
+500 партій, щоб флот, який гуртом повернувся після довгого простою, не тримав решту кроків
+прибирання в заручниках; найстаріші години йдуть першими, бо саме їм найближче до
+видалення ретенцією.
 
 ## Розходження схеми з базою в полі (migration 049)
 
