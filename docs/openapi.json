@@ -524,6 +524,10 @@
               "null"
             ]
           },
+          "alarms_open": {
+            "type": "integer",
+            "description": "Alarms the platform recorded for this device and has not cleared — the same rows GET /alarms returns. Anything a UI calls an alarm counts these."
+          },
           "proto_version": {
             "type": [
               "integer",
@@ -652,6 +656,7 @@
           "site_country",
           "site_latitude",
           "site_longitude",
+          "alarms_open",
           "proto_version",
           "last_state",
           "tenant_id",

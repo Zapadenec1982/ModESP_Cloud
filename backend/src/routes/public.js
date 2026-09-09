@@ -199,7 +199,10 @@ router.get('/site', async (req, res) => {
     );
 
     // Active alarms come from the alarms table so the public page agrees with the
-    // authenticated site detail; live MQTT state adds the not-yet-persisted ones.
+    // authenticated site detail and with GET /alarms. The controller's own
+    // protection.alarm_active is not added on top: it rises the moment a door
+    // opens, and a client watching this page should not see a delivery reported
+    // as an alarm on their supplier's equipment.
     let alarming = new Set();
     if (deviceRows.length > 0) {
       const { rows: alarmRows } = await db.query(
@@ -221,8 +224,7 @@ router.get('/site', async (req, res) => {
         name:         label,
         online:       meta ? !!meta.online : !!row.online,
         air_temp:     live ? numericOrNull(live['equipment.air_temp']) : null,
-        alarm_active: (live ? !!live['protection.alarm_active'] : false)
-                      || alarming.has(row.mqtt_device_id),
+        alarm_active: alarming.has(row.mqtt_device_id),
       };
     });
 

@@ -787,3 +787,62 @@ describe('POST /api/map/route', () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ── the marker and the filter answer the same question ─────
+//
+// GET /map/devices used to overlay the controller's own protection.alarm_active
+// on the SQL EXISTS over the alarms table, while ?status=alarm filtered on that
+// EXISTS alone. A device whose door had just opened therefore showed an alarm
+// marker that the alarm filter refused to return.
+describe('Map markers count recorded alarms, not the controller flag', () => {
+  const mqttSvc = require('../src/services/mqtt');
+  let tenant, admin, site, flagged, recorded, prevState;
+
+  const markers = async (query = '') => {
+    const res = await request(app).get(`/api/map/devices${query}`).set(authHeader(admin, tenant.id));
+    expect(res.status).toBe(200);
+    const out = new Map();
+    for (const f of res.body.data.features || []) {
+      for (const d of f.properties.devices || []) out.set(d.mqtt_device_id, d.alarm_active);
+    }
+    return out;
+  };
+
+  beforeAll(async () => {
+    await cleanDatabase();
+    tenant = await createTenant({ slug: 'map-alarm' });
+    admin  = await createUser(tenant.id, { role: 'admin', email: 'admin@mapalarm.test' });
+    const { rows } = await db.query(
+      `INSERT INTO sites (tenant_id, name, latitude, longitude) VALUES ($1, 'Точка', 50.45, 30.52) RETURNING id`,
+      [tenant.id]);
+    site = rows[0];
+
+    flagged  = await createDevice(tenant.id, { mqttId: 'MAPFLG', name: 'Двері відчинені' });
+    recorded = await createDevice(tenant.id, { mqttId: 'MAPREC', name: 'Справжня аварія' });
+    await db.query('UPDATE devices SET site_id = $1 WHERE id = ANY($2)', [site.id, [flagged.id, recorded.id]]);
+    await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at)
+       VALUES ($1, 'MAPREC', 'high_temp_alarm', 'critical', true, now())`, [tenant.id]);
+
+    // The controller of the first device is shouting; the platform recorded nothing.
+    prevState = mqttSvc.getDeviceState;
+    mqttSvc.getDeviceState = (id) => (id === 'MAPFLG' ? { 'protection.alarm_active': true } : null);
+  });
+
+  afterAll(async () => {
+    mqttSvc.getDeviceState = prevState;
+    await cleanDatabase();
+  });
+
+  it('a raised controller flag with no recorded alarm is not a marker', async () => {
+    const m = await markers();
+    expect(m.get('MAPFLG')).toBe(false);
+    expect(m.get('MAPREC')).toBe(true);
+  });
+
+  it('the alarm filter returns exactly the devices the markers mark', async () => {
+    const m = await markers('?status=alarm');
+    expect([...m.keys()]).toEqual(['MAPREC']);
+    expect(m.get('MAPREC')).toBe(true);
+  });
+});

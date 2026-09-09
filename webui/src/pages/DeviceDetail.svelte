@@ -694,12 +694,23 @@
     unsubs.push(on('device_offline', (msg) => {
       if (msg.device_id === resolvedId && device) device = { ...device, online: false }
     }))
+    // Подія alarm несе запис аварії, а не стан приладу: тримаємо значок живим,
+    // точне число прийде з наступним завантаженням картки.
+    unsubs.push(on('alarm', (msg) => {
+      // Подія завжди адресована mqtt_device_id, а в маршруті може стояти UUID.
+      if (!device || (msg.device_id !== resolvedId && msg.device_id !== device.mqtt_device_id)) return
+      device = { ...device, alarms_open: msg.active ? Math.max(1, device.alarms_open || 0) : 0 }
+    }))
   }
 
   onMount(() => { loadDevice(); setupWs() })
   onDestroy(() => { unsubscribe(resolvedId); for (const fn of unsubs) fn() })
 
-  $: hasAlarm = !!$liveState['protection.alarm_active']
+  // Значок «Аварія» показує те саме, що й вкладка «Аварії»: записи, які платформа
+  // відкрила і ще не закрила. Зведений прапорець контролера protection.alarm_active
+  // приходить у last_state, але аварією тут не вважається — він піднімається щойно
+  // відчиняються двері, до того як затримка вирішить, чи це взагалі аварія.
+  $: hasAlarm = (device?.alarms_open || 0) > 0
   // Older firmware never publishes the key — leave the badge out entirely
   $: doorKnown = $liveState['equipment.door_open'] != null
   $: doorOpen = !!$liveState['equipment.door_open']

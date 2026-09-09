@@ -768,8 +768,8 @@ router.get('/:id', filterDeviceAccess(), async (req, res, next) => {
       if (grant.rows.length === 0) return siteNotFound(res);
     }
 
-    // Active alarms come from the alarms table so the detail counts agree with
-    // the list; live MQTT state adds the not-yet-persisted transitions.
+    // Active alarms come from the alarms table and from nowhere else, so this
+    // count agrees with the device list, the map and GET /alarms.
     let alarming = new Set();
     if (rows.length > 0) {
       const alarmRes = await db.query(
@@ -786,7 +786,11 @@ router.get('/:id', filterDeviceAccess(), async (req, res, next) => {
       return {
         ...row,
         online:       meta ? meta.online : row.online,
-        alarm_active: (live ? !!live['protection.alarm_active'] : false) || alarming.has(row.mqtt_device_id),
+        // The controller's own protection.alarm_active is deliberately not ORed
+        // in here: it rises the moment a door opens, before the nuisance delay
+        // decides whether that is an alarm at all, and a site would then report
+        // alarms that GET /alarms does not list.
+        alarm_active: alarming.has(row.mqtt_device_id),
         air_temp:     live ? live['equipment.air_temp'] ?? null : null,
       };
     });

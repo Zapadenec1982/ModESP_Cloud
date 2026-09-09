@@ -233,8 +233,13 @@ function liveDeviceView(row) {
     mqtt_device_id: row.mqtt_device_id,
     name:          row.name,
     online:        meta ? !!meta.online : !!row.online,
-    // Fall back to the SQL EXISTS when the device has never published state.
-    alarm_active:  live ? !!live['protection.alarm_active'] : !!row.alarm_active,
+    // Straight from the SQL EXISTS over the alarms table — the same rows the
+    // "alarm" filter above selects on, and the same ones GET /alarms lists. The
+    // controller's own protection.alarm_active is deliberately NOT consulted: it
+    // goes true the moment a door opens, before the nuisance delay has decided
+    // whether that is an alarm, so a marker would light up for a delivery while
+    // the filter that is supposed to find it returned nothing.
+    alarm_active:  !!row.alarm_active,
     air_temp:      live ? live['equipment.air_temp'] ?? null : null,
   };
 }

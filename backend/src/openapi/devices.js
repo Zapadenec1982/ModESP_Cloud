@@ -36,7 +36,7 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
     air_temp: z.number().nullable().openapi({ description: 'Last air temperature, °C', example: -18.4 }),
     door_open: z.boolean().nullable(),
   }));
-  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarms_open: true, alarm_active: true, air_temp: true, door_open: true }).extend({
+  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarm_active: true, air_temp: true, door_open: true }).extend({
     proto_version: z.number().int().nullable(),
     last_state: z.record(z.any()).nullable().openapi({ description: 'Latest reported state keyed by parameter (`thermostat.setpoint`, `sensors.air` …); see `GET /meta` for the key registry' }),
     tenant_id: uuid, tenant_slug: z.string(),

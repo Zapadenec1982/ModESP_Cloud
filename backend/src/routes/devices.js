@@ -1009,7 +1009,16 @@ router.get('/:id', checkDeviceAccess(), async (req, res, next) => {
               m.name AS model_name,
               m.compressor_kw AS model_compressor_kw, m.evap_fan_kw AS model_evap_fan_kw,
               m.cond_fan_kw AS model_cond_fan_kw, m.defrost_heater_kw AS model_defrost_heater_kw,
-              m.standby_kw AS model_standby_kw, m.energy_source AS model_energy_source
+              m.standby_kw AS model_standby_kw, m.energy_source AS model_energy_source,
+              -- The one source for anything this page labels «аварія»: rows the
+              -- platform opened and has not closed, exactly what the Аварії tab
+              -- lists. The controller's own protection.alarm_active arrives in
+              -- last_state and is deliberately not used for that — it goes up the
+              -- moment a door opens, before the nuisance delay decides whether it
+              -- is an alarm at all.
+              (SELECT count(*)::int FROM alarms a
+                WHERE a.device_id = d.mqtt_device_id AND a.tenant_id = d.tenant_id
+                  AND a.active = true) AS alarms_open
        FROM devices d
        JOIN tenants t ON t.id = d.tenant_id
        LEFT JOIN device_models m ON d.model_id = m.id

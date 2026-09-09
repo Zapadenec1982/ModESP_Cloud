@@ -320,20 +320,21 @@
   function setupWsListeners() {
     wsUnsubs.push(on('device_online', msg => patchLocal(msg.device_id, { online: true })))
     wsUnsubs.push(on('device_offline', msg => patchLocal(msg.device_id, { online: false, last_seen: msg.last_seen })))
+    // Червоний маркер = запис в аварійному журналі, і подія alarm несе саме його.
+    // Зведений прапорець контролера protection.alarm_active, який приходить у
+    // state_update / state_full, сюди не потрапляє: він піднімається щойно
+    // відчиняються двері, до того як затримка вирішить, чи це взагалі аварія, —
+    // тоді на мапі горіли б прилади, яких немає в списку аварій.
     wsUnsubs.push(on('alarm', msg => patchLocal(msg.device_id, { alarm_active: !!msg.active })))
     wsUnsubs.push(on('state_update', (msg) => {
       const changes = msg.changes || {}
       const patch = {}
       if (changes['equipment.air_temp'] !== undefined) patch.air_temp = changes['equipment.air_temp']
-      if (changes['protection.alarm_active'] !== undefined) patch.alarm_active = !!changes['protection.alarm_active']
       if (Object.keys(patch).length > 0) patchLocal(msg.device_id, patch)
     }))
     wsUnsubs.push(on('state_full', (msg) => {
       const state = msg.state || {}
-      const patch = {
-        air_temp: state['equipment.air_temp'] ?? null,
-        alarm_active: !!state['protection.alarm_active'],
-      }
+      const patch = { air_temp: state['equipment.air_temp'] ?? null }
       if (msg.meta && msg.meta.online !== undefined) patch.online = !!msg.meta.online
       patchLocal(msg.device_id, patch)
     }))
