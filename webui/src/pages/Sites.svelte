@@ -48,7 +48,7 @@
   // Editor modal
   let showEditor = false
   let editing = null        // the site row being edited, or null for "create"
-  let form = { name: '', notes: '' }
+  let form = { name: '', notes: '', haccp_excursion_min: '' }
   let address = emptyAddress()
   let saving = false
 
@@ -105,14 +105,14 @@
 
   function openCreate() {
     editing = null
-    form = { name: '', notes: '' }
+    form = { name: '', notes: '', haccp_excursion_min: '' }
     address = emptyAddress()
     showEditor = true
   }
 
   function openEdit(site) {
     editing = site
-    form = { name: site.name || '', notes: site.notes || '' }
+    form = { name: site.name || '', notes: site.notes || '', haccp_excursion_min: site.haccp_excursion_min ?? '' }
     address = {
       country_code: site.country_code || '',
       country:      site.country || '',
@@ -177,6 +177,7 @@
       latitude:     lat,
       longitude:    lon,
       notes:        orNull(form.notes, 4000),
+      haccp_excursion_min: form.haccp_excursion_min === '' || form.haccp_excursion_min === null ? null : Number(form.haccp_excursion_min),
     }
 
     saving = true
@@ -548,6 +549,11 @@
         <div class="form-group">
           <label for="site-notes">{$t('site.notes')}</label>
           <textarea id="site-notes" rows="2" maxlength="4000" bind:value={form.notes}></textarea>
+        </div>
+        <div class="form-group">
+          <label for="site-haccp-excursion">{$t('site.haccp_excursion_min')}</label>
+          <input id="site-haccp-excursion" type="number" min="1" max="1440" bind:value={form.haccp_excursion_min} placeholder={$t('site.haccp_excursion_placeholder')} />
+          <p class="hint">{$t('site.haccp_excursion_hint')}</p>
         </div>
       </div>
 

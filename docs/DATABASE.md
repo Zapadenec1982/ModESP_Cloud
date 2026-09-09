@@ -1123,6 +1123,21 @@ ALTER TABLE devices ADD CONSTRAINT devices_haccp_limits_check CHECK (haccp_min I
 
 ---
 
+## Правила відхилень HACCP (migration 047)
+
+```sql
+ALTER TABLE devices ADD COLUMN haccp_tolerance NUMERIC(4,1);          -- допустиме відхилення за межу, °C (NULL = 0)
+ALTER TABLE tenant_settings ADD COLUMN haccp_excursion_min INT;      -- поріг витримки відхилення, хв (NULL = 30)
+ALTER TABLE sites ADD COLUMN haccp_excursion_min INT;                -- те саме для точки; перекриває організацію
+```
+
+> Звіт для інспектора зараховує відхилення продукту, коли температура повітря тримається за
+> критичною межею плюс допустиме відхилення довше за поріг витримки; відтайка (канал `defrost`) з
+> оцінки виключена. Розриви запису визначаються за наявними рядками `telemetry`, тому дані,
+> досинхронізовані з буфера приладу пізніше, розривом не є.
+
+---
+
 ## Інструменти підтримки (migration 045)
 
 ```sql
@@ -1190,3 +1205,5 @@ CREATE INDEX idx_support_requests_status ON support_requests (status, created_at
   тригер і псевдонімізація знають про них), `support_requests` — звернення з форми «Підтримка».
 - 2026-09-09 — Міграція 046: `devices.haccp_min/haccp_max/haccp_product` — критичні межі й призначення обладнання
   для журналу контролю температури HACCP.
+- 2026-09-09 — Міграція 047: `devices.haccp_tolerance`, `tenant_settings.haccp_excursion_min`, `sites.haccp_excursion_min` —
+  допустиме відхилення і поріг витримки для звіту HACCP.

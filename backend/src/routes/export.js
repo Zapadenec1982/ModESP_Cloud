@@ -38,7 +38,7 @@ async function resolveDevice(id, tenantId, isSuperadmin) {
     params.push(tenantId);
   }
   const { rows } = await db.query(
-    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
+    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
      FROM devices WHERE ${where}`,
     params
   );
@@ -283,6 +283,7 @@ async function loadTenant(tenantId) {
   const { rows } = await db.query(
     `SELECT t.id, t.name, t.slug, t.legal_name, t.tax_id, COALESCE(s.timezone, 'Europe/Kyiv') AS timezone,
             COALESCE(s.raw_retention_days, p.retention_days, 90) AS retention_days,
+            s.haccp_excursion_min, s.door_alarm_delay_ms, p.sampling_sec,
             COALESCE(s.brand_name, par.brand_name) AS brand_name,
             COALESCE(s.brand_url, par.brand_url)   AS brand_url
        FROM tenants t
@@ -298,7 +299,7 @@ async function loadTenant(tenantId) {
 async function loadSite(siteId, tenantId) {
   if (!siteId) return null;
   const { rows } = await db.query(
-    `SELECT id, name, address_line, city, region, country, timezone FROM sites WHERE id = $1 AND tenant_id = $2`,
+    `SELECT id, name, address_line, city, region, country, timezone, haccp_excursion_min FROM sites WHERE id = $1 AND tenant_id = $2`,
     [siteId, tenantId]
   );
   return rows[0] || null;
@@ -374,7 +375,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
     }
     const isSuperadmin = req.user && req.user.role === 'superadmin';
     const { rows: siteRows } = await db.query(
-      `SELECT id, tenant_id, name, address_line, city, region, country, timezone FROM sites WHERE id = $1${isSuperadmin ? '' : ' AND tenant_id = $2'}`,
+      `SELECT id, tenant_id, name, address_line, city, region, country, timezone, haccp_excursion_min FROM sites WHERE id = $1${isSuperadmin ? '' : ' AND tenant_id = $2'}`,
       isSuperadmin ? [id] : [id, req.tenantId]
     );
     if (siteRows.length === 0) {
@@ -399,7 +400,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
       return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
     }
     const { rows: devices } = await db.query(
-      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
          FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
       [site.id, site.tenant_id]
     );

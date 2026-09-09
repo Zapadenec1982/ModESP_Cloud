@@ -186,7 +186,15 @@
               "null"
             ],
             "description": "HACCP upper critical limit, °C",
-            "example": -15
+            "example": -18
+          },
+          "haccp_tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Allowed deviation past the limit before an excursion counts, °C (null: 0)",
+            "example": 3
           },
           "haccp_product": {
             "type": [
@@ -316,6 +324,7 @@
           "manufactured_at",
           "haccp_min",
           "haccp_max",
+          "haccp_tolerance",
           "haccp_product",
           "firmware_version",
           "online",
@@ -404,7 +413,15 @@
               "null"
             ],
             "description": "HACCP upper critical limit, °C",
-            "example": -15
+            "example": -18
+          },
+          "haccp_tolerance": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Allowed deviation past the limit before an excursion counts, °C (null: 0)",
+            "example": 3
           },
           "haccp_product": {
             "type": [
@@ -613,6 +630,7 @@
           "manufactured_at",
           "haccp_min",
           "haccp_max",
+          "haccp_tolerance",
           "haccp_product",
           "firmware_version",
           "online",
@@ -2299,6 +2317,15 @@
                     "maximum": 99,
                     "description": "HACCP lower critical limit, °C; must stay below haccp_max"
                   },
+                  "haccp_tolerance": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 30,
+                    "description": "Allowed deviation past the limit, °C"
+                  },
                   "haccp_max": {
                     "type": [
                       "number",
@@ -2494,7 +2521,15 @@
                             "null"
                           ],
                           "description": "HACCP upper critical limit, °C",
-                          "example": -15
+                          "example": -18
+                        },
+                        "haccp_tolerance": {
+                          "type": [
+                            "number",
+                            "null"
+                          ],
+                          "description": "Allowed deviation past the limit before an excursion counts, °C (null: 0)",
+                          "example": 3
                         },
                         "haccp_product": {
                           "type": [
@@ -2539,6 +2574,7 @@
                         "created_at",
                         "haccp_min",
                         "haccp_max",
+                        "haccp_tolerance",
                         "haccp_product",
                         "latitude",
                         "longitude",

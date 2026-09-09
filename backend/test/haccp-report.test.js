@@ -255,157 +255,260 @@ describe('telemetry retention: downsample and per-plan purge', () => {
 
 // ── The temperature-control journal (form of 2026-09) ──────
 
-describe('HACCP journal: limits, deviations, gaps, corrective actions', () => {
+describe('HACCP inspector report: limits, excursions, gaps, notes', () => {
   const S = haccp.strings('uk');
   const T = haccp.__test;
-  const from = new Date('2026-09-07T00:00:00Z');
-  const to   = new Date('2026-09-07T08:00:00Z');
-  const hour = (i) => new Date(from.getTime() + i * 3600e3);
+  const from = new Date('2026-09-04T00:00:00Z');
+  const to   = new Date('2026-09-04T08:00:00Z');
+  const at = (min) => from.getTime() + min * 60e3;
+  const STEP = 5 * 60e3;
+  // Eight hours of 5-minute samples: −19 °C, with the exceptions the callers add
+  const series = (edit) => {
+    const pts = [];
+    for (let m = 0; m < 8 * 60; m += 5) { const p = { t: at(m), v: -19 }; if (edit(p, m) === false) continue; pts.push(p); }
+    return pts;
+  };
+  const limits = { min: null, max: -18, source: 'org' };
 
-  it('limitsFor(): the business limits win over the controller, and neither is a silent blank', () => {
-    expect(T.limitsFor({ haccp_min: '-18.00', haccp_max: '-15.00', last_state: { 'protection.high_limit': -10, 'protection.low_limit': -30 } }))
-      .toEqual({ min: -18, max: -15, source: 'org' });
-    expect(T.limitsFor({ haccp_min: null, haccp_max: 6, last_state: null })).toEqual({ min: null, max: 6, source: 'org' });
-    expect(T.limitsFor({ haccp_min: null, haccp_max: null, last_state: { 'protection.high_limit': -10, 'protection.low_limit': -30 } }))
-      .toEqual({ min: -30, max: -10, source: 'controller' });
+  it('limits: the business wins over the device; the sentence and the column say what the limit is', () => {
+    expect(T.limitsFor({ haccp_min: null, haccp_max: '-18.00', last_state: { 'protection.high_limit': -10 } })).toEqual({ min: null, max: -18, source: 'org' });
+    expect(T.limitsFor({ haccp_min: null, haccp_max: null, last_state: { 'protection.high_limit': -10, 'protection.low_limit': -30 } })).toEqual({ min: -30, max: -10, source: 'controller' });
     expect(T.limitsFor({ last_state: {} })).toEqual({ min: null, max: null, source: null });
-    expect(T.fmtLimits(S, { min: -18, max: -15 })).toBe('-18…-15 °C');
-    expect(T.fmtLimits(S, { min: null, max: 6 })).toBe('≤ 6 °C');
-    expect(T.fmtLimits(S, { min: 2, max: null })).toBe('≥ 2 °C');
-    expect(T.fmtLimits(S, { min: null, max: null })).toBe(S.limits_none);
-    expect(T.deviationOf(-12, { min: -18, max: -15 })).toBe('above');
-    expect(T.deviationOf(-20, { min: -18, max: -15 })).toBe('below');
-    expect(T.deviationOf(-16, { min: -18, max: -15 })).toBeNull();
-    expect(T.deviationOf(-40, { min: null, max: -15 })).toBeNull();
+    expect(T.toleranceOf({ haccp_tolerance: '3.0' })).toBe(3);
+    expect(T.toleranceOf({ haccp_tolerance: null })).toBe(0);
+    expect(T.limitSentence(S, limits, 3)).toBe('не вище -18 °C, допустиме відхилення 3 °C (за програмою HACCP підприємства)');
+    expect(T.limitSentence(S, { min: 2, max: 6, source: 'controller' }, 0)).toBe('від 2 до 6 °C (за налаштуваннями приладу)');
+    expect(T.limitSentence(S, { min: null, max: null, source: null }, 0)).toContain(S.limit_none);
+    expect(T.limitShort(limits, 3)).toBe('≤ -18 (+3)');
+    expect(T.limitShort({ min: 2, max: 6 }, 0)).toBe('2…6');
+    expect(T.limitShort({ min: null, max: null }, 0)).toBe('—');
   });
 
-  it('buildJournal(): every interval of the period, gaps named, deviations flagged, actions from the alarms', () => {
+  it('excursions: past the limit plus tolerance for at least the threshold; a short blip and defrost do not count', () => {
+    // 09:00–09:15 blip (15 min, −14: past −15) — below the 30-minute threshold
+    // 12:00–12:20 defrost with air up to −13 — excluded
+    // 15:00–15:50 at −12 (50 min) — an excursion
+    const points = series((p, m) => {
+      if (m >= 60 && m < 75) p.v = -14;
+      if (m >= 180 && m < 200) p.v = -13;
+      if (m >= 300 && m < 350) p.v = -12 + (m % 10 === 0 ? 0.5 : 0);
+    });
+    const defrost = [[at(180), at(200)]];
+    const ex = T.detectExcursions({ points, limits, tolerance: 3, excursionMin: 30, defrost, stepMs: STEP, hourly: false });
+    expect(ex).toHaveLength(1);
+    expect(ex[0]).toMatchObject({ start: at(300), end: at(350), minutes: 50, kind: 'above', peak: -11.5 });
+    // Without the tolerance the −14 blip is still too short; without the defrost exclusion the 12:00 spike becomes an excursion? No — 20 min < 30
+    expect(T.detectExcursions({ points, limits, tolerance: 0, excursionMin: 30, defrost: [], stepMs: STEP, hourly: false })).toHaveLength(1);
+    // A lower threshold catches the blip too
+    expect(T.detectExcursions({ points, limits, tolerance: 3, excursionMin: 10, defrost, stepMs: STEP, hourly: false })).toHaveLength(2);
+    // No limits — nothing to evaluate
+    expect(T.detectExcursions({ points, limits: { min: null, max: null, source: null }, tolerance: 0, excursionMin: 30, defrost, stepMs: STEP, hourly: false })).toEqual([]);
+    // A data gap inside a run ends it
+    const broken = points.filter(p => !(p.t >= at(320) && p.t < at(335)));
+    const ex2 = T.detectExcursions({ points: broken, limits, tolerance: 3, excursionMin: 30, defrost, stepMs: STEP, hourly: false });
+    expect(ex2).toHaveLength(0);
+    // Hourly archive: the hour's max decides, one hour is one interval
+    const hourly = [{ t: at(0), min: -19.5, max: -18.5, avg: -19, samples: 12 }, { t: at(60), min: -19, max: -12, avg: -15, samples: 12 }, { t: at(120), min: -19, max: -12.5, avg: -15, samples: 12 }];
+    const ex3 = T.detectExcursions({ points: hourly, limits, tolerance: 3, excursionMin: 30, defrost: [], stepMs: 3600e3, hourly: true });
+    expect(ex3).toEqual([{ start: at(60), end: at(180), minutes: 120, kind: 'above', peak: -12 }]);
+  });
+
+  it('defrost intervals come from the defrost channel; gaps are stretches longer than one measurement interval', () => {
+    const defrostPts = [];
+    for (let m = 0; m < 480; m += 5) defrostPts.push({ t: at(m), v: (m >= 180 && m < 200) ? 1 : 0 });
+    expect(T.defrostIntervals(defrostPts, STEP, false)).toEqual([[at(180), at(200)]]);
+    expect(T.defrostIntervals([{ t: at(60), v: 0.4 }, { t: at(120), v: 0 }], 3600e3, true)).toEqual([[at(60), at(120)]]);
+
+    const points = series((p, m) => (m >= 120 && m < 150 ? false : undefined));   // 30 minutes missing at 02:00
+    expect(T.stepOf(points, 60)).toBe(STEP);
+    const gaps = T.detectGaps({ points, from, to, stepMs: STEP, hourly: false });
+    expect(gaps).toEqual([{ from: at(120), to: at(150), minutes: 30 }]);
+    // One missing sample is not a gap; a missing head or tail of the period is
+    const oneMissing = series((p, m) => (m === 200 ? false : undefined));
+    expect(T.detectGaps({ points: oneMissing, from, to, stepMs: STEP, hourly: false })).toEqual([]);
+    const late = series((p, m) => (m < 30 ? false : undefined));
+    expect(T.detectGaps({ points: late, from, to, stepMs: STEP, hourly: false })).toEqual([{ from: at(0), to: at(30), minutes: 30 }]);
+    expect(T.detectGaps({ points: [], from, to, stepMs: STEP, hourly: false })).toEqual([{ from: at(0), to: at(480), minutes: 480 }]);
+    // Hourly: missing hours
+    const hourly = [0, 1, 4, 5, 6, 7].map(h => ({ t: at(h * 60), min: -19, max: -18, avg: -18.5, samples: 12 }));
+    expect(T.detectGaps({ points: hourly, from, to, stepMs: 3600e3, hourly: true })).toEqual([{ from: at(120), to: at(240), minutes: 120 }]);
+  });
+
+  it('log rows: interval average, the deviation flag from the excursions, notes for defrost, door and gap', () => {
     const buckets = [];
-    for (let i = 0; i < 8; i++) {
-      if (i === 2 || i === 3) continue;                       // two hours without data
-      const hot = i === 5 || i === 6;                         // two hours above the limit
-      buckets.push({ time: hour(i).toISOString(),
-        air: { min: hot ? -14 : -17.9, max: hot ? -12 : (i === 7 ? -13 : -17), avg: hot ? -13 : -17.5, samples: 12 },
-        evap: { min: -25, max: -22, avg: -24, samples: 12 } });
+    for (let h = 0; h < 8; h++) {
+      if (h === 2) continue;
+      buckets.push({ time: new Date(at(h * 60)).toISOString(), air: { min: -19.5, max: h === 3 ? -13 : -18.5, avg: h === 5 ? -12.4 : (h === 3 ? -17.3 : -19), samples: 12 } });
     }
-    const alarms = [
-      { id: 1, alarm_code: 'high_temp_alarm', severity: 'critical', value: -12.4, limit_value: -15, triggered_at: new Date(hour(5).getTime() + 600e3),
-        cleared_at: hour(7), acknowledged_at: new Date(hour(5).getTime() + 1500e3), ack_note: 'двері', ack_by: 'admin@x', wo_id: 7, wo_status: 'done' },
-      { id: 2, alarm_code: 'device_offline', severity: 'warning', triggered_at: hour(2), cleared_at: hour(4) },
-    ];
-    const j = T.buildJournal({ buckets, channels: ['air', 'evap'], from, to, bucketSec: 3600, limits: { min: -18, max: -15, source: 'org' }, alarms, tz: 'Europe/Kyiv', S, lang: 'uk' });
-    expect(j.primary).toBe('air');
-    expect(j.others).toEqual(['evap']);
-    expect(j.hasLimits).toBe(true);
-    expect(j.stats).toMatchObject({ slots: 8, deviations: 2, gaps: 2, longestRun: 2, worst: -13, peaks: 1 });
-    expect(j.days).toHaveLength(1);
-    const rows = j.days[0].rows;
+    const d = {
+      buckets, defrost: [[at(180), at(200)]], doors: [[at(65), at(90)]],
+      excursions: [{ start: at(300), end: at(350), minutes: 50, kind: 'above', peak: -11.5 }],
+      gaps: [{ from: at(120), to: at(180), minutes: 60 }],
+    };
+    const days = T.buildRows({ d, from, to, bucketSec: 3600, tz: 'Europe/Kyiv', S, doorMin: 10 });
+    expect(days).toHaveLength(1);
+    const rows = days[0].rows;
     expect(rows.map(r => r.clock)).toEqual(['03:00', '04:00', '05:00', '06:00', '07:00', '08:00', '09:00', '10:00']);   // Kyiv = UTC+3
-    expect(rows[2]).toMatchObject({ gap: true, offline: true });
-    expect(rows[3]).toMatchObject({ gap: true, offline: true });
-    expect(rows[5]).toMatchObject({ gap: false, deviation: 'above' });
-    expect(rows[5].actions[0]).toContain('Висока температура');
-    expect(rows[5].actions[0]).toContain('Підтверджено 08:25 admin@x «двері»');
-    expect(rows[5].actions[0]).toContain('Наряд #7 (виконано)');
-    expect(rows[6]).toMatchObject({ deviation: 'above', actions: [] });
-    expect(rows[7]).toMatchObject({ deviation: null, peak: true });               // max above the limit, average inside
-    expect(j.days[0]).toMatchObject({ deviations: 2, gaps: 2 });
-
-    // Without limits nothing is flagged, and the journal says so through hasLimits
-    const none = T.buildJournal({ buckets, channels: ['air'], from, to, bucketSec: 3600, limits: { min: null, max: null, source: null }, alarms: [], tz: 'UTC', S, lang: 'uk' });
-    expect(none.hasLimits).toBe(false);
-    expect(none.stats.deviations).toBe(0);
-    expect(none.days[0].rows[0].clock).toBe('00:00');
-  });
-
-  it('alarm names come out in the report language', () => {
-    expect(T.alarmName('uk', 'high_temp_alarm')).toBe('Висока температура');
-    expect(T.alarmName('de', 'protection.door_alarm')).toMatch(/Tür/);
-    expect(T.alarmName('en', 'device_offline')).toBe('Device Offline');
-    expect(T.alarmName('pl', 'something_new')).toBe('something_new');
+    expect(rows[1]).toMatchObject({ deviation: false, gap: false, notes: ['двері > 10 хв'] });
+    expect(rows[2]).toMatchObject({ value: null, gap: true, notes: ['розрив'] });
+    expect(rows[3]).toMatchObject({ value: -17.3, deviation: false, notes: ['відтайка'] });        // defrost hour: not an excursion
+    expect(rows[5]).toMatchObject({ value: -12.4, deviation: true, notes: [] });
+    expect(days[0].deviations).toBe(1);
+    expect(T.actionFor(S, d.excursions[0], [{ created: at(330), title: 'Перевірити двері', status: 'done', closed_reason: 'Ущільнювач замінено', assignee: 'tech@x', technician: null }]))
+      .toEqual({ action: 'Ущільнювач замінено', responsible: 'tech@x' });
+    expect(T.actionFor(S, d.excursions[0], [{ created: at(330), title: 'Перевірити двері', status: 'assigned', closed_reason: null, assignee: null, technician: 'Іван' }]))
+      .toEqual({ action: 'Перевірити двері (призначено)', responsible: 'Іван' });
+    expect(T.actionFor(S, d.excursions[0], [])).toEqual({ action: '', responsible: '' });
+    expect(T.fmtDuration(50, S)).toBe('50 хв');
+    expect(T.fmtDuration(135, S)).toBe('2 год 15 хв');
+    expect(T.fmtDuration(1500, S)).toBe('1 дн 1 год');
   });
 });
 
-describe('HACCP journal end to end', () => {
+describe('HACCP inspector report end to end', () => {
   let tenant, site, device, admin;
   const parse = (r, cb) => { const c = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); };
+  const T = haccp.__test;
+  const q = (sql, p) => db.query(sql, p);
+  // 04.09 00:00 Kyiv → 06.09 00:00 Kyiv, like the acceptance run
+  const from = new Date('2026-09-03T21:00:00Z');
+  const to   = new Date('2026-09-05T21:00:00Z');
+  const at = (min) => new Date(from.getTime() + min * 60e3);
+
+  async function insert(mqttId, edit) {
+    const values = []; const params = []; let i = 1;
+    for (let m = 0; m < 48 * 60; m += 5) {
+      const utcH = ((from.getUTCHours() + m / 60) % 24);
+      const p = { air: -19.3, defrost: 0, evap: -25 };
+      if (utcH >= 9 && utcH < 9.34) { p.defrost = 1; p.air = -19 + (utcH - 9) / 0.34 * 5.5; }     // 12:00–12:20 Kyiv defrost, air up to −13.5
+      else if (utcH >= 9.34 && utcH < 9.67) p.air = -13.5 - (utcH - 9.34) / 0.33 * 5.8;
+      if (edit(p, m) === false) continue;
+      for (const [ch, v] of Object.entries(p)) { values.push(`($${i++}, $${i++}, $${i++}, $${i++}, $${i++})`); params.push(at(m), tenant.id, mqttId, ch, v); }
+    }
+    await db.query(`INSERT INTO telemetry (time, tenant_id, device_id, channel, value) VALUES ${values.join(',')} ON CONFLICT DO NOTHING`, params);
+  }
 
   beforeAll(async () => {
     await cleanDatabase();
-    tenant = await createTenant({ slug: 'haccp-journal', plan: 'pro' });
+    tenant = await createTenant({ slug: 'haccp-inspector', plan: 'pro' });
     const { rows } = await db.query(
       `INSERT INTO sites (tenant_id, name, city, country, timezone) VALUES ($1, 'Магазин №2', 'Львів', 'Україна', 'Europe/Kyiv') RETURNING id`, [tenant.id]);
     site = rows[0];
-    device = await createDevice(tenant.id, { mqttId: 'HACJ01', name: 'Бонета' });
+    device = await createDevice(tenant.id, { mqttId: 'EE0000000007', name: 'Бонета морозильна' });
     await db.query(`UPDATE devices SET site_id = $1, last_state = '{"protection.high_limit": -10, "protection.low_limit": -30}'::jsonb WHERE id = $2`, [site.id, device.id]);
-    admin = await createUser(tenant.id, { role: 'admin', email: 'admin@journal.test' });
+    admin = await createUser(tenant.id, { role: 'admin', email: 'admin@inspector.test' });
   });
 
   afterAll(async () => { await cleanDatabase(); });
 
-  it('the business sets the critical limits on the equipment; min must stay below max', async () => {
+  it('the business sets the critical limit, tolerance and product; the excursion threshold lives on the organisation and the site', async () => {
     const bad = await request(app).patch(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id)).send({ haccp_min: -10, haccp_max: -18 });
     expect(bad.status).toBe(400);
+    const badTol = await request(app).patch(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id)).send({ haccp_tolerance: -1 });
+    expect(badTol.status).toBe(400);
     const ok = await request(app).patch(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id))
-      .send({ haccp_min: -18, haccp_max: -15, haccp_product: 'заморожені напівфабрикати' });
+      .send({ haccp_max: -18, haccp_tolerance: 3, haccp_product: 'заморожені напівфабрикати' });
     expect(ok.status).toBe(200);
-    expect(ok.body.data).toMatchObject({ haccp_min: '-18.00', haccp_max: '-15.00', haccp_product: 'заморожені напівфабрикати' });
-    const got = await request(app).get(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id));
-    expect(got.body.data).toMatchObject({ haccp_min: '-18.00', haccp_max: '-15.00', haccp_product: 'заморожені напівфабрикати' });
-    const cleared = await request(app).patch(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id)).send({ haccp_product: '' });
-    expect(cleared.body.data.haccp_product).toBeNull();
+    expect(ok.body.data).toMatchObject({ haccp_min: null, haccp_max: '-18.00', haccp_tolerance: '3.0', haccp_product: 'заморожені напівфабрикати' });
+
+    const settings = await request(app).patch(`/api/tenants/${tenant.id}/settings`).set(authHeader(admin, tenant.id)).send({ haccp_excursion_min: 45 });
+    expect(settings.status).toBe(200);
+    expect(settings.body.data.haccp_excursion_min).toBe(45);
+    expect(settings.body.data.defaults.haccp_excursion_min).toBe(30);
+    const tooLong = await request(app).patch(`/api/tenants/${tenant.id}/settings`).set(authHeader(admin, tenant.id)).send({ haccp_excursion_min: 0 });
+    expect(tooLong.status).toBe(400);
+    const siteRes = await request(app).patch(`/api/sites/${site.id}`).set(authHeader(admin, tenant.id)).send({ haccp_excursion_min: 30 });
+    expect(siteRes.status).toBe(200);
+    expect(siteRes.body.data.haccp_excursion_min).toBe(30);
+    const siteCleared = await request(app).patch(`/api/sites/${site.id}`).set(authHeader(admin, tenant.id)).send({ haccp_excursion_min: null });
+    expect(siteCleared.body.data.haccp_excursion_min).toBeNull();
+    await request(app).patch(`/api/tenants/${tenant.id}/settings`).set(authHeader(admin, tenant.id)).send({ haccp_excursion_min: 30 });
   });
 
-  it('the PDF carries the limits, flags the deviation, names the gap and the corrective action', async () => {
-    const start = new Date(Date.now() - 2 * DAY);
-    start.setUTCMinutes(0, 0, 0);
-    // 8 hours of data with a 2-hour gap and a 2-hour excursion
-    const values = []; const params = []; let i = 1;
-    for (let h = 0; h < 8; h++) {
-      if (h === 2 || h === 3) continue;
-      for (let m = 0; m < 60; m += 5) {
-        const t = new Date(start.getTime() + h * 3600e3 + m * 60e3);
-        values.push(`($${i++}, $${i++}, $${i++}, 'air', $${i++})`);
-        params.push(t, tenant.id, 'HACJ01', (h === 5 || h === 6) ? -12.5 : -17.4);
-      }
+  it('acceptance: a clean two days — the 12:00 row says "відтайка" and is not an excursion, no evaporator, both blocks empty', async () => {
+    await insert('EE0000000007', () => {});
+    const { rows: [fresh] } = await db.query('SELECT * FROM devices WHERE id = $1', [device.id]);
+    const d = await T.collectDevice({ query: q, device: fresh, tenantId: tenant.id, from, to, bucketSec: 3600, source: 'raw', excursionMin: 30, samplingSec: 60 });
+    expect(d.stepSec).toBe(300);
+    expect(d.limits).toEqual({ min: null, max: -18, source: 'org' });
+    expect(d.tolerance).toBe(3);
+    expect(d.defrost).toHaveLength(2);
+    expect(d.excursions).toEqual([]);
+    expect(d.gaps).toEqual([]);
+    expect(Number(d.summary.max)).toBeCloseTo(-13.5, 0);
+    const S = haccp.strings('uk');
+    const days = T.buildRows({ d, from, to, bucketSec: 3600, tz: 'Europe/Kyiv', S, doorMin: 10 });
+    expect(days.map(x => x.day)).toEqual(['2026-09-04', '2026-09-05']);
+    for (const day of days) {
+      const noon = day.rows.find(r => r.clock === '12:00');
+      expect(noon).toMatchObject({ deviation: false, gap: false, notes: ['відтайка'] });
+      expect(day.rows.filter(r => r.deviation)).toHaveLength(0);
+      expect(day.rows).toHaveLength(24);
     }
-    await db.query(`INSERT INTO telemetry (time, tenant_id, device_id, channel, value) VALUES ${values.join(',')} ON CONFLICT DO NOTHING`, params);
-    const { rows: al } = await db.query(
-      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, value, limit_value, triggered_at, cleared_at, acknowledged_by, acknowledged_at, ack_note)
-       VALUES ($1, 'HACJ01', 'high_temp_alarm', 'critical', false, -12.5, -15, $2, $3, $4, $5, 'Завантаження товару') RETURNING id`,
-      [tenant.id, new Date(start.getTime() + 5 * 3600e3 + 300e3), new Date(start.getTime() + 7 * 3600e3), admin.id, new Date(start.getTime() + 5 * 3600e3 + 900e3)]);
-    await db.query(
-      `INSERT INTO work_orders (tenant_id, site_id, device_id, device_mqtt_id, alarm_id, title, status, created_by, closed_at, closed_reason)
-       VALUES ($1, $2, $3, 'HACJ01', $4, 'Перевірити ущільнювач', 'done', $5, now(), 'Ущільнювач замінено')`,
-      [tenant.id, site.id, device.id, al[0].id, admin.id]);
+    const { docDefinition } = T.buildDocument({
+      kind: 'device', lang: 'uk', tz: 'Europe/Kyiv', tenant: { ...tenant, legal_name: 'ТОВ «Морозко»' }, site, devices: [d], from, to,
+      bucketKey: '1h', bucketSec: 3600, source: 'raw', generatedBy: 'test', generatedAt: new Date().toISOString(),
+      code: 'ABCDEFGHJKLM', hash: 'ab'.repeat(32), verifyUrl: 'https://modesp.com.ua/api/public/report/ABCDEFGHJKLM', rawRetentionDays: 400, doorMin: 10,
+    });
+    const text = JSON.stringify(docDefinition.content);
+    expect(text).not.toContain('Випарник');
+    expect(text).not.toContain('Аварії');
+    expect(text).toContain(S.excursions_none);
+    expect(text).toContain(S.gaps_none);
+    expect(text).toContain('не вище -18 °C, допустиме відхилення 3 °C');
+    expect(text).toContain('кожні 5 хв');
+    expect(text).toContain('400 днів');
+    expect(text).toContain('довше ніж 30 хв');
+    expect(JSON.stringify(docDefinition.content.find(c => c.columns && c.columns.some(x => x.qr)))).toContain('"qr":"https://modesp.com.ua/api/public/report/ABCDEFGHJKLM"');
 
-    // What the document is built from (the device row as the export route reads it)
-    const q = (sql, p) => db.query(sql, p);
-    const fresh = async () => (await db.query('SELECT * FROM devices WHERE id = $1', [device.id])).rows[0];
-    const d = await T_collect(q, tenant.id, await fresh(), start, new Date(start.getTime() + 8 * 3600e3));
-    expect(d.limits).toEqual({ min: -18, max: -15, source: 'org' });
-    expect(d.alarms).toHaveLength(1);
-    expect(d.alarms[0]).toMatchObject({ alarm_code: 'high_temp_alarm', ack_note: 'Завантаження товару', ack_by: admin.email, wo_status: 'done', wo_closed_reason: 'Ущільнювач замінено' });
-    const canon = JSON.parse(haccp.canonicalData({ kind: 'device', tenant, site, devices: [d], from: start, to: new Date(start.getTime() + 8 * 3600e3), bucketKey: '1h', source: 'raw', generatedAt: 'x' }));
-    expect(canon.devices[0].limits).toEqual([-18, -15, 'org']);
-
-    const from = start.toISOString(), to = new Date(start.getTime() + 8 * 3600e3).toISOString();
-    const res = await request(app).get(`/api/devices/${device.id}/telemetry/export.pdf?from=${from}&to=${to}&lang=uk&bucket=1h`)
+    const res = await request(app).get(`/api/devices/${device.id}/telemetry/export.pdf?from=${from.toISOString()}&to=${to.toISOString()}&lang=uk&bucket=1h`)
       .set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
     expect(res.status).toBe(200);
     expect(res.body.slice(0, 5).toString()).toBe('%PDF-');
-    expect(res.body.length).toBeGreaterThan(20000);
-
-    // The controller's own limits take over once the business clears its own
-    await request(app).patch(`/api/devices/${device.id}`).set(authHeader(admin, tenant.id)).send({ haccp_min: null, haccp_max: null });
-    const d2 = await T_collect(q, tenant.id, await fresh(), start, new Date(start.getTime() + 8 * 3600e3));
-    expect(d2.limits).toEqual({ min: -30, max: -10, source: 'controller' });
-    const res2 = await request(app).get(`/api/devices/${device.id}/telemetry/export.pdf?from=${from}&to=${to}&lang=en`)
-      .set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
-    expect(res2.status).toBe(200);
+    expect(res.body.length).toBeGreaterThan(30000);
   });
 
-  async function T_collect(query, tenantId, dev, from, to) {
-    return haccp.__test.collectDevice({ query, device: dev, tenantId, channels: ['air', 'evap', 'setpoint'], from, to, bucketSec: 3600, source: 'raw' });
-  }
+  it('a 50-minute excursion, a 30-minute recording gap and a door alarm show up with the corrective action from the work order', async () => {
+    const dev2 = await createDevice(tenant.id, { mqttId: 'EE0000000008', name: 'Камера заморозки' });
+    await db.query(`UPDATE devices SET site_id = $1, haccp_max = -18, haccp_tolerance = 3 WHERE id = $2`, [site.id, dev2.id]);
+    // 05.09 03:00–03:30 Kyiv: no data; 05.09 15:00–15:50 Kyiv: −12; 04.09 09:00–09:15 Kyiv: −14 (too short)
+    await insert('EE0000000008', (p, m) => {
+      if (m >= 27 * 60 && m < 27 * 60 + 30) return false;
+      if (m >= 39 * 60 && m < 39 * 60 + 50) p.air = -12;
+      if (m >= 9 * 60 && m < 9 * 60 + 15) p.air = -14;
+    });
+    await db.query(
+      `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at, cleared_at)
+       VALUES ($1, 'EE0000000008', 'door_alarm', 'warning', false, $2, $3), ($1, 'EE0000000008', 'high_temp_alarm', 'critical', false, $4, $5)`,
+      [tenant.id, at(39 * 60 + 5), at(39 * 60 + 30), at(39 * 60 + 10), at(39 * 60 + 55)]);
+    await db.query(
+      `INSERT INTO work_orders (tenant_id, site_id, device_id, device_mqtt_id, title, status, created_by, assigned_to, created_at, closed_at, closed_reason)
+       VALUES ($1, $2, $3, 'EE0000000008', 'Перевірити ущільнювач', 'done', $4, $4, $5, $6, 'Ущільнювач замінено')`,
+      [tenant.id, site.id, dev2.id, admin.id, at(39 * 60 + 40), at(41 * 60)]);
+
+    const { rows: [fresh] } = await db.query('SELECT * FROM devices WHERE id = $1', [dev2.id]);
+    const d = await T.collectDevice({ query: q, device: fresh, tenantId: tenant.id, from, to, bucketSec: 3600, source: 'raw', excursionMin: 30, samplingSec: 60 });
+    expect(d.excursions).toHaveLength(1);
+    expect(d.excursions[0]).toMatchObject({ start: at(39 * 60).getTime(), end: at(39 * 60 + 50).getTime(), minutes: 50, kind: 'above', peak: -12 });
+    expect(d.gaps).toEqual([{ from: at(27 * 60).getTime(), to: at(27 * 60 + 30).getTime(), minutes: 30 }]);
+    expect(d.doors).toHaveLength(1);
+    expect(d.workOrders).toHaveLength(1);
+    const S = haccp.strings('uk');
+    expect(T.actionFor(S, d.excursions[0], d.workOrders)).toEqual({ action: 'Ущільнювач замінено', responsible: admin.email });
+    const days = T.buildRows({ d, from, to, bucketSec: 3600, tz: 'Europe/Kyiv', S, doorMin: 10 });
+    const day2 = days[1];
+    expect(day2.rows.find(r => r.clock === '03:00')).toMatchObject({ gap: true, deviation: false, notes: ['розрив'] });
+    expect(day2.rows.find(r => r.clock === '15:00')).toMatchObject({ deviation: true, notes: ['двері > 10 хв'] });
+    expect(days[0].rows.find(r => r.clock === '09:00')).toMatchObject({ deviation: false });
+    expect(day2.deviations).toBe(1);
+    const canon = JSON.parse(haccp.canonicalData({ kind: 'device', tenant, site, devices: [d], from, to, bucketKey: '1h', source: 'raw', generatedAt: 'x' }));
+    expect(canon.devices[0].limits).toEqual([null, -18, 3, 30, 'org']);
+    expect(canon.devices[0].excursions).toHaveLength(1);
+    expect(canon.devices[0].gaps).toHaveLength(1);
+
+    const res = await request(app).get(`/api/sites/${site.id}/export.pdf?from=${from.toISOString()}&to=${to.toISOString()}&lang=en`)
+      .set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
+    expect(res.status).toBe(200);
+    expect(res.body.slice(0, 5).toString()).toBe('%PDF-');
+  });
 });

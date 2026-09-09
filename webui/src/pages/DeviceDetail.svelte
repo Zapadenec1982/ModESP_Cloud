@@ -48,7 +48,7 @@
   // ── Edit modal state ──
   let showEdit = false
   let editForm = { name: '', location: '', serial_number: '', model: '', comment: '', manufactured_at: '',
-    haccp_min: '', haccp_max: '', haccp_product: '',
+    haccp_min: '', haccp_max: '', haccp_tolerance: '', haccp_product: '',
     model_id: null, compressor_kw: '', evap_fan_kw: '', cond_fan_kw: '', defrost_heater_kw: '', standby_kw: '',
     site_id: '' }
   // AddressPicker mode="point" binds this shape; `display_name` has no column on
@@ -107,6 +107,7 @@
       // HACCP critical limits (migration 046)
       haccp_min: device.haccp_min ?? '',
       haccp_max: device.haccp_max ?? '',
+      haccp_tolerance: device.haccp_tolerance ?? '',
       haccp_product: device.haccp_product || '',
       model_id: device.model_id || '',
       compressor_kw: device.compressor_kw ?? '',
@@ -144,7 +145,7 @@
       const currentMfg = device.manufactured_at ? device.manufactured_at.slice(0, 10) : ''
       if (editForm.manufactured_at !== currentMfg) changes.manufactured_at = editForm.manufactured_at || null
       // HACCP critical limits: empty = clear (the journal then uses the controller's own limits)
-      for (const f of ['haccp_min', 'haccp_max']) {
+      for (const f of ['haccp_min', 'haccp_max', 'haccp_tolerance']) {
         const val = editForm[f] === '' || editForm[f] === null ? null : Number(editForm[f])
         const cur = device[f] == null ? null : Number(device[f])
         if (val !== cur) changes[f] = val
@@ -792,7 +793,7 @@
         {#if device.haccp_min != null || device.haccp_max != null}
           <span class="meta-item" title={$t('device.haccp_section')}>
             <Icon name="thermometer" size={12} />
-            HACCP {device.haccp_min != null ? Number(device.haccp_min) : '…'}…{device.haccp_max != null ? Number(device.haccp_max) : '…'} °C{device.haccp_product ? ` · ${device.haccp_product}` : ''}
+            HACCP {device.haccp_min != null ? Number(device.haccp_min) : '…'}…{device.haccp_max != null ? Number(device.haccp_max) : '…'} °C{device.haccp_tolerance ? ` (±${Number(device.haccp_tolerance)})` : ''}{device.haccp_product ? ` · ${device.haccp_product}` : ''}
           </span>
         {/if}
         {#if device.site_name}
@@ -1269,8 +1270,12 @@
           </div>
           <div class="form-group">
             <label for="edit-haccp-max">{$t('device.haccp_max')}</label>
-            <input id="edit-haccp-max" type="number" step="0.5" min="-99" max="99" bind:value={editForm.haccp_max} placeholder="−15" />
+            <input id="edit-haccp-max" type="number" step="0.5" min="-99" max="99" bind:value={editForm.haccp_max} placeholder="−18" />
           </div>
+        </div>
+        <div class="form-group">
+          <label for="edit-haccp-tolerance">{$t('device.haccp_tolerance')}</label>
+          <input id="edit-haccp-tolerance" type="number" step="0.5" min="0" max="30" bind:value={editForm.haccp_tolerance} placeholder="0" />
         </div>
         <p class="form-hint">{$t('device.haccp_hint')}</p>
 
