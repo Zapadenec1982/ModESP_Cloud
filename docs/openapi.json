@@ -662,6 +662,51 @@
           "users"
         ]
       },
+      "HaccpPreset": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "freezer"
+          },
+          "haccp_min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "example": null
+          },
+          "haccp_max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "example": -18
+          },
+          "haccp_tolerance": {
+            "type": "number",
+            "example": 3
+          },
+          "label": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Product label per UI language (uk, en, pl, de)",
+            "example": {
+              "uk": "Заморожені продукти",
+              "en": "Frozen food"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "haccp_min",
+          "haccp_max",
+          "haccp_tolerance",
+          "label"
+        ]
+      },
       "ServiceRecord": {
         "type": "object",
         "properties": {
@@ -2621,6 +2666,262 @@
           },
           "404": {
             "description": "`not_found`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/haccp-presets": {
+      "get": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Typical HACCP critical limits by what the equipment stores",
+        "description": "Starting points for the HACCP journal, not law: the enterprise's HACCP plan sets the critical limit. The same list drives the device card, the dashboard bulk action and the CSV import column `haccp_preset`.",
+        "responses": {
+          "200": {
+            "description": "Presets in display order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/HaccpPreset"
+                      }
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked or expired credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The role behind the credentials may not do this, or the endpoint is closed to API keys (`api_key_scope`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/haccp": {
+      "patch": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "Set HACCP critical limits on many devices",
+        "description": "Scope `admin`. A preset, explicit fields, or a preset with overrides; explicit fields win. With `only_empty` (default `true`) devices that already carry `haccp_min` or `haccp_max` are skipped, so a network-wide preset cannot overwrite limits typed by the HACCP officer. Ids may be device UUIDs or controller ids; unknown or foreign ids are skipped, not refused.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "example": [
+                      "E00118",
+                      "3f9c…"
+                    ]
+                  },
+                  "preset": {
+                    "type": "string",
+                    "description": "A key from GET /devices/haccp-presets",
+                    "example": "freezer"
+                  },
+                  "haccp_min": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": -99,
+                    "maximum": 99
+                  },
+                  "haccp_max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": -99,
+                    "maximum": 99
+                  },
+                  "haccp_tolerance": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 30
+                  },
+                  "haccp_product": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 96
+                  },
+                  "only_empty": {
+                    "type": "boolean",
+                    "description": "Default true"
+                  },
+                  "lang": {
+                    "type": "string",
+                    "enum": [
+                      "uk",
+                      "en",
+                      "pl",
+                      "de"
+                    ],
+                    "description": "Language of the preset's product label (default: the caller's)"
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "updated": {
+                          "type": "integer"
+                        },
+                        "skipped": {
+                          "type": "integer"
+                        },
+                        "fields": {
+                          "type": "object",
+                          "additionalProperties": {},
+                          "description": "The columns written"
+                        },
+                        "devices": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+                              },
+                              "mqtt_device_id": {
+                                "type": "string",
+                                "description": "Controller id as printed on the device and used on the broker",
+                                "example": "E00118"
+                              },
+                              "haccp_min": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "haccp_max": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "haccp_tolerance": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ]
+                              },
+                              "haccp_product": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "mqtt_device_id",
+                              "haccp_min",
+                              "haccp_max",
+                              "haccp_tolerance",
+                              "haccp_product"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "updated",
+                        "skipped",
+                        "fields",
+                        "devices"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed` (unknown preset, no fields, haccp_min ≥ haccp_max)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked or expired credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`",
             "content": {
               "application/json": {
                 "schema": {

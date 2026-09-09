@@ -16,6 +16,7 @@ const stateMeta  = require('../config/state_meta.json');
 const { DANGEROUS_KEYS, validateCommandValue } = require('../config/command-policy');
 const { normalizeClaimCode } = require('../lib/claim-code');
 const planMw = require('../middleware/plan');
+const haccpPresets = require('../lib/haccp-presets');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
@@ -885,6 +886,72 @@ router.post('/pending/batch', maybeAuthorize('admin'), (req, res, next) => {
 
     req.auditContext = { entityId: job.id, action: 'import.create', changes: { rows: rows.length, file: req.file.originalname, ...forecast } };
     res.status(202).json({ data: { ...job, summary: importSvc.summaryOf(job), forecast } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── GET /api/devices/haccp-presets ───────────────────────────
+// Typical HACCP critical limits by what the equipment stores (lib/haccp-presets):
+// the device card, the dashboard bulk action and the CSV import offer the same list.
+router.get('/haccp-presets', (_req, res) => {
+  res.json({ data: haccpPresets.PRESETS.map(p => ({ key: p.key, haccp_min: p.min, haccp_max: p.max, haccp_tolerance: p.tolerance, label: p.label })) });
+});
+
+// ── PATCH /api/devices/haccp ─────────────────────────────────
+// Set the HACCP critical limits of many devices at once: a preset, explicit
+// fields, or a preset with overrides. `only_empty` (default true) leaves
+// devices that already carry a limit alone, so "apply the freezer preset to
+// the whole network" cannot silently overwrite what the HACCP officer typed.
+const bulkHaccpSchema = z.object({
+  ids:             z.array(z.string().min(1)).min(1).max(500),
+  preset:          z.string().trim().toLowerCase().refine(v => haccpPresets.presetOf(v), { message: 'Unknown preset' }).optional(),
+  haccp_min:       z.number().min(-99).max(99).nullable().optional(),
+  haccp_max:       z.number().min(-99).max(99).nullable().optional(),
+  haccp_tolerance: z.number().min(0).max(30).nullable().optional(),
+  haccp_product:   z.string().trim().max(96).nullable().optional().transform(v => (v === '' ? null : v)),
+  only_empty:      z.boolean().optional().default(true),
+  lang:            z.enum(['uk', 'en', 'pl', 'de']).optional(),
+});
+
+router.patch('/haccp', maybeAuthorize('admin'), async (req, res, next) => {
+  try {
+    const parsed = bulkHaccpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'validation_failed', message: parsed.error.errors[0]?.message || 'Invalid input', status: 400 });
+    }
+    const body = parsed.data;
+    const fields = {};
+    if (body.preset) Object.assign(fields, haccpPresets.fieldsOf(body.preset, body.lang || req.user?.locale || 'uk'));
+    for (const k of ['haccp_min', 'haccp_max', 'haccp_tolerance', 'haccp_product']) if (body[k] !== undefined) fields[k] = body[k];
+    const keys = Object.keys(fields);
+    if (keys.length === 0) {
+      return res.status(400).json({ error: 'validation_failed', message: 'A preset or at least one haccp_* field is required', status: 400 });
+    }
+    if (fields.haccp_min != null && fields.haccp_max != null && fields.haccp_min >= fields.haccp_max) {
+      return res.status(400).json({ error: 'validation_failed', message: 'haccp_min must be below haccp_max', status: 400 });
+    }
+
+    const isSuperAdmin = req.user && req.user.role === 'superadmin';
+    const uuids = body.ids.filter(isUuidFormat);
+    const mqttIds = body.ids.filter(id => !isUuidFormat(id)).map(id => id.toUpperCase());
+    const params = [uuids, mqttIds];
+    let where = `(d.id = ANY($1::uuid[]) OR d.mqtt_device_id = ANY($2::text[])) AND d.status <> 'deleted'`;
+    if (!isSuperAdmin) { params.push(req.tenantId); where += ` AND d.tenant_id = $${params.length}`; }
+    if (body.only_empty) where += ' AND d.haccp_min IS NULL AND d.haccp_max IS NULL';
+    const setClauses = keys.map(k => { params.push(fields[k]); return `${k} = $${params.length}`; });
+
+    const { rows } = await db.query(
+      `WITH target AS (SELECT d.id FROM devices d WHERE ${where})
+       UPDATE devices SET ${setClauses.join(', ')} FROM target WHERE devices.id = target.id
+       RETURNING devices.id, devices.mqtt_device_id, devices.haccp_min, devices.haccp_max, devices.haccp_tolerance, devices.haccp_product`,
+      params);
+    const updated = rows.map(r => r.id);
+    req.auditContext = {
+      action: 'device.haccp_bulk', entityType: 'device', entityId: null,
+      changes: { preset: body.preset || null, fields, only_empty: body.only_empty, requested: body.ids.length, updated: updated.length },
+    };
+    res.json({ data: { updated: updated.length, skipped: body.ids.length - updated.length, fields, devices: rows } });
   } catch (err) {
     next(err);
   }

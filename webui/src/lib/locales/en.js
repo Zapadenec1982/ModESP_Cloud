@@ -682,6 +682,12 @@ export default {
     delete_selected: 'Delete selected',
     bulk_delete_confirm: 'Delete {0} device(s)? All telemetry data and events will be permanently deleted.',
     bulk_deleted: '{0} device(s) deleted',
+    bulk_haccp: 'HACCP limits',
+    bulk_haccp_title: 'HACCP critical limits for the selected devices',
+    bulk_haccp_hint: 'Presets by what the equipment stores are a starting point; the critical limit is set by the enterprise’s HACCP plan. Explicit values below override the preset.',
+    bulk_haccp_only_empty: 'Only devices without limits (keep what was typed by hand)',
+    bulk_haccp_apply: 'Apply',
+    bulk_haccp_done: 'Limits set: {0}, skipped: {1}',
   },
 
   // ── Device detail ──
@@ -725,6 +731,8 @@ export default {
     comment_placeholder: 'Notes about this device...',
     manufactured_at: 'Manufactured',
     haccp_section: 'HACCP: critical limits',
+    haccp_preset: 'Typical limits by purpose',
+    haccp_preset_none: '— choose a preset —',
     haccp_product: 'Product / purpose',
     haccp_product_placeholder: 'e.g. frozen semi-finished goods',
     haccp_min: 'Lower limit, °C',

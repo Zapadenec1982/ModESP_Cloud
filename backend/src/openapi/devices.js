@@ -81,6 +81,36 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
       400: errorOf('`validation_failed` or `invalid_site`'), ...deviceErrors,
     }),
   });
+  const HaccpPreset = registry.register('HaccpPreset', z.object({
+    key: z.string().openapi({ example: 'freezer' }),
+    haccp_min: z.number().nullable().openapi({ example: null }), haccp_max: z.number().nullable().openapi({ example: -18 }), haccp_tolerance: z.number().openapi({ example: 3 }),
+    label: z.record(z.string()).openapi({ description: 'Product label per UI language (uk, en, pl, de)', example: { uk: 'Заморожені продукти', en: 'Frozen food' } }),
+  }));
+  registry.registerPath({
+    method: 'get', path: '/devices/haccp-presets', tags: ['Devices'], summary: 'Typical HACCP critical limits by what the equipment stores',
+    description: 'Starting points for the HACCP journal, not law: the enterprise\'s HACCP plan sets the critical limit. The same list drives the device card, the dashboard bulk action and the CSV import column `haccp_preset`.',
+    responses: withCommon({ 200: listOf(HaccpPreset, 'Presets in display order') }),
+  });
+  registry.registerPath({
+    method: 'patch', path: '/devices/haccp', tags: ['Devices'], summary: 'Set HACCP critical limits on many devices',
+    description: 'Scope `admin`. A preset, explicit fields, or a preset with overrides; explicit fields win. With `only_empty` (default `true`) devices that already carry `haccp_min` or `haccp_max` are skipped, so a network-wide preset cannot overwrite limits typed by the HACCP officer. Ids may be device UUIDs or controller ids; unknown or foreign ids are skipped, not refused.',
+    request: { body: { content: { 'application/json': { schema: z.object({
+      ids: z.array(z.string()).min(1).max(500).openapi({ example: ['E00118', '3f9c…'] }),
+      preset: z.string().optional().openapi({ description: 'A key from GET /devices/haccp-presets', example: 'freezer' }),
+      haccp_min: z.number().min(-99).max(99).nullable().optional(), haccp_max: z.number().min(-99).max(99).nullable().optional(),
+      haccp_tolerance: z.number().min(0).max(30).nullable().optional(), haccp_product: z.string().max(96).nullable().optional(),
+      only_empty: z.boolean().optional().openapi({ description: 'Default true' }),
+      lang: z.enum(['uk', 'en', 'pl', 'de']).optional().openapi({ description: 'Language of the preset\'s product label (default: the caller\'s)' }),
+    }) } } } },
+    responses: withCommon({
+      200: dataOf(z.object({
+        updated: z.number().int(), skipped: z.number().int(),
+        fields: z.record(z.any()).openapi({ description: 'The columns written' }),
+        devices: z.array(z.object({ id: uuid, mqtt_device_id: mqttId, haccp_min: z.number().nullable(), haccp_max: z.number().nullable(), haccp_tolerance: z.number().nullable(), haccp_product: z.string().nullable() })),
+      }), 'What changed'),
+      400: errorOf('`validation_failed` (unknown preset, no fields, haccp_min ≥ haccp_max)'), 403: errorOf('`forbidden`'),
+    }),
+  });
   registry.registerPath({
     method: 'post', path: '/devices/{id}/command', tags: ['Devices'], summary: 'Send a parameter to the controller',
     description: 'Scope `write` or `admin`. `key` must be writable per `GET /meta`; `value` is checked against its type, range and step. Setpoints, limits, resets and manual defrost need `confirm: true`.',

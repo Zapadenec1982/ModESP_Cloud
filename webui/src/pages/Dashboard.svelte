@@ -1,9 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevices, deleteDevicesBulk, exportDevicesCsv } from '../lib/api.js'
+  import { getDevices, deleteDevicesBulk, exportDevicesCsv, getHaccpPresets, setHaccpBulk } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { devices, isSuperAdmin, isAdmin } from '../lib/stores.js'
-  import { t } from '../lib/i18n.js'
+  import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
   import OnboardingChecklist from '../components/dashboard/OnboardingChecklist.svelte'
@@ -65,6 +65,57 @@
       deleting = false
     }
   }
+
+  // Bulk HACCP critical limits (PATCH /devices/haccp): a preset by what the
+  // equipment stores, optional overrides, and by default only devices without limits.
+  let haccpModal = false
+  let haccpPresets = []
+  let haccpForm = { preset: '', haccp_min: '', haccp_max: '', haccp_tolerance: '', haccp_product: '', only_empty: true }
+  let haccpSaving = false
+
+  async function openHaccpModal() {
+    if (selected.size === 0) return
+    haccpForm = { preset: '', haccp_min: '', haccp_max: '', haccp_tolerance: '', haccp_product: '', only_empty: true }
+    haccpModal = true
+    if (!haccpPresets.length) {
+      try { haccpPresets = await getHaccpPresets() || [] } catch (err) { toast.error(err.message) }
+    }
+  }
+
+  /** "≤ −18 °C (±3)" / "0…6 °C (±2)" for a preset option label. */
+  function presetRange(p) {
+    const n = (v) => String(v).replace('-', '−')
+    const range = p.haccp_min == null ? `≤ ${n(p.haccp_max)}` : p.haccp_max == null ? `≥ ${n(p.haccp_min)}` : `${n(p.haccp_min)}…${n(p.haccp_max)}`
+    return `${range} °C${p.haccp_tolerance ? ` (±${p.haccp_tolerance})` : ''}`
+  }
+  function onHaccpPreset() {
+    const p = haccpPresets.find(x => x.key === haccpForm.preset)
+    if (!p) return
+    haccpForm = { ...haccpForm, haccp_min: p.haccp_min ?? '', haccp_max: p.haccp_max ?? '', haccp_tolerance: p.haccp_tolerance ?? '', haccp_product: p.label[$locale] || p.label.uk }
+  }
+
+  async function applyHaccpBulk() {
+    const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v))
+    const payload = { ids: [...selected], only_empty: haccpForm.only_empty, lang: $locale }
+    if (haccpForm.preset) payload.preset = haccpForm.preset
+    for (const k of ['haccp_min', 'haccp_max', 'haccp_tolerance']) { const v = num(haccpForm[k]); if (v !== null && !Number.isNaN(v)) payload[k] = v }
+    if ((haccpForm.haccp_product || '').trim()) payload.haccp_product = haccpForm.haccp_product.trim()
+    if (!payload.preset && payload.haccp_min === undefined && payload.haccp_max === undefined) return
+    haccpSaving = true
+    try {
+      const res = await setHaccpBulk(payload)
+      toast.success($t('dashboard.bulk_haccp_done').replace('{0}', String(res?.updated ?? 0)).replace('{1}', String(res?.skipped ?? 0)))
+      haccpModal = false
+      selected = new Set()
+      await load()
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      haccpSaving = false
+    }
+  }
+
+  function onHaccpKey(e) { if (e.key === 'Escape') haccpModal = false }
 
   // WS tracking
   let subscribedIds = new Set()
@@ -260,6 +311,9 @@
       </span>
       <div class="bulk-actions">
         <Button variant="secondary" size="sm" on:click={clearSelection}>{$t('common.cancel')}</Button>
+        {#if $isAdmin}
+          <Button variant="secondary" size="sm" icon="thermometer" on:click={openHaccpModal}>{$t('dashboard.bulk_haccp')}</Button>
+        {/if}
         <Button variant="danger" size="sm" icon="trash-2" loading={deleting} on:click={handleBulkDelete}>
           {$t('dashboard.delete_selected')}
         </Button>
@@ -326,6 +380,60 @@
     </div>
   {/if}
 </div>
+
+{#if haccpModal}
+  <div class="modal-backdrop" role="presentation" on:click={() => (haccpModal = false)} on:keydown={onHaccpKey}>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="haccp-bulk-title" on:click|stopPropagation on:keydown|stopPropagation>
+      <div class="modal-header">
+        <div>
+          <h2 id="haccp-bulk-title">{$t('dashboard.bulk_haccp_title')}</h2>
+          <span class="modal-subtitle">{$t('dashboard.selected').replace('{0}', String(selectedCount))}</span>
+        </div>
+        <button class="modal-close" on:click={() => (haccpModal = false)} aria-label={$t('common.close')}><Icon name="x" size={16} /></button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">{$t('dashboard.bulk_haccp_hint')}</p>
+        <div class="form-group">
+          <label for="bulk-haccp-preset">{$t('device.haccp_preset')}</label>
+          <select id="bulk-haccp-preset" bind:value={haccpForm.preset} on:change={onHaccpPreset}>
+            <option value="">{$t('device.haccp_preset_none')}</option>
+            {#each haccpPresets as p (p.key)}
+              <option value={p.key}>{p.label[$locale] || p.label.uk} — {presetRange(p)}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="bulk-haccp-product">{$t('device.haccp_product')}</label>
+          <input id="bulk-haccp-product" type="text" maxlength="96" bind:value={haccpForm.haccp_product} placeholder={$t('device.haccp_product_placeholder')} />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="bulk-haccp-min">{$t('device.haccp_min')}</label>
+            <input id="bulk-haccp-min" type="number" step="0.5" min="-99" max="99" bind:value={haccpForm.haccp_min} />
+          </div>
+          <div class="form-group">
+            <label for="bulk-haccp-max">{$t('device.haccp_max')}</label>
+            <input id="bulk-haccp-max" type="number" step="0.5" min="-99" max="99" bind:value={haccpForm.haccp_max} />
+          </div>
+          <div class="form-group">
+            <label for="bulk-haccp-tol">{$t('device.haccp_tolerance')}</label>
+            <input id="bulk-haccp-tol" type="number" step="0.5" min="0" max="30" bind:value={haccpForm.haccp_tolerance} />
+          </div>
+        </div>
+        <label class="check">
+          <input type="checkbox" bind:checked={haccpForm.only_empty} />
+          {$t('dashboard.bulk_haccp_only_empty')}
+        </label>
+      </div>
+      <div class="modal-actions">
+        <Button variant="secondary" size="sm" on:click={() => (haccpModal = false)}>{$t('common.cancel')}</Button>
+        <Button variant="primary" size="sm" loading={haccpSaving} disabled={!haccpForm.preset && haccpForm.haccp_min === '' && haccpForm.haccp_max === ''} on:click={applyHaccpBulk}>
+          {$t('dashboard.bulk_haccp_apply')}
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .dashboard {
@@ -433,4 +541,21 @@
     accent-color: var(--accent-blue);
     cursor: pointer;
   }
+
+  /* Bulk HACCP limits modal (same look as the editor modals on Sites) */
+  .modal-backdrop { position: fixed; inset: 0; background: var(--bg-overlay); display: flex; align-items: center; justify-content: center; z-index: 100; padding: var(--space-4); }
+  .modal { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-lg); width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--space-4); border-bottom: 1px solid var(--border-muted); }
+  .modal-header h2 { font-size: var(--text-lg); font-weight: 600; color: var(--text-primary); }
+  .modal-subtitle { display: block; color: var(--text-muted); font-size: var(--text-xs); }
+  .modal-close { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); border: none; background: transparent; color: var(--text-muted); cursor: pointer; }
+  .modal-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .modal-body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); color: var(--text-primary); font-size: var(--text-sm); }
+  .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border-muted); }
+  .modal-body .hint { color: var(--text-muted); font-size: var(--text-xs); margin: 0; }
+  .modal-body .form-group { display: flex; flex-direction: column; gap: var(--space-1); }
+  .modal-body .form-group label { font-size: var(--text-xs); color: var(--text-secondary); }
+  .modal-body .form-group input, .modal-body .form-group select { padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-primary); color: var(--text-primary); font-size: var(--text-sm); }
+  .modal-body .form-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+  .modal-body .check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); cursor: pointer; }
 </style>

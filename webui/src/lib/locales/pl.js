@@ -682,6 +682,12 @@ export default {
     delete_selected: 'Usuń zaznaczone',
     bulk_delete_confirm: 'Usunąć {0} urządzeń? Wszystkie dane telemetryczne i zdarzenia zostaną trwale usunięte.',
     bulk_deleted: 'Usunięto {0} urządzeń',
+    bulk_haccp: 'Limity HACCP',
+    bulk_haccp_title: 'Limity krytyczne HACCP dla wybranych urządzeń',
+    bulk_haccp_hint: 'Presety według przeznaczenia urządzenia to punkt wyjścia; limit krytyczny określa plan HACCP przedsiębiorstwa. Wartości jawne poniżej mają pierwszeństwo przed presetem.',
+    bulk_haccp_only_empty: 'Tylko urządzenia bez limitów (nie nadpisywać wpisanych ręcznie)',
+    bulk_haccp_apply: 'Zastosuj',
+    bulk_haccp_done: 'Ustawiono limity: {0}, pominięto: {1}',
   },
 
   // ── Device detail ──
@@ -725,6 +731,8 @@ export default {
     comment_placeholder: 'Notatki o tym urządzeniu...',
     manufactured_at: 'Data produkcji',
     haccp_section: 'HACCP: limity krytyczne',
+    haccp_preset: 'Typowe limity według przeznaczenia',
+    haccp_preset_none: '— wybierz preset —',
     haccp_product: 'Produkt / przeznaczenie',
     haccp_product_placeholder: 'np. mrożone półprodukty',
     haccp_min: 'Dolny limit, °C',
