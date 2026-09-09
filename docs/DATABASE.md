@@ -961,7 +961,7 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 | Скрипт | Таймер | Що робить |
 |---|---|---|
 | `backend/src/scripts/ensure-partitions.js` | `modesp-telemetry-partition.timer`, 25-го | партиції на поточний місяць + `PARTITION_MONTHS_AHEAD` (6) уперед |
-| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`; видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90); скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
+| `backend/scripts/cleanup-telemetry.js --apply` | `modesp-retention-cleanup.timer`, щодня 03:30 | згортає сирі рядки за `DOWNSAMPLE_LOOKBACK_DAYS` (3) у `telemetry_hourly`; видаляє сирі рядки старші за `plan_limits.retention_days` організації (запасне `TELEMETRY_RETENTION_DAYS`, 90), а інженерні канали (`evap`, `cond`, `setpoint`, `comp`) — уже за `RAW_ENGINEERING_RETENTION_DAYS` (30), не довше за план; `air` і `defrost` живуть повну ретенцію плану, бо їх читає HACCP-журнал; скидає партиції, чий кінець старший за найдовшу ретенцію серед планів; чистить `telemetry_hourly` старше `HOURLY_RETENTION_DAYS` (1095). `--backfill-days N` — разове наповнення архіву історією |
 
 ---
 

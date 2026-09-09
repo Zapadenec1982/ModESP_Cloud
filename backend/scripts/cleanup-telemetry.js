@@ -34,6 +34,23 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const DEFAULT_RETENTION_DAYS   = 90;
 const HOURLY_RETENTION_DAYS    = parseInt(process.env.HOURLY_RETENTION_DAYS, 10) || 1095;
 const DOWNSAMPLE_LOOKBACK_DAYS = parseInt(process.env.DOWNSAMPLE_LOOKBACK_DAYS, 10) || 3;
+
+// Raw retention is split by what the channel is for.
+//
+// air and defrost answer the inspector: the HACCP journal charts air against the
+// critical limit, and it needs defrost to know which peaks are a defrost cycle
+// rather than a product excursion (services/haccp-report.js fetchRaw reads both).
+// Delete defrost early and a report over an older period starts flagging every
+// defrost peak as an excursion — a false claim in a compliance document.
+//
+// The other four are read by exactly one thing, the technician's service report,
+// where they matter for the weeks around a fault, not for years. At a 5-minute
+// step they are two thirds of every row written.
+//
+// Anything else a future firmware sends keeps the full plan retention: losing
+// data costs more than keeping it.
+const ENGINEERING_CHANNELS = ['evap', 'cond', 'setpoint', 'comp'];
+const DEFAULT_ENGINEERING_RETENTION_DAYS = 30;
 const PARTITION_RE = /^telemetry_(\d{4})_(\d{2})$/;
 const BATCH_SIZE   = 20000;
 
@@ -67,8 +84,10 @@ async function downsampleHourly({ query, now = new Date(), lookbackDays = DOWNSA
  * Per-organisation raw retention from plan_limits.retention_days.
  * @returns {Promise<Array<{tenant_id:string, slug:string, retention_days:number, cutoff:Date, candidates:number, deleted:number}>>}
  */
-async function purgeRaw({ query, apply = false, now = new Date(), defaultRetentionDays, log = () => {} }) {
+async function purgeRaw({ query, apply = false, now = new Date(), defaultRetentionDays, engineeringRetentionDays, log = () => {} }) {
   const fallback = parseRetention(defaultRetentionDays ?? process.env.TELEMETRY_RETENTION_DAYS, DEFAULT_RETENTION_DAYS);
+  const engFallback = parseRetention(
+    engineeringRetentionDays ?? process.env.RAW_ENGINEERING_RETENTION_DAYS, DEFAULT_ENGINEERING_RETENTION_DAYS);
   const { rows: tenants } = await query(
     `SELECT t.id AS tenant_id, t.slug, COALESCE(s.raw_retention_days, p.retention_days, $1) AS retention_days
        FROM tenants t
@@ -80,10 +99,38 @@ async function purgeRaw({ query, apply = false, now = new Date(), defaultRetenti
   const report = [];
   for (const t of tenants) {
     const cutoff = new Date(now.getTime() - t.retention_days * 86400 * 1000);
+    // Never keep an engineering channel longer than the plan keeps anything.
+    const engDays = Math.min(engFallback, t.retention_days);
+    const engCutoff = new Date(now.getTime() - engDays * 86400 * 1000);
+
     const { rows } = await query(
       'SELECT count(*)::int AS n FROM telemetry WHERE tenant_id = $1 AND time < $2', [t.tenant_id, cutoff]);
-    const entry = { ...t, cutoff, candidates: rows[0].n, deleted: 0 };
+    // Counted between the two cutoffs: what pass one below leaves behind.
+    const { rows: engRows } = await query(
+      `SELECT count(*)::int AS n FROM telemetry
+        WHERE tenant_id = $1 AND time >= $2 AND time < $3 AND channel = ANY($4)`,
+      [t.tenant_id, cutoff, engCutoff, ENGINEERING_CHANNELS]);
+
+    const entry = { ...t, cutoff, candidates: rows[0].n, deleted: 0,
+                    engineering_retention_days: engDays, engineering_cutoff: engCutoff,
+                    engineering_candidates: engRows[0].n, engineering_deleted: 0 };
     report.push(entry);
+
+    if (entry.engineering_candidates > 0) {
+      log(`${t.slug}: ${entry.engineering_candidates} engineering row(s) older than ${engDays} days (${engCutoff.toISOString().slice(0, 10)})`);
+      if (apply) {
+        for (;;) {
+          const res = await query(
+            `DELETE FROM telemetry WHERE (tableoid, ctid) IN (
+               SELECT tableoid, ctid FROM telemetry
+                WHERE tenant_id = $1 AND time >= $2 AND time < $3 AND channel = ANY($4) LIMIT ${BATCH_SIZE})`,
+            [t.tenant_id, cutoff, engCutoff, ENGINEERING_CHANNELS]);
+          if (res.rowCount === 0) break;
+          entry.engineering_deleted += res.rowCount;
+        }
+      }
+    }
+
     if (entry.candidates === 0) continue;
     log(`${t.slug}: ${entry.candidates} raw row(s) older than ${t.retention_days} days (${cutoff.toISOString().slice(0, 10)})`);
     if (!apply) continue;
@@ -210,4 +257,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, downsampleHourly, purgeRaw, purgeHourly, DEFAULT_RETENTION_DAYS, HOURLY_RETENTION_DAYS };
+module.exports = { run, downsampleHourly, purgeRaw, purgeHourly,
+  DEFAULT_RETENTION_DAYS, HOURLY_RETENTION_DAYS, DEFAULT_ENGINEERING_RETENTION_DAYS, ENGINEERING_CHANNELS };

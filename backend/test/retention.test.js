@@ -370,3 +370,79 @@ describe('telemetry carries one index per partition (migration 048)', () => {
     await db.query('DELETE FROM telemetry WHERE tenant_id = $1', [tenant.id]);
   });
 });
+
+// ── raw retention split by what the channel is for ─────────
+//
+// air and defrost answer the inspector and keep the plan retention: the HACCP
+// journal needs defrost to tell a defrost peak from a product excursion. The
+// four engineering channels are read only by the technician's service report and
+// go after RAW_ENGINEERING_RETENTION_DAYS — two thirds of every row written.
+describe('cleanup-telemetry.js: engineering channels expire before the product ones', () => {
+  let tenant;
+  const ALL = ['air', 'defrost', 'evap', 'cond', 'setpoint', 'comp'];
+  const created = [];
+
+  const partitionFor = async (d) => {
+    const name = partitionName(new Date(d.getFullYear(), d.getMonth(), 1));
+    await db.query('SELECT create_telemetry_partition($1, $2)', [d.getFullYear(), d.getMonth() + 1]);
+    if (!created.includes(name)) created.push(name);
+  };
+
+  const seed = async (at) => {
+    await partitionFor(at);
+    for (const ch of ALL) {
+      await db.query(
+        `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
+         VALUES ($1, $2, 'SPLIT01', $3, -18) ON CONFLICT DO NOTHING`, [at, tenant.id, ch]);
+    }
+  };
+
+  const surviving = async () => (await db.query(
+    `SELECT channel, count(*)::int AS n FROM telemetry WHERE tenant_id = $1 GROUP BY channel ORDER BY 1`,
+    [tenant.id])).rows;
+
+  beforeAll(async () => {
+    await cleanDatabase();
+    tenant = await createTenant({ slug: 'split-ret', plan: 'basic' });   // 400 days raw
+    await seed(daysAgo(3));      // inside every window
+    await seed(daysAgo(60));     // past the engineering window, inside the plan window
+    await seed(daysAgo(500));    // past both
+  });
+
+  afterAll(async () => {
+    await db.query(`DELETE FROM telemetry WHERE device_id = 'SPLIT01'`);
+    for (const name of created) if (name !== CURRENT) await dropPartitionIfExists(name);
+    await cleanDatabase();
+  });
+
+  it('a dry run counts both bands and deletes nothing', async () => {
+    const [entry] = await cleanupTelemetry.purgeRaw({ query, now, engineeringRetentionDays: 30 });
+    expect(entry.retention_days).toBe(400);
+    expect(entry.engineering_retention_days).toBe(30);
+    expect(entry.candidates).toBe(6);            // the 500-day-old row of every channel
+    expect(entry.engineering_candidates).toBe(4); // the 60-day-old engineering rows
+    expect(entry.deleted).toBe(0);
+    expect(entry.engineering_deleted).toBe(0);
+    expect(await surviving()).toHaveLength(6);
+  });
+
+  it('--apply keeps air and defrost, drops the engineering channels past their window', async () => {
+    const [entry] = await cleanupTelemetry.purgeRaw({ query, now, engineeringRetentionDays: 30, apply: true });
+    expect(entry.deleted).toBe(6);
+    expect(entry.engineering_deleted).toBe(4);
+
+    // 3 days ago: every channel. 60 days ago: only air and defrost. 500 days ago: nothing.
+    expect(await surviving()).toEqual([
+      { channel: 'air', n: 2 }, { channel: 'comp', n: 1 }, { channel: 'cond', n: 1 },
+      { channel: 'defrost', n: 2 }, { channel: 'evap', n: 1 }, { channel: 'setpoint', n: 1 },
+    ]);
+  });
+
+  it('never keeps an engineering channel longer than the plan keeps anything', async () => {
+    const short = await createTenant({ slug: 'split-free', plan: 'free' });   // 30 days raw
+    const [entry] = (await cleanupTelemetry.purgeRaw({ query, now, engineeringRetentionDays: 90 }))
+      .filter(r => r.tenant_id === short.id);
+    expect(entry.retention_days).toBe(30);
+    expect(entry.engineering_retention_days).toBe(30);
+  });
+});
