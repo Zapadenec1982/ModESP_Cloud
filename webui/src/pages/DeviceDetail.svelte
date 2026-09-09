@@ -1,9 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, recoverDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, getDeviceWorkOrders, createWorkOrder, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians } from '../lib/api.js'
+  import { getDevice, updateDevice, deleteDevice, resetDeviceToPending, recoverDevice, getServiceRecords, createServiceRecord, deleteServiceRecord, getDeviceWorkOrders, createWorkOrder, generateMqttCredentials, revokeMqttCredentials, getTenants, reassignDevice, getSite, getSites, getSiteWeather, getNearestTechnicians, getHaccpPresets } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
   import { navigate, liveState, canWrite, isAdmin, isSuperAdmin } from '../lib/stores.js'
-  import { t } from '../lib/i18n.js'
+  import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import { formatDate, formatDuration, formatTemp } from '../lib/format.js'
   // No Leaflet in geo.js by design — the map components themselves are imported
@@ -68,6 +68,33 @@
     } catch { deviceModels = [] }
   }
 
+  // HACCP presets by what the equipment stores (GET /devices/haccp-presets): a
+  // starting point the HACCP officer can still edit field by field.
+  let haccpPresets = []
+  let haccpPreset = ''
+  async function loadHaccpPresets() {
+    if (haccpPresets.length) return
+    try { haccpPresets = await getHaccpPresets() || [] } catch { haccpPresets = [] }
+  }
+  /** "≤ −18 °C (±3)" / "0…6 °C (±2)" for a preset option label. */
+  function presetRange(p) {
+    const n = (v) => String(v).replace('-', '−')
+    const range = p.haccp_min == null ? `≤ ${n(p.haccp_max)}` : p.haccp_max == null ? `≥ ${n(p.haccp_min)}` : `${n(p.haccp_min)}…${n(p.haccp_max)}`
+    return `${range} °C${p.haccp_tolerance ? ` (±${p.haccp_tolerance})` : ''}`
+  }
+  function applyHaccpPreset() {
+    const p = haccpPresets.find(x => x.key === haccpPreset)
+    if (!p) return
+    const wasPreset = haccpPresets.some(x => Object.values(x.label).includes((editForm.haccp_product || '').trim()))
+    editForm = {
+      ...editForm,
+      haccp_min: p.haccp_min ?? '',
+      haccp_max: p.haccp_max ?? '',
+      haccp_tolerance: p.haccp_tolerance ?? '',
+      haccp_product: (!editForm.haccp_product || wasPreset) ? (p.label[$locale] || p.label.uk) : editForm.haccp_product,
+    }
+  }
+
   function openNewModel() {
     newModel = { name: '', compressor_kw: '', defrost_heater_kw: '', evap_fan_w: '', cond_fan_w: '', standby_w: '' }
     showNewModel = true
@@ -87,6 +114,8 @@
         standby_kw: newModel.standby_w ? Number(newModel.standby_w) / 1000 : null,
       })
       await loadDeviceModels()
+      haccpPreset = ''
+      loadHaccpPresets()
       editForm.model_id = created.id
       showNewModel = false
       toast.success($t('energy.model_created'))
@@ -123,6 +152,8 @@
       display_name: '',
     }
     loadDeviceModels()
+    haccpPreset = ''
+    loadHaccpPresets()
     loadSites()
     showEdit = true
   }
@@ -1258,6 +1289,15 @@
 
         <!-- HACCP critical limits (migration 046): what the temperature journal checks every row against -->
         <div class="form-section-title">{$t('device.haccp_section')}</div>
+        <div class="form-group">
+          <label for="edit-haccp-preset">{$t('device.haccp_preset')}</label>
+          <select id="edit-haccp-preset" bind:value={haccpPreset} on:change={applyHaccpPreset}>
+            <option value="">{$t('device.haccp_preset_none')}</option>
+            {#each haccpPresets as p (p.key)}
+              <option value={p.key}>{p.label[$locale] || p.label.uk} — {presetRange(p)}</option>
+            {/each}
+          </select>
+        </div>
         <div class="form-group">
           <label for="edit-haccp-product">{$t('device.haccp_product')}</label>
           <input id="edit-haccp-product" type="text" maxlength="96" bind:value={editForm.haccp_product}

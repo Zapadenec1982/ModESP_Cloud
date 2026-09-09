@@ -682,6 +682,12 @@ export default {
     delete_selected: 'Видалити вибрані',
     bulk_delete_confirm: 'Видалити {0} пристроїв? Всі дані телеметрії та події будуть видалені назавжди.',
     bulk_deleted: 'Видалено {0} пристроїв',
+    bulk_haccp: 'HACCP-межі',
+    bulk_haccp_title: 'Критичні межі HACCP для вибраних',
+    bulk_haccp_hint: 'Типові межі за призначенням обладнання — відправна точка; критичну межу визначає план HACCP підприємства. Явні значення нижче мають пріоритет над пресетом.',
+    bulk_haccp_only_empty: 'Лише пристрої без меж (не перезаписувати задані вручну)',
+    bulk_haccp_apply: 'Застосувати',
+    bulk_haccp_done: 'Межі задано: {0}, пропущено: {1}',
   },
 
   // ── Device detail ──
@@ -725,6 +731,8 @@ export default {
     comment_placeholder: 'Нотатки про пристрій...',
     manufactured_at: 'Дата виготовлення',
     haccp_section: 'HACCP: критичні межі',
+    haccp_preset: 'Типові межі за призначенням',
+    haccp_preset_none: '— обрати пресет —',
     haccp_product: 'Продукція / призначення',
     haccp_product_placeholder: 'напр. заморожені напівфабрикати',
     haccp_min: 'Нижня межа, °C',

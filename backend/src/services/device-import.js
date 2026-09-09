@@ -44,6 +44,8 @@ function init(log_) {
 
 // Header aliases: export format → internal name (unlisted headers are
 // lower-cased with spaces → underscores, so "Site Name" needs no alias)
+const haccpPresets = require('../lib/haccp-presets');
+
 const CSV_HEADER_ALIASES = {
   'device id':        'mqtt_device_id',
   'device_id':        'mqtt_device_id',
@@ -74,10 +76,32 @@ const CSV_FIELDS = {
   city:            { required: false, maxLen: 128 },
   address_line:    { required: false, maxLen: 256 },
   postal_code:     { required: false, maxLen: 16 },
+  // HACCP critical limits (migrations 046/047): a preset by what the equipment stores
+  // (lib/haccp-presets) and/or explicit numbers; explicit columns win over the preset.
+  haccp_preset:    { required: false, pattern: new RegExp(`^(${haccpPresets.KEYS.join('|')})$`, 'i'), maxLen: 16 },
+  haccp_min:       { required: false, pattern: /^[-−]?\d{1,2}([.,]\d)?$/, maxLen: 6 },
+  haccp_max:       { required: false, pattern: /^[-−]?\d{1,2}([.,]\d)?$/, maxLen: 6 },
+  haccp_tolerance: { required: false, pattern: /^(\d|[12]\d|30)([.,]\d)?$/, maxLen: 4 },
+  haccp_product:   { required: false, maxLen: 96 },
 };
 const COLUMNS = Object.keys(CSV_FIELDS);
 const TEMPLATE_EXAMPLE = ['A1B2C3', 'Вітрина 1', 'SN-000123', 'Торговий зал, ліворуч', 'ModESP-VM4', '', '2026-01-15',
-  'Магазин №12', 'UA', 'Львівська область', 'Львів', 'вул. Городоцька 15', '79000'];
+  'Магазин №12', 'UA', 'Львівська область', 'Львів', 'вул. Городоцька 15', '79000',
+  'freezer', '', '', '', 'заморожені напівфабрикати'];
+
+/** "−18,5" → -18.5; empty → null. The pattern check has already run. */
+const toNum = (v) => (v === null || v === undefined || v === '' ? null : Number(String(v).replace('−', '-').replace(',', '.')));
+
+/** The HACCP columns of a row → device fields (null = leave the column as it is). */
+function haccpOf(row, lang = 'uk') {
+  const out = { haccp_min: null, haccp_max: null, haccp_tolerance: null, haccp_product: null };
+  const preset = haccpPresets.fieldsOf(csvField(row, 'haccp_preset'), lang);
+  if (preset) Object.assign(out, preset);
+  for (const k of ['haccp_min', 'haccp_max', 'haccp_tolerance']) { const v = toNum(csvField(row, k)); if (v !== null) out[k] = v; }
+  const product = csvField(row, 'haccp_product');
+  if (product) out.haccp_product = product;
+  return out;
+}
 
 /** The CSV template an operator fills in: every column, one example row, BOM for Excel. */
 function template() {
@@ -146,6 +170,10 @@ function validateRows(rows) {
       if (val && rule.maxLen && val.length > rule.maxLen) {
         errors.push({ row: line, field, message: `${field} exceeds ${rule.maxLen} chars` });
       }
+    }
+    const hMin = toNum((row.haccp_min || '').trim()), hMax = toNum((row.haccp_max || '').trim());
+    if (hMin !== null && hMax !== null && hMin >= hMax) {
+      errors.push({ row: line, field: 'haccp_min', message: 'haccp_min must be below haccp_max' });
     }
     const devId = (row.mqtt_device_id || '').trim().toUpperCase();
     if (devId) {
@@ -391,8 +419,10 @@ async function run(importId) {
   let processed = 0;
   let cancelled = false;
 
-  const { rows: tRows } = await db.query('SELECT slug FROM tenants WHERE id = $1', [tenantId]);
+  const { rows: tRows } = await db.query(
+    'SELECT t.slug, s.locale FROM tenants t LEFT JOIN tenant_settings s ON s.tenant_id = t.id WHERE t.id = $1', [tenantId]);
   const tenantSlug = tRows[0] ? tRows[0].slug : null;
+  const tenantLang = (tRows[0] && tRows[0].locale) || 'uk';
 
   const flush = async (extra = {}) => db.query(
     `UPDATE imports SET processed_rows = $2, assigned = $3, pre_registered = $4, skipped = $5, failed_rows = $6, sites_created = $7,
@@ -434,6 +464,7 @@ async function run(importId) {
       const serialNumber = csvField(row, 'serial_number');
       const comment = csvField(row, 'comment');
       const manufacturedAt = toDate(csvField(row, 'manufactured_at'));
+      const haccp = haccpOf(row, tenantLang);
       const base = { row: row._line, mqtt_device_id: mqttId, name };
 
       try {
@@ -483,9 +514,12 @@ async function run(importId) {
                 SET tenant_id = $1, status = 'active', mqtt_username = $2, mqtt_password_hash = $3,
                     name = COALESCE($4, name), location = COALESCE($5, location), model = COALESCE($6, model),
                     serial_number = COALESCE($7, serial_number), comment = COALESCE($8, comment),
-                    manufactured_at = COALESCE($9, manufactured_at), site_id = $10, assigned_at = NOW()
+                    manufactured_at = COALESCE($9, manufactured_at), site_id = $10, assigned_at = NOW(),
+                    haccp_min = COALESCE($12, haccp_min), haccp_max = COALESCE($13, haccp_max),
+                    haccp_tolerance = COALESCE($14, haccp_tolerance), haccp_product = COALESCE($15, haccp_product)
               WHERE id = $11 AND status = 'pending'`,
-            [tenantId, newUsername, row._hash, name || null, location, model, serialNumber, comment, manufacturedAt, siteId, row._dbId]);
+            [tenantId, newUsername, row._hash, name || null, location, model, serialNumber, comment, manufacturedAt, siteId, row._dbId,
+             haccp.haccp_min, haccp.haccp_max, haccp.haccp_tolerance, haccp.haccp_product]);
           mqttSvc.recordAssign(mqttId);
           mqttSvc.clearPendingRetained(mqttId);
 
@@ -497,10 +531,12 @@ async function run(importId) {
           if (paceMs() > 0) await new Promise(resolve => setTimeout(resolve, paceMs()));
         } else {
           const { rowCount } = await db.query(
-            `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at)
-             VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
+            `INSERT INTO devices (tenant_id, mqtt_device_id, status, name, location, model, serial_number, comment, manufactured_at,
+                                  haccp_min, haccp_max, haccp_tolerance, haccp_product)
+             VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (mqtt_device_id) DO NOTHING`,
-            [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment, manufacturedAt]);
+            [db.SYSTEM_TENANT_ID, mqttId, name || null, location, model, serialNumber, comment, manufacturedAt,
+             haccp.haccp_min, haccp.haccp_max, haccp.haccp_tolerance, haccp.haccp_product]);
           if (rowCount === 0) {
             counters.skipped++;
             results.push({ ...base, status: 'skipped', error: 'Device appeared during processing' });
@@ -567,6 +603,6 @@ function summaryOf(job) {
 
 module.exports = {
   init, parseCsv, validateRows, plan, create, schedule, run, requestCancel, takeCredentials: takeCredentialsTx, template, summaryOf,
-  CSV_FIELDS, COLUMNS, JOB_COLUMNS, jobColumns, maxRows,
+  CSV_FIELDS, COLUMNS, JOB_COLUMNS, jobColumns, maxRows, haccpOf,
   __test: { setAutoRun(v) { autoRun = !!v; }, setLogger(l) { logger = l; }, findOrCreateImportSite, geocodeImportedSite, splitCountry },
 };

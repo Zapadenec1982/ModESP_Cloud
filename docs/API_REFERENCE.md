@@ -399,6 +399,40 @@ TOTP (RFC 6238, крок 30 с, вікно ±1) з будь-яким засто�
 
 **Response 200:** оновлений пристрій (без state).
 
+### `GET /devices/haccp-presets`
+Типові критичні межі HACCP за призначенням обладнання (`lib/haccp-presets.js`) — відправна точка, а не норма:
+критичну межу визначає план HACCP підприємства і маркування продукту. Один список для картки пристрою
+(select у розділі HACCP форми), масової дії на панелі і колонки `haccp_preset` CSV-імпорту. **Ролі:** будь-яка.
+```json
+{ "data": [ { "key": "freezer", "haccp_min": null, "haccp_max": -18, "haccp_tolerance": 3,
+              "label": { "uk": "Заморожені продукти", "en": "Frozen food", "pl": "Produkty mrożone", "de": "Tiefkühlware" } },
+            { "key": "chilled", "haccp_min": 0, "haccp_max": 6, "haccp_tolerance": 2, "label": { "…": "…" } },
+            { "key": "pharma", "haccp_min": 2, "haccp_max": 8, "haccp_tolerance": 0, "label": { "…": "…" } } ] }
+```
+Пресети: `freezer` (≤ −18, ±3), `ice_cream` (≤ −18, ±2), `chilled` (0…6, ±2), `meat` (0…4, ±1), `fish` (0…2, ±1),
+`dairy` (2…6, ±2), `produce` (2…10, ±2), `pharma` (2…8, ±0).
+
+### `PATCH /devices/haccp`
+Задати критичні межі HACCP багатьом пристроям одразу (масова дія на панелі: вибрати пристрої → «HACCP-межі»).
+**Ролі:** admin (superadmin — будь-яка організація).
+```json
+{ "ids": ["uuid або mqtt_device_id", "…"], "preset": "freezer",
+  "haccp_min": null, "haccp_max": -18, "haccp_tolerance": 3, "haccp_product": "заморожені напівфабрикати",
+  "only_empty": true, "lang": "uk" }
+```
+- `preset` або хоча б одне поле `haccp_*`; явні поля мають пріоритет над пресетом (пресет + `haccp_tolerance: 0.5`
+  задасть межі пресету з власним відхиленням). `lang` — мова підпису продукції з пресету (за замовчуванням мова
+  користувача).
+- `only_empty` (за замовчуванням `true`) — пропускати пристрої, у яких уже задано `haccp_min` або `haccp_max`:
+  «застосувати пресет на всю мережу» не перезапише те, що відповідальний за HACCP ввів вручну. `false` —
+  перезаписати.
+- Чужі й невідомі ідентифікатори пропускаються, не відхиляються; до 500 за запит.
+
+**Response 200:** `{ "data": { "updated": 2, "skipped": 3, "fields": { "haccp_min": null, "haccp_max": -18, … },
+"devices": [ { "id", "mqtt_device_id", "haccp_min", "haccp_max", "haccp_tolerance", "haccp_product" } ] } }`.
+**Помилки:** `400 validation_failed` (невідомий пресет, немає полів, `haccp_min ≥ haccp_max`), `403`.
+Аудит: `device.haccp_bulk` з пресетом, полями, `only_empty`, скільки запитано і скільки змінено.
+
 > **CSV-імпорт (фаза 12) приймає нові колонки:** `site_name`, `country`, `region`, `city`,
 > `address_line`. Рядок з невідомою назвою точки створює точку в тенанті призначення. Геокодування
 > нової точки — fire-and-forget через масову чергу: імпорт на 500 рядків не має чекати на геокодер із
@@ -2840,7 +2874,13 @@ Cloud автоматично: генерує MQTT credentials, відправл�
 ### `GET /devices/pending/template.csv`
 Шаблон із усіма колонками і одним прикладом (UTF-8 BOM для Excel). Колонки: `mqtt_device_id`, `name`
 (обов'язкові), `serial_number`, `location`, `model`, `comment`, `manufactured_at` (`ДД-ММ-РРРР` або
-`РРРР-ММ-ДД`), `site_name`, `country` (ISO-код `UA` або назва), `region`, `city`, `address_line`, `postal_code`.
+`РРРР-ММ-ДД`), `site_name`, `country` (ISO-код `UA` або назва), `region`, `city`, `address_line`, `postal_code`,
+і критичні межі HACCP (міграції 046/047): `haccp_preset` (ключ із `GET /devices/haccp-presets`: `freezer`,
+`ice_cream`, `chilled`, `meat`, `fish`, `dairy`, `produce`, `pharma`), `haccp_min`, `haccp_max`, `haccp_tolerance`
+(°C, кома чи крапка, `−18,5` теж), `haccp_product`. Пресет заповнює межі, допустиме відхилення і продукцію (підпис
+мовою організації); явні колонки мають пріоритет. Межі лягають і на призначені, і на попередньо зареєстровані
+рядки, тож контролер із черги очікування приходить в організацію вже з межами. Перевірки в запиті: невідомий
+пресет, не число, `haccp_min ≥ haccp_max`, допустиме відхилення поза 0–30.
 Заголовки-синоніми: `device id`/`device_id`, `serial`, `site`, `address`, `postal`/`zip`.
 
 ### `POST /devices/pending/batch`
@@ -3151,3 +3191,4 @@ Superadmin. `{ status: new|open|closed }`; `closed` ставить `closed_at`. 
 - 2026-09-09 — HACCP-звіт переведено у форму журналу контролю температурного режиму: критичні межі обладнання (`devices.haccp_min/haccp_max/haccp_product` у `PATCH /devices/:id`, міграція 046; запасний варіант — межі контролера), журнал по днях з відхиленнями, «дані відсутні», коригувальними діями з тривог/нарядів/сервісних записів і підписом за день, таблиця подій з назвами тривог мовою звіту, блок «Перевірив».
 - 2026-09-09 — HACCP-звіт для інспектора: лише повітря в зоні продукту, критична межа з допустимим відхиленням (`devices.haccp_tolerance`, міграція 047), поріг витримки відхилення `haccp_excursion_min` (організація → точка, `PATCH /tenants/:id/settings`, `PATCH /sites/:id`), три класи подій (відхилення продукту з виключенням відтайки, розриви запису, технічні події не входять), примітки «відтайка / двері > N хв / розрив», метод і термін зберігання в шапці, QR-код перевірки.
 - 2026-09-09 — Сервісний звіт обладнання для техніка: `GET /devices/:id/telemetry/service.pdf` і `GET /sites/:id/service.pdf` (той самий доступ, параметри, заголовки, код перевірки і QR, що в HACCP-журналу; `report_type = 'service'` в архіві `GET /reports?type=service`; аудит `export.service_pdf`/`export.service_site_pdf`): налаштування приладу з `last_state`, усі температурні канали з графіком, статистика компресора/відтайки/дверей/офлайну/розривів/відхилень, тривоги з назвами мовою звіту, звʼязок із хмарою, рекомендації, наряди й сервісні записи, інженерний журнал.
+- 2026-09-09 — Масове задання критичних меж HACCP: `GET /devices/haccp-presets` (типові межі за призначенням: freezer, ice_cream, chilled, meat, fish, dairy, produce, pharma, підписи uk/en/pl/de), `PATCH /devices/haccp` (пресет і/або явні поля для списку пристроїв, `only_empty` за замовчуванням, аудит `device.haccp_bulk`), колонки `haccp_preset`/`haccp_min`/`haccp_max`/`haccp_tolerance`/`haccp_product` у CSV-імпорті й шаблоні; пресет у картці пристрою і масова дія «HACCP-межі» на панелі.

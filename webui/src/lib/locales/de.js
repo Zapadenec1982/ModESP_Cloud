@@ -682,6 +682,12 @@ export default {
     delete_selected: 'Ausgewählte löschen',
     bulk_delete_confirm: '{0} Gerät(e) löschen? Alle Telemetriedaten und Ereignisse werden endgültig gelöscht.',
     bulk_deleted: '{0} Gerät(e) gelöscht',
+    bulk_haccp: 'HACCP-Grenzwerte',
+    bulk_haccp_title: 'Kritische HACCP-Grenzwerte für die ausgewählten Anlagen',
+    bulk_haccp_hint: 'Vorgaben nach Verwendungszweck sind ein Ausgangspunkt; den kritischen Grenzwert legt der HACCP-Plan des Betriebs fest. Explizite Werte unten haben Vorrang vor der Vorgabe.',
+    bulk_haccp_only_empty: 'Nur Anlagen ohne Grenzwerte (manuell eingetragene nicht überschreiben)',
+    bulk_haccp_apply: 'Anwenden',
+    bulk_haccp_done: 'Grenzwerte gesetzt: {0}, übersprungen: {1}',
   },
 
   // ── Device detail ──
@@ -725,6 +731,8 @@ export default {
     comment_placeholder: 'Anmerkungen zu diesem Gerät...',
     manufactured_at: 'Hergestellt',
     haccp_section: 'HACCP: kritische Grenzwerte',
+    haccp_preset: 'Typische Grenzwerte nach Verwendungszweck',
+    haccp_preset_none: '— Vorgabe wählen —',
     haccp_product: 'Produkt / Zweck',
     haccp_product_placeholder: 'z. B. tiefgekühlte Halbfertigware',
     haccp_min: 'Untere Grenze, °C',

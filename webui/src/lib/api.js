@@ -798,6 +798,20 @@ export function deleteDevicesBulk(ids) {
   return request('/devices/bulk', { method: 'DELETE', body: JSON.stringify({ ids }) });
 }
 
+/** GET /api/devices/haccp-presets — typical HACCP critical limits by what the equipment stores: [{ key, haccp_min, haccp_max, haccp_tolerance, label: { uk, en, pl, de } }]. */
+export function getHaccpPresets() {
+  return request('/devices/haccp-presets');
+}
+
+/**
+ * PATCH /api/devices/haccp — set the HACCP critical limits of many devices at once (admin).
+ * payload: { ids, preset?, haccp_min?, haccp_max?, haccp_tolerance?, haccp_product?, only_empty? (default true), lang? }
+ * → { updated, skipped, fields, devices }
+ */
+export function setHaccpBulk(payload) {
+  return request('/devices/haccp', { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
 export function resetDeviceToPending(id) {
   return request(`/devices/${id}/reset-pending`, { method: 'POST' });
 }
