@@ -23,6 +23,8 @@ async function waitFor(cond, iterations = 200) {
   return false;
 }
 
+afterAll(async () => { await shutdownDb(); });
+
 async function offlineAlarms() {
   const { rows } = await db.query(
     `SELECT id, active FROM alarms WHERE device_id = $1 AND alarm_code = 'device_offline' ORDER BY id`, [DEV]);
@@ -46,7 +48,6 @@ describe('device_offline alarm', () => {
     T.reset();
     vi.useRealTimers();
     await cleanDatabase();
-    await shutdownDb();
   });
 
   it('is raised after the delay, carries the alarm id, and clears on the next message', async () => {
@@ -91,5 +92,86 @@ describe('device_offline alarm', () => {
     await T.offlineDetector();
     const { rows } = await db.query(`SELECT 1 FROM alarms WHERE device_id = 'PND001'`);
     expect(rows).toHaveLength(0);
+  });
+});
+
+// The way a fridge actually goes down.
+//
+// Losing power or the link kills the MQTT session, and the broker publishes the
+// device's will on .../status. That path wrote the event and stopped there: it
+// never started the clock the alarm counts down, and the detector skipped the
+// device in both passes — the first because it is already offline, the second
+// because there was no _offlineSince. So the commonest outage of all produced no
+// alarm, while the rarer one (session alive, data stopped) did. Both now do.
+describe('device_offline alarm after the broker publishes the will', () => {
+  const WDEV = 'OFFW01';
+  let tenant;
+
+  beforeAll(async () => {
+    await cleanDatabase();
+    T.setLogger(pino({ level: 'silent' }));
+    tenant = await createTenant({ slug: SLUG });
+    await createDevice(tenant.id, { mqttId: WDEV });
+    await mqttSvc.refreshRegistries();
+  });
+
+  afterAll(async () => {
+    T.reset();
+    vi.useRealTimers();
+    await cleanDatabase();
+  });
+
+  const willAlarms = async () => {
+    const { rows } = await db.query(
+      `SELECT id, active FROM alarms WHERE device_id = $1 AND alarm_code = 'device_offline' ORDER BY id`, [WDEV]);
+    return rows;
+  };
+
+  it('raises after the delay and closes when the device comes back', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const t0 = Date.now();
+    T.reset();
+
+    await T.handleStateKey(SLUG, WDEV, 'equipment.air_temp', '-18', false);
+    expect(T.stateMap.get(WDEV)._online).toBe(true);
+
+    // Power cut: the broker publishes the will. No detector pass in between —
+    // this is the only thing the platform hears.
+    T.handleStatus(SLUG, WDEV, 'offline', false);
+    expect(T.stateMap.get(WDEV)._online).toBe(false);
+    expect(T.stateMap.get(WDEV)._offlineSince).toBe(t0);
+    expect(await willAlarms()).toHaveLength(0);       // the delay has not run out
+
+    vi.setSystemTime(t0 + T.OFFLINE_ALARM_DELAY + 1000);
+    await T.offlineDetector();
+    const raised = await willAlarms();
+    expect(raised).toHaveLength(1);
+    expect(raised[0].active).toBe(true);
+
+    await T.offlineDetector();
+    expect(await willAlarms()).toHaveLength(1);       // no duplicate
+
+    T.handleStatus(SLUG, WDEV, 'online', false);
+    expect(T.stateMap.get(WDEV)._offlineSince).toBe(0);
+    expect(await waitFor(async () => (await willAlarms())[0].active === false)).toBe(true);
+  });
+
+  it('a will arriving after the detector already noticed does not restart the clock', async () => {
+    // The real sequence when a point loses power: the data stops, the detector
+    // notices at the threshold, and only when the broker's keepalive runs out —
+    // a good while later — does the will land. Taking the later moment would push
+    // the deadline back every time and delay the alarm by that much.
+    T.reset();
+    const t0 = Date.now();
+    await T.handleStateKey(SLUG, WDEV, 'equipment.air_temp', '-18', false);
+
+    vi.setSystemTime(t0 + 100_000);                 // past OFFLINE_THRESHOLD (90 s)
+    await T.offlineDetector();
+    const since = T.stateMap.get(WDEV)._offlineSince;
+    expect(since).toBe(t0 + 100_000);
+
+    vi.setSystemTime(t0 + 160_000);
+    T.handleStatus(SLUG, WDEV, 'offline', false);
+    expect(T.stateMap.get(WDEV)._offlineSince).toBe(since);
   });
 });

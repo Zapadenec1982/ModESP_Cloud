@@ -457,6 +457,7 @@ function handleStatus(tenantSlug, deviceId, payload, isRetained) {
     clearOfflineAlarm(state, deviceId);
   } else {
     insertEvent(tenantInfo.id, deviceId, 'device_offline');
+    startOfflineClock(state, now);
   }
 
   // Auto-discovery — skip for retained messages
@@ -1404,6 +1405,23 @@ function stateSweeper() {
 
 const OFFLINE_ALARM_DELAY = parseInt(process.env.OFFLINE_ALARM_DELAY_MS, 10) || 120_000;
 
+// Starts the clock the second pass of offlineDetector() counts down. BOTH ways a
+// device can go dark have to call this, and only one of them used to:
+//
+//   • the broker publishes the device's will (status=offline) — what a power cut
+//     or a severed link looks like, and by far the commoner of the two;
+//   • the detector notices the data stopped while the connection still stands.
+//
+// Missing it on the will meant the first pass skipped the device (it is already
+// _online = false) and the second skipped it too (no _offlineSince), so the
+// commonest failure of all — the point loses power at night — raised no alarm at
+// all: no push, no webhook, no escalation, no row in the report's alarm list.
+function startOfflineClock(state, now) {
+  if (state._offlineSince) return;   // already counting — keep the first moment
+  state._offlineSince   = now;
+  state._offlineAlarmed = false;
+}
+
 async function raiseOfflineAlarm(state, deviceId) {
   if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
   try {
@@ -1470,8 +1488,7 @@ async function offlineDetector() {
     ).catch(err => logger.error({ err, deviceId }, 'Failed to mark device offline'));
 
     insertEvent(state._tenantId, deviceId, 'device_offline');
-    state._offlineSince = now;
-    state._offlineAlarmed = false;
+    startOfflineClock(state, now);
 
     emitter.emit('device_status', {
       tenantSlug: state._tenantSlug, tenantId: state._tenantId, deviceId, online: false,

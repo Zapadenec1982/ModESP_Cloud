@@ -14,7 +14,8 @@
     "migrate": "node src/scripts/migrate.js",
     "check:locales": "node scripts/check-locales.js",
     "openapi:export": "node scripts/openapi-export.js",
-    "openapi:check": "node scripts/openapi-export.js --check"
+    "openapi:check": "node scripts/openapi-export.js --check",
+    "check:drift": "PGURL=${PGURL:-postgresql://postgres@localhost:5432} scripts/check-schema-drift.sh"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
