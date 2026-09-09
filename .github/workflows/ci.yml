@@ -165,3 +165,14 @@ jobs:
             -c "SELECT create_telemetry_partition(2030, 1);" \
             -c "SELECT count(*) FROM plan_limits;" \
             -c "SELECT count(*) FROM tenant_settings;"
+
+      # The steps above prove a fresh install works. This one proves a database
+      # in the field ends up the same: schema.sql applied from scratch must have
+      # the same catalog as baseline.sql plus every migration. Without it a
+      # structural change can land in schema.sql with no migration behind it and
+      # nothing notices — which is how idx_events_dedup and four telemetry
+      # partition indexes went missing in production (migration 049).
+      - name: A migrated database and a fresh install have the same catalog
+        env:
+          PGURL: postgresql://postgres:ci@localhost:5434
+        run: backend/scripts/check-schema-drift.sh
