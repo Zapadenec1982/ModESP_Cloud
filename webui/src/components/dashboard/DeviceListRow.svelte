@@ -15,7 +15,7 @@
   $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: status = device.status === 'pending' ? 'pending'
     : device.online ? 'online' : 'offline'
-  $: alarmStatus = device.alarm_active ? 'alarm'
+  $: alarmStatus = (device.alarms_open || 0) > 0 ? 'alarm'
     : device.online ? 'online' : 'offline'
 
   // One handler on the row <button>: a click anywhere inside the checkbox cell
@@ -49,7 +49,7 @@
     {/if}
   </div>
   <div class="cell cell-temp">
-    <span class="temp-value" class:alarm={device.alarm_active}>{temp}</span>
+    <span class="temp-value" class:alarm={(device.alarms_open || 0) > 0}>{temp}</span>
     <span class="temp-unit">°C</span>
   </div>
   <div class="cell cell-id font-mono">{device.mqtt_device_id}</div>
@@ -59,7 +59,7 @@
       <Icon name="door-open" size={14} />
     </div>
   {/if}
-  {#if device.alarm_active}
+  {#if (device.alarms_open || 0) > 0}
     <div class="cell cell-alarm">
       <Icon name="alert-triangle" size={14} />
     </div>

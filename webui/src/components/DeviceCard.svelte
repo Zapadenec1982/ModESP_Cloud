@@ -10,7 +10,7 @@
   $: online = device.online
   $: temp = device.air_temp != null ? Number(device.air_temp).toFixed(1) : '--'
   $: statusKey = device.status === 'pending' ? 'pending' : (online ? 'online' : 'offline')
-  $: hasAlarm = !!device.alarm_active
+  $: hasAlarm = (device.alarms_open || 0) > 0
   $: hasHint = (device.hints_open || 0) > 0
   $: doorOpen = !!device.door_open
   $: stripe = hasAlarm ? 'alarm' : statusKey

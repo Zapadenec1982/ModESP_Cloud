@@ -295,8 +295,13 @@
             "type": "integer",
             "description": "Open maintenance hints"
           },
+          "alarms_open": {
+            "type": "integer",
+            "description": "Alarms the platform recorded for this device and has not cleared — the same rows GET /alarms returns. Anything a UI calls an alarm counts these."
+          },
           "alarm_active": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "The controller's own aggregate alarm flag, live from the device. True the moment a door opens, before the nuisance delay decides whether that is an alarm at all, so it is a state readout and not a count."
           },
           "air_temp": {
             "type": [
@@ -341,6 +346,7 @@
           "site_latitude",
           "site_longitude",
           "hints_open",
+          "alarms_open",
           "alarm_active",
           "air_temp",
           "door_open"

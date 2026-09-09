@@ -31,11 +31,12 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
     latitude: z.number().nullable(), longitude: z.number().nullable(),
     ...SiteColumns,
     hints_open: z.number().int().openapi({ description: 'Open maintenance hints' }),
-    alarm_active: z.boolean(),
+    alarms_open: z.number().int().openapi({ description: 'Alarms the platform recorded for this device and has not cleared — the same rows GET /alarms returns. Anything a UI calls an alarm counts these.' }),
+    alarm_active: z.boolean().openapi({ description: "The controller's own aggregate alarm flag, live from the device. True the moment a door opens, before the nuisance delay decides whether that is an alarm at all, so it is a state readout and not a count." }),
     air_temp: z.number().nullable().openapi({ description: 'Last air temperature, °C', example: -18.4 }),
     door_open: z.boolean().nullable(),
   }));
-  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarm_active: true, air_temp: true, door_open: true }).extend({
+  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarms_open: true, alarm_active: true, air_temp: true, door_open: true }).extend({
     proto_version: z.number().int().nullable(),
     last_state: z.record(z.any()).nullable().openapi({ description: 'Latest reported state keyed by parameter (`thermostat.setpoint`, `sensors.air` …); see `GET /meta` for the key registry' }),
     tenant_id: uuid, tenant_slug: z.string(),
