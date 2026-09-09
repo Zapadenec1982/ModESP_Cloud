@@ -298,7 +298,11 @@ describe('GET /api/public/site', () => {
       expect(labels).not.toContain(devUnnamed.mqtt_device_id);
     });
 
-    it('reports air_temp, online and alarm_active from live MQTT state', async () => {
+    it('reports air_temp and online from live state, but never calls the controller flag an alarm', async () => {
+      // protection.alarm_active is the controller's own aggregate: it rises the
+      // moment a door opens, before the nuisance delay has decided whether that is
+      // an alarm at all. A client watching their supplier's equipment must not see
+      // a delivery reported as an alarm, so this page counts recorded alarms only.
       live.set(devA.mqtt_device_id, {
         state: { 'equipment.air_temp': -18.4, 'protection.alarm_active': true },
         meta:  { online: true },
@@ -313,12 +317,12 @@ describe('GET /api/public/site', () => {
 
       expect(byName['Вітрина 1'].air_temp).toBe(-18.4);
       expect(byName['Вітрина 1'].online).toBe(true);
-      expect(byName['Вітрина 1'].alarm_active).toBe(true);
+      expect(byName['Вітрина 1'].alarm_active).toBe(false);
       expect(byName['Вітрина 2'].air_temp).toBeNull();
       expect(byName['Вітрина 2'].online).toBe(false);
       expect(byName['Вітрина 2'].alarm_active).toBe(false);
       expect(res.body.data.online_count).toBe(1);
-      expect(res.body.data.alarm_count).toBe(1);
+      expect(res.body.data.alarm_count).toBe(0);
     });
 
     it('reports alarm_active from the alarms table when there is no live state', async () => {

@@ -15,15 +15,19 @@
   $: compressorRuntime = state['thermostat.comp_on_time'] ?? state['thermostat.compressor_runtime']
   $: defrostActive = state['defrost.active']
   $: defrostPhase = state['defrost.phase'] ?? state['defrost.state']
+  // Червоним підсвічуємо температуру лише за температурними прапорцями. Зведений
+  // protection.alarm_active сюди не годиться: він піднімається і від відчинених
+  // дверей, і від помилки датчика, коли з температурою все гаразд.
+  $: tempAlarm = !!(state['protection.high_temp_alarm'] || state['protection.low_temp_alarm'])
 </script>
 
 <div class="vitals stagger-enter">
-  <div class="vital" class:alarm={state['protection.alarm_active']}>
+  <div class="vital" class:alarm={tempAlarm}>
     <div class="vital-icon temp-icon">
       <Icon name="thermometer" size={20} />
     </div>
     <div class="vital-data">
-      <span class="vital-value" class:alarm={state['protection.alarm_active']}>
+      <span class="vital-value" class:alarm={tempAlarm}>
         {temp != null ? Number(temp).toFixed(1) : '--'}
         <span class="vital-unit">°C</span>
       </span>
