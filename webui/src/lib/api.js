@@ -1376,12 +1376,31 @@ export function getFirmwares() {
   return request('/firmware');
 }
 
-export async function uploadFirmware(file, version, notes, boardType) {
+/**
+ * @param {object} [opts] platform firmware, superadmin only:
+ *   { global: true, visibility: 'all' | 'selected', tenantIds: string[] }
+ *
+ * The fifth argument used to be missing here while the form already passed it,
+ * so the «платформна прошивка» switch and the visibility choice were a dead
+ * click: the file landed as the superadmin's own organisation firmware,
+ * invisible to everyone it was meant for, and with no error to say so.
+ */
+export async function uploadFirmware(file, version, notes, boardType, opts = {}) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('version', version);
   if (notes) formData.append('notes', notes);
   if (boardType) formData.append('board_type', boardType);
+  if (opts.global) {
+    // FormData carries strings only — the backend reads 'true' and parses
+    // tenant_ids as JSON (or a separated list).
+    formData.append('global', 'true');
+    const visibility = opts.visibility === 'selected' ? 'selected' : 'all';
+    formData.append('visibility', visibility);
+    if (visibility === 'selected') {
+      formData.append('tenant_ids', JSON.stringify([...(opts.tenantIds || [])]));
+    }
+  }
 
   const headers = {};
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
