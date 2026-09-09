@@ -63,6 +63,13 @@ jobs:
         run: node scripts/openapi-export.js --check
         working-directory: backend
 
+      # A build compiles the client but never calls it. The upload form passed
+      # its platform-firmware options to a function that took fewer arguments,
+      # so the «global» switch was a dead click and nothing said so.
+      - name: The firmware upload sends what the route reads
+        run: node scripts/check-firmware-upload.mjs
+        working-directory: webui
+
       - name: Build webui
         run: npm run build
         working-directory: webui
