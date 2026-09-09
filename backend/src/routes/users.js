@@ -1144,12 +1144,14 @@ router.post('/:id/password-reset', async (req, res) => {
     const userId = req.params.id;
     const isSuperAdmin = req.user.role === 'superadmin';
 
-    // Verify target user exists (scoped to tenant for admin, any for superadmin)
+    // The password belongs to the user's HOME organisation, exactly as in
+    // PUT /users/:id: an admin of an organisation a person is only a MEMBER of
+    // (partner staff, say) may change their role here and nothing else. Scoping
+    // this by membership would hand that admin a reset code for someone else's
+    // account.
     const checkQ = isSuperAdmin
       ? 'SELECT id, email FROM users WHERE id = $1 AND active = true'
-      : `SELECT u.id, u.email FROM users u
-         JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $2
-         WHERE u.id = $1 AND u.active = true`;
+      : 'SELECT id, email FROM users WHERE id = $1 AND tenant_id = $2 AND active = true';
     const checkParams = isSuperAdmin ? [userId] : [userId, req.tenantId];
     const { rows } = await db.query(checkQ, checkParams);
 

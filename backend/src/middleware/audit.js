@@ -19,10 +19,6 @@ const SKIP_PATHS = new Set([
  */
 function createAuditMiddleware(logger) {
   return function auditMiddleware(req, res, next) {
-    // Reads are not audited — except exports: a HACCP PDF or a CSV leaving the
-    // system is a compliance event (plan epic 1.9).
-    if (SKIP_METHODS.has(req.method) && !isExportPath(req)) return next();
-
     // Skip noisy auth paths but audit login/logout
     const fullPath = (req.baseUrl || '') + (req.path || '');
     if (SKIP_PATHS.has(fullPath)) return next();
@@ -30,6 +26,14 @@ function createAuditMiddleware(logger) {
     const startTime = Date.now();
 
     res.on('finish', () => {
+      // Reads are not audited — except exports and any read a handler marks with
+      // req.auditContext: a HACCP PDF, a full tenant archive or a credentials CSV
+      // leaving the system is a compliance event (plan epic 1.9). The decision
+      // belongs here rather than before the handler, because only the handler
+      // knows: judging by the path alone silently dropped the two downloads that
+      // carry the most (a tenant's whole data set, and MQTT passwords in clear).
+      if (SKIP_METHODS.has(req.method) && !isExportPath(req) && !req.auditContext) return;
+
       const duration = Date.now() - startTime;
 
       try {

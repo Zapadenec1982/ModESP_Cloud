@@ -524,7 +524,9 @@ const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: expo
 app.use('/api/devices',  exportDevices);                  // /:id/telemetry/export.csv|pdf, /export.csv
 app.use('/api/alarms',   exportAlarms);                   // /export.csv
 app.use('/api/sites',    exportSites);                    // /:id/export.pdf (HACCP, whole site)
-app.use('/api/notifications', require('./routes/notifications'));
+// Subscribers, test sends and the delivery log (with recipient addresses) are
+// administration, not monitoring — the WebUI already hides them behind isAdmin.
+app.use('/api/notifications', authorize('admin'), require('./routes/notifications'));
 app.use('/api/fleet',    require('./routes/fleet'));
 app.use('/api/device-models', require('./routes/device-models'));
 
