@@ -327,3 +327,46 @@ describe('cleanup-telemetry.js: purgeRaw stays inside the organisation and the p
     expect(await count(fresh.id)).toBe(5);
   });
 });
+
+// ── one index per partition ────────────────────────────────
+//
+// Every partition used to carry two btrees over the same four columns: the
+// parent's idx_telemetry_lookup (… time DESC) and the per-partition unique
+// index create_telemetry_partition() builds for ON CONFLICT (… time). A btree
+// scans a range equally well in either direction, so the planner only ever used
+// the unique one, while the copy cost 36% of the table's footprint and a second
+// write on every sample. Migration 048 drops it.
+describe('telemetry carries one index per partition (migration 048)', () => {
+  const indexesOn = async (table) => (await db.query(
+    `SELECT indexname FROM pg_indexes WHERE tablename = $1 ORDER BY 1`, [table])).rows.map(r => r.indexname);
+
+  it('the redundant parent index is gone and nothing recreates it', async () => {
+    const { rows } = await db.query(
+      `SELECT indexname FROM pg_indexes WHERE indexname = 'idx_telemetry_lookup'`);
+    expect(rows).toEqual([]);
+  });
+
+  it('a freshly created partition gets exactly one index, the unique one', async () => {
+    await db.query('SELECT create_telemetry_partition(2029, 7)');
+    try {
+      expect(await indexesOn('telemetry_2029_07')).toEqual(['idx_telemetry_2029_07_unique']);
+    } finally {
+      await dropPartitionIfExists('telemetry_2029_07');
+    }
+  });
+
+  it('the remaining index still dedups a buffered resync', async () => {
+    const tenant = await createTenant({ slug: 'idx-dedup' });
+    const at = new Date('2026-07-15T10:00:00Z');
+    const insert = () => db.query(
+      `INSERT INTO telemetry (time, tenant_id, device_id, channel, value)
+       VALUES ($1, $2, 'IDX001', 'air', -18) ON CONFLICT DO NOTHING`, [at, tenant.id]);
+    await insert();
+    await insert();
+
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS n FROM telemetry WHERE tenant_id = $1`, [tenant.id]);
+    expect(rows[0].n).toBe(1);
+    await db.query('DELETE FROM telemetry WHERE tenant_id = $1', [tenant.id]);
+  });
+});

@@ -145,8 +145,11 @@ CREATE TABLE telemetry (
   value      FLOAT       NOT NULL
 ) PARTITION BY RANGE (time);
 
-CREATE INDEX idx_telemetry_lookup
-  ON telemetry(tenant_id, device_id, channel, time DESC);
+-- No lookup index here: create_telemetry_partition() gives every partition
+-- idx_telemetry_YYYY_MM_unique (tenant_id, device_id, channel, time), which the
+-- planner uses for both the ON CONFLICT dedup and every read (a btree scans
+-- backwards just as cheaply for ORDER BY time DESC). A second index on the same
+-- columns cost 36% of the table's footprint and was never chosen — migration 048.
 
 -- Initial partitions (3 months ahead)
 CREATE TABLE telemetry_2026_03 PARTITION OF telemetry
