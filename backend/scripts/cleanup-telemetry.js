@@ -88,9 +88,13 @@ async function purgeRaw({ query, apply = false, now = new Date(), defaultRetenti
     log(`${t.slug}: ${entry.candidates} raw row(s) older than ${t.retention_days} days (${cutoff.toISOString().slice(0, 10)})`);
     if (!apply) continue;
     for (;;) {
+      // (tableoid, ctid), not ctid alone: telemetry is partitioned by month and a
+      // ctid is unique only inside one partition, so a bare `ctid IN (...)` also
+      // matches rows at the same physical address in every other partition — i.e.
+      // it deletes live measurements of other organisations.
       const res = await query(
-        `DELETE FROM telemetry WHERE ctid IN (
-           SELECT ctid FROM telemetry WHERE tenant_id = $1 AND time < $2 LIMIT ${BATCH_SIZE})`,
+        `DELETE FROM telemetry WHERE (tableoid, ctid) IN (
+           SELECT tableoid, ctid FROM telemetry WHERE tenant_id = $1 AND time < $2 LIMIT ${BATCH_SIZE})`,
         [t.tenant_id, cutoff]
       );
       if (res.rowCount === 0) break;
@@ -156,7 +160,8 @@ async function purgeHourly({ query, apply = false, now = new Date(), retentionDa
   if (!apply || result.candidates === 0) return result;
   for (;;) {
     const res = await query(
-      `DELETE FROM telemetry_hourly WHERE ctid IN (SELECT ctid FROM telemetry_hourly WHERE hour < $1 LIMIT ${BATCH_SIZE})`, [cutoff]);
+      `DELETE FROM telemetry_hourly WHERE (tableoid, ctid) IN (
+         SELECT tableoid, ctid FROM telemetry_hourly WHERE hour < $1 LIMIT ${BATCH_SIZE})`, [cutoff]);
     if (res.rowCount === 0) break;
     result.deleted += res.rowCount;
   }

@@ -62,8 +62,8 @@ async function run({ query, apply = false, now = new Date(), retentionDays, log 
   for (;;) {
     const res = await query(
       `DELETE FROM weather_observations
-        WHERE ctid IN (
-          SELECT ctid FROM weather_observations
+        WHERE (tableoid, ctid) IN (
+          SELECT tableoid, ctid FROM weather_observations
            WHERE observed_at < $1
            LIMIT ${BATCH_SIZE}
         )`,
