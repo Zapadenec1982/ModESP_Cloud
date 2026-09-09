@@ -534,6 +534,37 @@ function handleHeartbeat(tenantSlug, deviceId, rawPayload, isRetained) {
 // ── Backfill handlers ─────────────────────────────────────
 
 const backfillCounters = new Map(); // deviceId → { count, reset }
+/**
+ * Remembers the hours a backfill filled, so the nightly fold can reach them.
+ *
+ * The fold covers DOWNSAMPLE_LOOKBACK_DAYS (three days). A controller sends up to
+ * MAX_BACKFILL_AGE — ninety days — when it comes back from an outage, and
+ * everything older than the window used to sit in `telemetry` until the plan's raw
+ * retention deleted it, never reaching telemetry_hourly. The archive then showed a
+ * break in the record exactly over the stretch the equipment ran on its own, which
+ * is the stretch an inspector asks about, and after retention there was nothing
+ * left to rebuild it from.
+ *
+ * Every hour goes in, recent ones included: they cost one upsert, the fold is
+ * idempotent, and the row is deleted the moment it is folded. Fire-and-forget like
+ * the insert it follows — a lost marker costs one unfolded hour, not a failed
+ * ingest, and the hour is still inside the window if it was recent.
+ */
+function markDirtyHours(tenantId, deviceId, timestamps) {
+  const hours = new Set();
+  for (const ts of timestamps) {
+    const h = new Date(ts); h.setUTCMinutes(0, 0, 0);
+    hours.add(h.toISOString());
+  }
+  if (hours.size === 0) return;
+  db.query(
+    `INSERT INTO telemetry_dirty_hours (tenant_id, device_id, hour)
+     SELECT $1, $2, unnest($3::timestamptz[])
+     ON CONFLICT DO NOTHING`,
+    [tenantId, deviceId, [...hours]]
+  ).catch(err => logger.error({ err, deviceId }, 'Backfill dirty-hour mark failed'));
+}
+
 const BACKFILL_RATE_LIMIT = 100;    // max messages per minute per device
 const MIN_EPOCH = 1700000000;       // ~2023-11-14, filter out uptime-based timestamps
 const MAX_BACKFILL_AGE = 90 * 86400; // 90 days
@@ -600,7 +631,8 @@ function handleBackfill(tenantSlug, deviceId, rawPayload) {
      VALUES ${placeholders}
      ON CONFLICT DO NOTHING`,
     values
-  ).catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
+  ).then(() => markDirtyHours(tenantInfo.id, deviceId, rows.map(r => r[0])))
+   .catch(err => logger.error({ err, deviceId }, 'Backfill insert failed'));
 
   logger.debug({ deviceId, records: batch.r.length, inserted: rows.length }, 'Backfill ingested');
 }
@@ -654,7 +686,8 @@ function handleBackfillEvents(tenantSlug, deviceId, rawPayload) {
       `INSERT INTO telemetry (time,tenant_id,device_id,channel,value) VALUES ${ph}
        ON CONFLICT DO NOTHING`,
       values
-    ).catch(err => logger.error({ err, deviceId }, 'Backfill events telemetry insert failed'));
+    ).then(() => markDirtyHours(tenantInfo.id, deviceId, telemetryRows.map(r => r[0])))
+     .catch(err => logger.error({ err, deviceId }, 'Backfill events telemetry insert failed'));
   }
 
   // Batch insert events (with device timestamp, NOT NOW())
@@ -1997,6 +2030,7 @@ module.exports = {
   __test: {
     setLogger,
     handleStateKey, handleStatus, bootstrapStateMap, rearmPendingAlarms, stateWriter,
+    handleBackfill, handleBackfillEvents,
     offlineDetector, OFFLINE_ALARM_DELAY,
     stateMap, pendingAlarms, NUISANCE_DELAY, tenantRegistry, tenantSettings, loadRegistries,
     reset() {

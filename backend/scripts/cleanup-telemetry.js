@@ -10,6 +10,10 @@
  *                    (3) into telemetry_hourly (min/max/avg/samples per hour);
  *                    idempotent (ON CONFLICT DO UPDATE). --backfill-days N folds
  *                    N days once, e.g. after upgrading to migration 028.
+ *                    Then the hours a controller filled by catching up after an
+ *                    outage (telemetry_dirty_hours, migration 050), whatever
+ *                    their age — the window alone would let them expire out of
+ *                    raw telemetry without ever reaching the archive.
  *   2. purge raw   — delete raw rows of every organisation older than its plan's
  *                    retention_days (plan_limits), in batches of 20 000 rows.
  *   3. partitions  — drop telemetry_YYYY_MM partitions whose end lies before
@@ -78,6 +82,72 @@ async function downsampleHourly({ query, now = new Date(), lookbackDays = DOWNSA
   );
   log(`Downsample: ${res.rowCount} hourly row(s) upserted for ${from.toISOString()} … ${to.toISOString()}`);
   return { from, to, upserted: res.rowCount };
+}
+
+// One pass takes DIRTY_HOUR_BATCH hours; DIRTY_HOUR_MAX_BATCHES caps a single
+// nightly run so a fleet coming back from a long outage cannot hold the other
+// three steps hostage. Oldest hours go first — those are the ones closest to
+// being deleted by raw retention.
+const DIRTY_HOUR_BATCH       = 2000;
+const DIRTY_HOUR_MAX_BATCHES = 500;
+
+/**
+ * Fold the hours a backfill filled, whatever their age.
+ *
+ * The window pass above only reaches back DOWNSAMPLE_LOOKBACK_DAYS. A controller
+ * returning from an outage sends up to 90 days at once, and everything older than
+ * the window used to wait in `telemetry` for the plan's raw retention to delete it,
+ * never reaching the archive — a break in the record over exactly the stretch the
+ * equipment ran on its own.
+ *
+ * Each row is folded and then deleted, so a run that dies leaves the hour queued
+ * for the next one. An hour whose raw rows retention already took folds to nothing
+ * and is dropped all the same: there is nothing left to save, and keeping the
+ * marker would only make the queue grow forever.
+ *
+ * @returns {Promise<{hours:number, upserted:number, remaining:number}>}
+ */
+async function downsampleDirtyHours({ query, log = () => {} }) {
+  let hours = 0, upserted = 0, batches = 0;
+  for (; batches < DIRTY_HOUR_MAX_BATCHES; batches++) {
+    const { rows } = await query(
+      `SELECT tenant_id, device_id, hour FROM telemetry_dirty_hours
+        ORDER BY hour LIMIT ${DIRTY_HOUR_BATCH}`);
+    if (rows.length === 0) break;
+
+    const tenants = rows.map(r => r.tenant_id);
+    const devices = rows.map(r => r.device_id);
+    const marks   = rows.map(r => r.hour);
+
+    const res = await query(
+      `INSERT INTO telemetry_hourly (tenant_id, device_id, channel, hour, min, max, avg, samples)
+       SELECT t.tenant_id, t.device_id, t.channel, date_trunc('hour', t.time),
+              MIN(t.value), MAX(t.value), AVG(t.value), COUNT(*)::int
+         FROM telemetry t
+         JOIN unnest($1::uuid[], $2::varchar[], $3::timestamptz[]) AS d(tenant_id, device_id, hour)
+           ON d.tenant_id = t.tenant_id AND d.device_id = t.device_id
+          AND t.time >= d.hour AND t.time < d.hour + interval '1 hour'
+        GROUP BY t.tenant_id, t.device_id, t.channel, date_trunc('hour', t.time)
+       ON CONFLICT (tenant_id, device_id, channel, hour) DO UPDATE
+         SET min = EXCLUDED.min, max = EXCLUDED.max, avg = EXCLUDED.avg, samples = EXCLUDED.samples`,
+      [tenants, devices, marks]);
+    upserted += res.rowCount;
+
+    await query(
+      `DELETE FROM telemetry_dirty_hours d
+        USING unnest($1::uuid[], $2::varchar[], $3::timestamptz[]) AS q(tenant_id, device_id, hour)
+        WHERE d.tenant_id = q.tenant_id AND d.device_id = q.device_id AND d.hour = q.hour`,
+      [tenants, devices, marks]);
+    hours += rows.length;
+  }
+
+  const { rows: left } = await query('SELECT count(*)::int AS n FROM telemetry_dirty_hours');
+  const remaining = left[0].n;
+  if (hours > 0 || remaining > 0) {
+    log(`Backfilled hours: ${hours} folded into ${upserted} hourly row(s)`
+      + (remaining > 0 ? `, ${remaining} left for the next run` : ''));
+  }
+  return { hours, upserted, remaining };
 }
 
 /**
@@ -233,10 +303,14 @@ async function main() {
   const log = console.log;
 
   try {
+    // Both folds run before any purge: an hour still has to have its raw rows.
     if (apply) {
       await downsampleHourly({ query, lookbackDays: backfillDays || DOWNSAMPLE_LOOKBACK_DAYS, log });
+      await downsampleDirtyHours({ query, log });
     } else {
       log(`Downsample: would fold the last ${backfillDays || DOWNSAMPLE_LOOKBACK_DAYS} day(s) into telemetry_hourly`);
+      const { rows } = await query('SELECT count(*)::int AS n FROM telemetry_dirty_hours');
+      log(`Backfilled hours: ${rows[0].n} queued by controllers catching up, would be folded whatever their age`);
     }
     const raw = await purgeRaw({ query, apply, log });
     const parts = await run({ query, apply, log });
@@ -257,5 +331,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, downsampleHourly, purgeRaw, purgeHourly,
+module.exports = { run, downsampleHourly, downsampleDirtyHours, purgeRaw, purgeHourly,
   DEFAULT_RETENTION_DAYS, HOURLY_RETENTION_DAYS, DEFAULT_ENGINEERING_RETENTION_DAYS, ENGINEERING_CHANNELS };
