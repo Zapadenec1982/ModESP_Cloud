@@ -55,7 +55,7 @@ const SITE_FIELDS = [
   'address_line', 'postal_code', 'latitude', 'longitude',
   'geo_source', 'geo_precision', 'geocoded_at',
   'geo_attempts', 'geo_last_attempt_at', 'geo_error',
-  'osm_type', 'osm_id', 'timezone', 'notes', 'created_at', 'updated_at',
+  'osm_type', 'osm_id', 'timezone', 'notes', 'haccp_excursion_min', 'created_at', 'updated_at',
 ];
 const SITE_COLUMNS   = SITE_FIELDS.map(c => `s.${c}`).join(', ');
 const SITE_RETURNING = SITE_FIELDS.join(', ');
@@ -354,6 +354,8 @@ const addressSchema = {
   longitude:    z.number().min(-180).max(180).nullable().optional(),
   timezone:     z.string().max(64).nullable().optional(),
   notes:        z.string().max(4000).nullable().optional(),
+  // HACCP excursion threshold of this site (minutes); null = the organisation's value
+  haccp_excursion_min: z.number().int().min(1).max(1440).nullable().optional(),
 };
 
 const createSiteSchema = z.object({
@@ -374,7 +376,7 @@ const updateSiteSchema = z.object({
 
 // The only columns PATCH may name. zod already strips unknown keys — this is the
 // second lock, because the SET list is built from the parsed keys.
-const PATCHABLE = new Set(['name', ...ADDRESS_FIELDS, 'latitude', 'longitude', 'timezone', 'notes']);
+const PATCHABLE = new Set(['name', ...ADDRESS_FIELDS, 'latitude', 'longitude', 'timezone', 'notes', 'haccp_excursion_min']);
 
 const createLinkSchema = z.object({
   label:           z.string().max(128).nullable().optional(),
@@ -665,6 +667,7 @@ router.post('/', maybeAuthorize('admin'), async (req, res, next) => {
       longitude:     coords.longitude,
       timezone:      trimOrNull(parsed.data.timezone, MAX_LEN.timezone),
       notes:         normalizeField('notes', parsed.data.notes),
+      haccp_excursion_min: parsed.data.haccp_excursion_min ?? null,
       geo_source:    coords.latitude !== null ? 'manual' : 'none',
       geo_precision: null,
       geocoded_at:   null,

@@ -122,6 +122,7 @@ async function loadTenant(tenantId) {
     `SELECT t.id, t.name, t.slug, t.status, t.legal_name, t.tax_id, t.electricity_rate, t.electricity_currency,
             COALESCE(s.timezone, $2) AS timezone, s.locale,
             COALESCE(s.raw_retention_days, p.retention_days, 90) AS retention_days,
+            s.haccp_excursion_min, s.door_alarm_delay_ms, p.sampling_sec,
             COALESCE(s.brand_name, par.brand_name) AS brand_name,
             COALESCE(s.brand_url, par.brand_url)   AS brand_url
        FROM tenants t
@@ -135,7 +136,7 @@ async function loadTenant(tenantId) {
 
 async function loadSites(tenantId, siteId = null) {
   const { rows } = await db.query(
-    `SELECT id, tenant_id, name, address_line, city, region, country, timezone
+    `SELECT id, tenant_id, name, address_line, city, region, country, timezone, haccp_excursion_min
        FROM sites WHERE tenant_id = $1${siteId ? ' AND id = $2' : ''} ORDER BY name, id LIMIT ${MAX_SITES}`,
     siteId ? [tenantId, siteId] : [tenantId]);
   return rows;
@@ -143,7 +144,7 @@ async function loadSites(tenantId, siteId = null) {
 
 async function loadDevices(tenantId, siteId) {
   const { rows } = await db.query(
-    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_product, last_state
+    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
        FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
     [siteId, tenantId]);
   return rows;

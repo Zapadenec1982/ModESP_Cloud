@@ -97,6 +97,7 @@
       offline_sec: toSec(data.offline_threshold_ms),
       offline_alarm_min: toMin(data.offline_alarm_delay_ms),
       ack_min: data.ack_escalation_min ?? '',
+      haccp_excursion_min: data.haccp_excursion_min ?? '',
       raw_retention_days: data.raw_retention_days ?? '',
       brand_name: data.brand_name || '',
       brand_logo_url: data.brand_logo_url || '',
@@ -139,6 +140,7 @@
         offline_threshold_ms: fromSec(form.offline_sec),
         offline_alarm_delay_ms: fromMin(form.offline_alarm_min),
         ack_escalation_min: form.ack_min === '' ? null : Number(form.ack_min),
+        haccp_excursion_min: form.haccp_excursion_min === '' ? null : Number(form.haccp_excursion_min),
         ota_window_from: fromHm(form.ota_from),
         ota_window_to: fromHm(form.ota_to),
         ...($isSuperAdmin ? { raw_retention_days: form.raw_retention_days === '' ? null : Number(form.raw_retention_days) } : {}),
@@ -233,6 +235,12 @@
         <label class="field"><span>{$t('settings.offline_threshold')}</span><input class="input" type="number" min="30" max="3600" bind:value={form.offline_sec} placeholder={toSec(settings.defaults.offline_threshold_ms)} /></label>
         <label class="field"><span>{$t('settings.offline_alarm_delay')}</span><input class="input" type="number" min="0" max="1440" bind:value={form.offline_alarm_min} placeholder={toMin(settings.defaults.offline_alarm_delay_ms)} /></label>
         <label class="field"><span>{$t('settings.ack_escalation')}</span><input class="input" type="number" min="1" max="1440" bind:value={form.ack_min} placeholder={settings.defaults.ack_escalation_min} /></label>
+      </div>
+
+      <div class="section-header"><Icon name="file-text" size={16} /><span>{$t('settings.haccp_title')}</span></div>
+      <p class="hint">{$t('settings.haccp_hint')}</p>
+      <div class="form-grid">
+        <label class="field"><span>{$t('settings.haccp_excursion_min')}</span><input class="input" type="number" min="1" max="1440" bind:value={form.haccp_excursion_min} placeholder={settings.defaults.haccp_excursion_min} /></label>
       </div>
 
       <div class="section-header"><Icon name="upload" size={16} /><span>{$t('settings.ota_title')}</span></div>

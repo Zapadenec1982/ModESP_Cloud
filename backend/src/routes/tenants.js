@@ -88,6 +88,9 @@ const settingsSchema = z.object({
   // OTA window (plan epic 2.8): minutes after local midnight; from > to wraps past midnight; null = any time
   ota_window_from:         z.number().int().min(0).max(1439).nullable().optional(),
   ota_window_to:           z.number().int().min(0).max(1439).nullable().optional(),
+  // HACCP: how long the air temperature must stay past the critical limit before the
+  // report counts a product excursion (minutes; null = default 30). A site may override it.
+  haccp_excursion_min:     z.number().int().min(1).max(1440).nullable().optional(),
 });
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -184,7 +187,7 @@ const SETTINGS_SELECT = `
          COALESCE(s.timezone, 'Europe/Kyiv') AS timezone, COALESCE(s.locale, 'uk') AS locale,
          s.brand_name, s.brand_logo_url, s.brand_url,
          s.door_alarm_delay_ms, s.pulldown_alarm_delay_ms, s.offline_threshold_ms, s.offline_alarm_delay_ms,
-         s.ack_escalation_min, s.raw_retention_days, s.ota_window_from, s.ota_window_to,
+         s.ack_escalation_min, s.raw_retention_days, s.ota_window_from, s.ota_window_to, s.haccp_excursion_min,
          COALESCE(s.raw_retention_days, p.retention_days) AS retention_days, s.updated_at
     FROM tenants t
     LEFT JOIN tenant_settings s ON s.tenant_id = t.id
@@ -198,6 +201,7 @@ function settingsDefaults() {
     offline_threshold_ms:    parseInt(process.env.OFFLINE_THRESHOLD_MS, 10)    || 90000,
     offline_alarm_delay_ms:  parseInt(process.env.OFFLINE_ALARM_DELAY_MS, 10)  || 120000,
     ack_escalation_min:      parseInt(process.env.ALARM_ACK_ESCALATION_MIN, 10) || 15,
+    haccp_excursion_min:     parseInt(process.env.HACCP_EXCURSION_MIN, 10) || 30,
   };
 }
 
@@ -264,7 +268,7 @@ router.patch('/:id/settings', async (req, res, next) => {
       }
       const cols = ['timezone', 'locale', 'door_alarm_delay_ms', 'pulldown_alarm_delay_ms',
                     'offline_threshold_ms', 'offline_alarm_delay_ms', 'ack_escalation_min', 'raw_retention_days',
-                    'brand_name', 'brand_logo_url', 'brand_url', 'ota_window_from', 'ota_window_to'];
+                    'brand_name', 'brand_logo_url', 'brand_url', 'ota_window_from', 'ota_window_to', 'haccp_excursion_min'];
       const present = cols.filter(c => d[c] !== undefined);
       if (present.length) {
         const insertCols = ['tenant_id', ...present, 'updated_at', 'updated_by'];
