@@ -39,8 +39,23 @@ const DENIED = [
   [/^\/api\/api-keys(\/|$)/, WRITE],
   [/^\/api\/webhooks(\/|$)/, WRITE],
   [/^\/api\/imports\/[^/]+\/credentials\.csv$/, ANY],
-  // Account takeovers by proxy: another impersonation, a reset code, a session or MFA wipe
+  // …and the three other places a plaintext MQTT password is handed back: minting
+  // or rotating a controller's credentials, taking a pending controller into the
+  // organisation, and moving one between organisations. The import CSV was closed
+  // and these were not, which made the rule look tighter than it was. The whole
+  // credentials path goes, revoke included: it is the same door, and a support
+  // engineer has no cause to knock a customer's controller off the broker.
+  [/^\/api\/devices\/[^/]+\/mqtt-credentials(\/|$)/, ANY],
+  [/^\/api\/devices\/pending\/[^/]+\/assign$/, ANY],
+  [/^\/api\/devices\/[^/]+\/reassign$/, ANY],
+  // The public status token of a site: shown once, and it opens a page that needs
+  // no sign-in at all.
+  [/^\/api\/sites\/[^/]+\/public-links(\/|$)/, WRITE],
+  // Account takeovers by proxy: another impersonation, a reset code, a session or
+  // MFA wipe — or a brand-new account, whose access outlives the 60-minute token.
   [/^\/api\/users\/[^/]+\/(impersonate|password-reset|sessions|mfa)(\/|$)/, ANY],
+  [/^\/api\/users\/?$/, WRITE],
+  [/^\/api\/invitations(\/|$)/, WRITE],
   // Data leaving the organisation
   [/^\/api\/tenants\/[^/]+\/exports?(\/|$)/, ANY],
 ];

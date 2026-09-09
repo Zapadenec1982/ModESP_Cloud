@@ -74,13 +74,65 @@ function filterDeviceAccess() {
 }
 
 /**
+ * One device by UUID or mqtt_device_id, if this user holds a grant on it.
+ * The grant is user_devices ∪ user_sites, the same union filterDeviceAccess()
+ * builds the list from — the two must agree, or a site-granted device would
+ * appear in the list and be refused on the detail route.
+ *
+ * Callers that bypass grants (admin, superadmin, an organisation-wide API key,
+ * AUTH_ENABLED=false) must not call this: it answers the grant question only.
+ *
+ * Exported because the WebSocket layer asks the same question about the same
+ * devices. It used to ask a narrower one — user_devices alone — so a technician
+ * who reaches a device through a site grant could read it over REST and was
+ * refused live data on the very same device.
+ *
+ * @returns {Promise<string|null>} the device UUID, or null when no grant reaches it
+ */
+async function grantedDeviceId(userId, tenantId, id) {
+  const deviceField = isUuidFormat(id) ? 'd.id' : 'd.mqtt_device_id';
+  const { rows } = await db.query(
+    `SELECT d.id
+     FROM devices d
+     LEFT JOIN user_devices ud ON ud.device_id = d.id AND ud.user_id = $1
+     LEFT JOIN sites       s  ON s.id = d.site_id AND s.tenant_id = d.tenant_id
+     LEFT JOIN user_sites  us ON us.site_id = s.id AND us.user_id = $1 AND us.tenant_id = $3
+     WHERE ${deviceField} = $2 AND d.tenant_id = $3
+       AND (ud.user_id IS NOT NULL OR us.user_id IS NOT NULL)
+     LIMIT 1`,
+    [userId, id, tenantId]
+  );
+  return rows.length === 0 ? null : rows[0].id;
+}
+
+/**
+ * Every mqtt_device_id this user holds a grant on, as a Set. The WebSocket layer
+ * uses it to decide which tenant-wide events a client may see; REST list routes
+ * use filterDeviceAccess() instead, which needs the UUIDs as well.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+async function grantedMqttIds(userId, tenantId) {
+  const { rows } = await db.query(
+    `SELECT DISTINCT d.mqtt_device_id
+     FROM devices d
+     LEFT JOIN user_devices ud ON ud.device_id = d.id AND ud.user_id = $1
+     LEFT JOIN sites       s  ON s.id = d.site_id AND s.tenant_id = d.tenant_id
+     LEFT JOIN user_sites  us ON us.site_id = s.id AND us.user_id = $1 AND us.tenant_id = $2
+     WHERE d.tenant_id = $2
+       AND (ud.user_id IS NOT NULL OR us.user_id IS NOT NULL)
+     LIMIT $3`,
+    [userId, tenantId, MAX_DEVICE_FILTER]
+  );
+  return new Set(rows.map(r => r.mqtt_device_id));
+}
+
+/**
  * Middleware for single-device endpoints (GET /devices/:id, POST /:id/command, etc.).
  * Verifies user has access to the device specified by req.params.id.
  *
  * Admin or AUTH_ENABLED=false → pass.
- * Technician/Viewer → single query over the same user_devices ∪ user_sites
- * union as filterDeviceAccess(); 403 if no access. The two must agree, or a
- * site-granted device would appear in the list and 403 on GET /devices/:id.
+ * Technician/Viewer → grantedDeviceId(); 403 if no grant reaches the device.
  *
  * On success, caches req.resolvedDeviceId (UUID) to avoid repeated lookups.
  */
@@ -100,22 +152,8 @@ function checkDeviceAccess() {
     if (!id) return next();
 
     try {
-      const isUuid = isUuidFormat(id);
-      const deviceField = isUuid ? 'd.id' : 'd.mqtt_device_id';
-
-      const { rows } = await db.query(
-        `SELECT d.id
-         FROM devices d
-         LEFT JOIN user_devices ud ON ud.device_id = d.id AND ud.user_id = $1
-         LEFT JOIN sites       s  ON s.id = d.site_id AND s.tenant_id = d.tenant_id
-         LEFT JOIN user_sites  us ON us.site_id = s.id AND us.user_id = $1 AND us.tenant_id = $3
-         WHERE ${deviceField} = $2 AND d.tenant_id = $3
-           AND (ud.user_id IS NOT NULL OR us.user_id IS NOT NULL)
-         LIMIT 1`,
-        [req.user.id, id, req.tenantId]
-      );
-
-      if (rows.length === 0) {
+      const deviceId = await grantedDeviceId(req.user.id, req.tenantId, id);
+      if (!deviceId) {
         return res.status(403).json({
           error: 'forbidden',
           message: 'Device access denied',
@@ -124,7 +162,7 @@ function checkDeviceAccess() {
       }
 
       // Cache resolved device UUID to avoid repeated lookups in handler
-      req.resolvedDeviceId = rows[0].id;
+      req.resolvedDeviceId = deviceId;
       next();
     } catch (err) {
       next(err);
@@ -132,4 +170,4 @@ function checkDeviceAccess() {
   };
 }
 
-module.exports = { filterDeviceAccess, checkDeviceAccess };
+module.exports = { filterDeviceAccess, checkDeviceAccess, grantedDeviceId, grantedMqttIds };

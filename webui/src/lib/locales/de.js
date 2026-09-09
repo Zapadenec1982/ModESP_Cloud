@@ -1099,7 +1099,7 @@ export default {
     batch_validation_failed: 'Validierungsfehler. Korrigieren Sie die CSV-Datei und versuchen Sie es erneut.',
     batch_row: 'Zeile',
     batch_success: 'Stapelregistrierung abgeschlossen',
-    batch_csv_format: 'Pflicht: mqtt_device_id, name. Gerät: serial_number, location, model, comment, manufactured_at (TT-MM-JJJJ). Standort: site_name, country, region, city, address_line, postal_code — ein neuer Standort wird automatisch angelegt und geokodiert.',
+    batch_csv_format: 'Pflicht: mqtt_device_id, name. Übernahme: claim_code — der auf dem Regler aufgedruckte Code, nötig, sofern die Organisation ihn noch nicht übernommen hat. Gerät: serial_number, location, model, comment, manufactured_at (TT-MM-JJJJ). Standort: site_name, country, region, city, address_line, postal_code — ein neuer Standort wird automatisch angelegt und geokodiert. HACCP: haccp_preset, haccp_min, haccp_max, haccp_tolerance, haccp_product.',
     batch_max_rows: 'bis {0} Zeilen, Datei bis 2 MB',
     batch_queued: 'Import angenommen: {0} Zeilen. Die Verarbeitung läuft im Hintergrund.',
     batch_progress_title: 'Import läuft',

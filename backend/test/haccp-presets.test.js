@@ -104,7 +104,12 @@ describe('HACCP presets and bulk limits', () => {
     const header = tpl.text.split('\n')[0].replace('﻿', '').split(',');
     expect(header.slice(-5)).toEqual(['haccp_preset', 'haccp_min', 'haccp_max', 'haccp_tolerance', 'haccp_product']);
 
-    await db.query(`INSERT INTO devices (tenant_id, mqtt_device_id, status, online) VALUES ($1, 'B1C101', 'pending', false), ($1, 'B1C102', 'pending', false)`, [db.SYSTEM_TENANT_ID]);
+    // Claimed by this organisation: the import takes a pending controller only
+    // from its own queue, exactly as POST /devices/pending/:id/assign does.
+    await db.query(
+      `INSERT INTO devices (tenant_id, mqtt_device_id, status, online, claim_code, claimed_by_tenant_id)
+       VALUES ($1, 'B1C101', 'pending', false, 'CODEB1C101', $2), ($1, 'B1C102', 'pending', false, 'CODEB1C102', $2)`,
+      [db.SYSTEM_TENANT_ID, tenant.id]);
     await db.query(`INSERT INTO tenant_settings (tenant_id, locale) VALUES ($1, 'en') ON CONFLICT (tenant_id) DO UPDATE SET locale = 'en'`, [tenant.id]);
     const H = ['mqtt_device_id', 'name', 'haccp_preset', 'haccp_min', 'haccp_max', 'haccp_tolerance', 'haccp_product'];
     const res = await post(admin, tenant.id, csv(H,

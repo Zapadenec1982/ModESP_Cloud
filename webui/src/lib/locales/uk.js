@@ -1099,7 +1099,7 @@ export default {
     batch_validation_failed: 'Помилки валідації. Виправте CSV та спробуйте знову.',
     batch_row: 'Рядок',
     batch_success: 'Пакетну реєстрацію завершено',
-    batch_csv_format: 'Обов\'язково: mqtt_device_id, name. Пристрій: serial_number, location, model, comment, manufactured_at (ДД-ММ-РРРР). Точка: site_name, country, region, city, address_line, postal_code — нова точка створюється і геокодується сама.',
+    batch_csv_format: 'Обов\'язково: mqtt_device_id, name. Прив\'язка: claim_code — код із наклейки на контролері, потрібен, якщо організація ще не забрала його в чергу. Пристрій: serial_number, location, model, comment, manufactured_at (ДД-ММ-РРРР). Точка: site_name, country, region, city, address_line, postal_code — нова точка створюється і геокодується сама. HACCP: haccp_preset, haccp_min, haccp_max, haccp_tolerance, haccp_product.',
     batch_max_rows: 'до {0} рядків, файл до 2 МБ',
     batch_queued: 'Імпорт прийнято: {0} рядків. Обробка триває у фоні.',
     batch_progress_title: 'Імпорт триває',
