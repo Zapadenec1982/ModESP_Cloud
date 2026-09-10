@@ -25,10 +25,24 @@ ls -lh /var/backups/modesp/ | tail -3
 
 ## 2. Зупинити таймер очистки
 
-Обовʼязково і **першим кроком**. Таймер щодня о 03:30 виконує
-`cleanup-telemetry.js` і `cleanup-aux.js`. Поки на сервері старий код, кожен
-його запуск додає втрат (це і була критична вада C1); а поки триває міграція
-049, паралельне видалення просто заважає.
+Таймер щодня о 03:30 виконує `cleanup-telemetry.js` і `cleanup-aux.js`.
+Зупиняти його треба з двох причин — і **обидві можуть бути вже відпрацьовані**,
+якщо ви викочуєте не все одразу:
+
+| Причина | Коли вже не діє |
+|---|---|
+| поки на сервері старий код, кожен запуск додає втрат (критична вада C1) | виправлення `(tableoid, ctid)` з PR #40 уже на сервері |
+| паралельне видалення заважає міграції 049 | 049 уже застосована |
+
+Перевірити перше:
+
+```bash
+grep -c 'tableoid' /opt/modesp-cloud/backend/scripts/cleanup-telemetry.js   # 0 = старий код
+```
+
+друге — рядком `049_restore_missing_unique_indexes` у `schema_migrations`.
+
+**Якщо хоч одна причина ще діє** — зупиніть, і повернете в розділі 5:
 
 ```bash
 systemctl stop modesp-retention-cleanup.timer
@@ -36,7 +50,8 @@ systemctl disable modesp-retention-cleanup.timer
 systemctl is-active modesp-retention-cleanup.timer    # inactive
 ```
 
-Таймер повертаємо аж у розділі 5, після перевірки.
+**Якщо обидві вже відпрацьовані** — не чіпайте таймер: зайвий простій ретенції
+нічого не дає, а забути повернути його легше, ніж здається.
 
 ## 3. Відновити історію, якщо вона потрібна — **до** міграції
 
@@ -113,7 +128,10 @@ sudo /opt/modesp-cloud/infra/deploy.sh release v<версія>
 `docs/DEPLOYMENT.md`). Виконуйте по одній і дивіться на вивід кожної:
 
 ```bash
-cd /opt/modesp-cloud && git pull origin main
+# ВІД modesp, не від root: pull від root робить файли root-власними, і застосунок
+# потім не пише в свій же checkout. --ff-only, бо злиття на деплойному checkout —
+# це завжди сюрприз: краще хай впаде.
+sudo -u modesp git -C /opt/modesp-cloud pull --ff-only origin main
 
 # міграції: спершу подивитися перелік, потім застосувати
 sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
@@ -127,10 +145,22 @@ sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=po
 sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_user=modesp_cloud \
   -d modesp_cloud -f infra/sql/check-grants.sql
 
-(cd backend && npm ci --omit=dev) && (cd webui && npm ci && npm run build)
+# Залежності — лише якщо вони справді змінилися в цьому діапазоні:
+git -C /opt/modesp-cloud diff --name-only <sha_до>..<sha_після> -- '*package*.json'
+# якщо вивід порожній — крок пропускається; npm ci видаляє node_modules цілком,
+# і робити це на живому сервері без потреби не варто.
+# якщо ні:
+sudo -u modesp sh -c 'cd /opt/modesp-cloud/backend && npm ci --omit=dev'
+sudo -u modesp sh -c 'cd /opt/modesp-cloud/webui && npm ci && npm run build'
+
 sudo systemctl restart modesp-backend
 curl -s http://localhost:3000/api/health | jq .
 ```
+
+WebUI перезбирати треба щоразу, коли змінювався `webui/src` — незалежно від
+залежностей. `npm ci` тримає точну відповідність lock-файлу, тому лишається
+кращим за `npm install`; якщо провал `node_modules` між `npm ci` і рестартом
+неприйнятний, ставте його безпосередньо перед рестартом, а не заздалегідь.
 
 Відкату «одним рухом» тут немає — це головна відмінність від 4.1. Якщо
 `/api/health` не піднявся, повертайтеся на попередній коміт (`git checkout
@@ -252,14 +282,53 @@ SELECT a.tenant_id, t.slug, a.device_id, a.alarm_code, a.triggered_at
 потужності з чужого обладнання:
 
 ```sql
-SELECT d.tenant_id, d.mqtt_device_id, d.name, d.model_id, m.tenant_id AS model_owner
+SELECT d.tenant_id, d.mqtt_device_id, d.name, d.model_id,
+       m.tenant_id AS model_owner, m.name AS model_name
   FROM devices d JOIN device_models m ON m.id = d.model_id
  WHERE m.tenant_id <> d.tenant_id;
 ```
 
-Після викочування такі рядки читаються як «моделі немає» (join несе
-`m.tenant_id = d.tenant_id`), тож енергооцінка повертається до власних `*_kw`
-пристрою. Прибрати посилання: `UPDATE devices SET model_id = NULL WHERE id IN (…)`.
+**Другий запит обовʼязковий**, і саме він каже, наскільки це болить. Після
+викочування такі рядки читаються як «моделі немає» — але «повернутися до власних
+`*_kw`» можна лише якщо ті `*_kw` заповнені. Якщо ні, енергооцінка для пристрою
+**зникає**, а не гіршає:
+
+```sql
+SELECT d.tenant_id, d.mqtt_device_id, d.name,
+       d.compressor_kw, d.evap_fan_kw, d.cond_fan_kw, d.defrost_heater_kw, d.standby_kw
+  FROM devices d JOIN device_models m ON m.id = d.model_id
+ WHERE m.tenant_id <> d.tenant_id
+   AND COALESCE(d.compressor_kw, d.evap_fan_kw, d.cond_fan_kw,
+                d.defrost_heater_kw, d.standby_kw) IS NULL;
+```
+
+Порожній вивід — можна просто прибрати посилання
+(`UPDATE devices SET model_id = NULL WHERE id IN (…)`). Непорожній — спершу
+розберіться, звідки візьмуться потужності, і аж потім чіпайте `model_id`.
+
+### Окремий випадок: модель системної організації
+
+Якщо `model_owner` — це `00000000-0000-0000-0000-000000000000`, це не «чужа
+організація» і не помилка даних: це `SYSTEM_TENANT_ID` (`services/db.js`), тобто
+модель створена під системною організацією як **платформна, спільна для всіх**.
+У прошивок такий режим є офіційно (`firmwares.tenant_id IS NULL`); у моделей
+обладнання його немає — `device_models.tenant_id` оголошена `NOT NULL`, — тож
+системна організація використовувалась замість нього.
+
+Виправлення PR #57 цього випадку не розрізняє: під новим правилом
+(`m.tenant_id = d.tenant_id`) така модель перестає діяти для всіх, хто нею
+користувався. Що з цим робити — рішення, а не операція; варіанти в порядку
+зростання вартості:
+
+1. **копія моделі в кожну організацію** — працює сьогодні, без змін у коді;
+   ціна — дублікати, які треба тримати синхронними;
+2. **заповнити `*_kw` самим пристроям** — теж сьогодні; ціна — числа
+   розповзаються по пристроях, тобто рівно те, від чого рятують моделі;
+3. **платформна модель за зразком прошивок** — `tenant_id` стає nullable, `NULL`
+   означає «платформна», join стає
+   `m.tenant_id IS NULL OR m.tenant_id = d.tenant_id`, створює й редагує тільки
+   superadmin. Це принциповий варіант, але він потребує міграції і змін у
+   роутері — окрема робота, не крок runbook'а.
 
 ### 7.4. Точки з часовим поясом, який не є назвою IANA (PR #57)
 
