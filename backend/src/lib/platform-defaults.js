@@ -15,6 +15,10 @@
  *   • HACCP_EXCURSION_MIN — the same shape: the settings API from the environment,
  *     the report from a constant of its own.
  *
+ *   • EVENT_RETENTION_DAYS — scripts/cleanup-aux.js deletes by it, and the service
+ *     report needs it to tell «no connectivity losses» from «that far back the
+ *     event log is gone».
+ *
  *   • HOURLY_RETENTION_DAYS — scripts/cleanup-telemetry.js deletes by it, and the
  *     report both compared against a copy and spelled «3 роки» into the sentence
  *     the inspector reads, in four languages. Lower the retention and the document
@@ -44,6 +48,14 @@ const HACCP_EXCURSION_MIN = intFromEnv('HACCP_EXCURSION_MIN', 30);
 /** How long the hourly archive is kept — the «three years» the HACCP report promises. */
 const HOURLY_RETENTION_DAYS = intFromEnv('HOURLY_RETENTION_DAYS', 1095);
 
+/**
+ * How long the device event log is kept. The service report draws its cloud
+ * connectivity section from device_offline / device_online rows, and a period
+ * older than this has no rows — which is not the same as having had no outages.
+ * The report says which, so it needs the number.
+ */
+const EVENT_RETENTION_DAYS = intFromEnv('EVENT_RETENTION_DAYS', 365);
+
 /** Whole years, for the sentence the inspector reads. 1095 → 3. */
 function hourlyRetentionYears() {
   return Math.round((HOURLY_RETENTION_DAYS / 365) * 10) / 10;
@@ -53,6 +65,7 @@ module.exports = {
   DOOR_ALARM_DELAY_MS,
   HACCP_EXCURSION_MIN,
   HOURLY_RETENTION_DAYS,
+  EVENT_RETENTION_DAYS,
   hourlyRetentionYears,
   intFromEnv,
 };

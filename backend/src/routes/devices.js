@@ -262,10 +262,22 @@ router.delete('/pending/:mqttId', maybeAuthorize('admin'), async (req, res, next
 
     // Delete related records (alarms/telemetry/events use VARCHAR device_id, not FK).
     // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    // Every purge below is scoped by tenant_id as well as the controller id, for
+    // two reasons. A controller that changed hands leaves the previous owner's
+    // history behind on purpose (see POST /:id/reassign), so deleting by the
+    // controller id alone would erase one organisation's HACCP evidence from
+    // inside another. And telemetry's only index is
+    // (tenant_id, device_id, channel, time): without the leading column the
+    // delete cannot use it and sequentially scans every monthly partition,
+    // which on a real fleet hits the 30 s statement timeout and rolls the whole
+    // transaction back — the device then simply refuses to delete.
+    // The row here is a pending device, so what it accumulated is the system
+    // organisation's; a previous owner's history keeps its own tenant_id.
+    const ownerTenantId = db.SYSTEM_TENANT_ID;
     await db.transaction(async (client) => {
-      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM alarms WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
       // user_devices + service_records have ON DELETE CASCADE, but explicit is safer
       await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
       await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
@@ -449,11 +461,21 @@ router.delete('/:id', maybeAuthorize('admin'), checkDeviceAccess(), async (req, 
     // Related data (telemetry, alarms, events) is deleted immediately.
     // The device record is hard-deleted after 7 days by the cleanup job in mqtt.js.
     // Atomic so a mid-sequence failure can't leave a half-deleted device.
+    // Every purge below is scoped by tenant_id as well as the controller id, for
+    // two reasons. A controller that changed hands leaves the previous owner's
+    // history behind on purpose (see POST /:id/reassign), so deleting by the
+    // controller id alone would erase one organisation's HACCP evidence from
+    // inside another. And telemetry's only index is
+    // (tenant_id, device_id, channel, time): without the leading column the
+    // delete cannot use it and sequentially scans every monthly partition,
+    // which on a real fleet hits the 30 s statement timeout and rolls the whole
+    // transaction back — the device then simply refuses to delete.
+    const ownerTenantId = rows[0].tenant_id;
     await db.transaction(async (client) => {
-      await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-      await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-      await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-      await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
+      await client.query(`DELETE FROM alarms WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+      await client.query(`DELETE FROM telemetry WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+      await client.query(`DELETE FROM events WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+      await client.query(`DELETE FROM ota_jobs WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
       await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
       await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
       await client.query(
@@ -513,11 +535,13 @@ router.delete('/bulk', maybeAuthorize('admin'), async (req, res, next) => {
         const deviceMqttId = rows[0].mqtt_device_id;
 
         // Atomic per device so a mid-sequence failure can't leave a half-deleted row.
+        // Scoped by tenant_id for the same two reasons as the single delete above.
+        const ownerTenantId = rows[0].tenant_id;
         await db.transaction(async (client) => {
-          await client.query(`DELETE FROM alarms WHERE device_id = $1`, [deviceMqttId]);
-          await client.query(`DELETE FROM telemetry WHERE device_id = $1`, [deviceMqttId]);
-          await client.query(`DELETE FROM events WHERE device_id = $1`, [deviceMqttId]);
-          await client.query(`DELETE FROM ota_jobs WHERE device_id = $1`, [deviceMqttId]);
+          await client.query(`DELETE FROM alarms WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+          await client.query(`DELETE FROM telemetry WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+          await client.query(`DELETE FROM events WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
+          await client.query(`DELETE FROM ota_jobs WHERE tenant_id = $1 AND device_id = $2`, [ownerTenantId, deviceMqttId]);
           await client.query(`DELETE FROM user_devices WHERE device_id = $1`, [deviceUuid]);
           await client.query(`DELETE FROM service_records WHERE device_id = $1`, [deviceUuid]);
           await client.query(

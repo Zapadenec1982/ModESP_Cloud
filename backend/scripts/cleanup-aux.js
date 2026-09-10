@@ -11,13 +11,35 @@
  *   table            column      env variable                      default
  *   events           time        EVENT_RETENTION_DAYS              365
  *   notification_log created_at  NOTIFICATION_LOG_RETENTION_DAYS   90
- *   alarms           cleared_at  ALARM_RETENTION_DAYS              365 (only active = false)
+ *   alarms           cleared_at  ALARM_RETENTION_DAYS              365 (only active = false) · evidence
  *   refresh_tokens   expires_at  —                                 expired rows only
- *   maintenance_hints closed_at  MAINTENANCE_HINT_RETENTION_DAYS   365 (closed hints only)
+ *   maintenance_hints closed_at  MAINTENANCE_HINT_RETENTION_DAYS   365 (closed hints only) · evidence
  *
  * A retention value of 0 (or anything that is not a positive integer) disables
  * that sweep — nothing is ever deleted by accident because of a typo in .env.
  * audit_log is immutable by design and is intentionally not listed here.
+ *
+ * The two tables marked «evidence» are read by report generators, which serve
+ * any period the hourly archive still covers — HOURLY_RETENTION_DAYS, 1095 by
+ * default, while these swept at a flat 365. So a plan selling 800 days of
+ * retention produced, for a period 13 months back, a PDF with a full temperature
+ * log and the line «No alarms during the period» — not because there were none,
+ * but because the alarm history had been deleted. A document handed to an
+ * inspector must not say that.
+ *
+ * These two therefore have a floor: whatever the env variable says, they keep at
+ * least as long as the archive they describe. To keep less, lower
+ * HOURLY_RETENTION_DAYS — that shortens what a report may claim in the first
+ * place, which is the honest knob.
+ *
+ * `events` is deliberately not among them. It is the same kind of evidence — the
+ * service report draws its cloud-connectivity section from device_offline /
+ * device_online rows — but it is an order of magnitude larger than the other two
+ * (a compressor cycling several times an hour writes two rows each time), so
+ * tripling its retention is a real storage decision rather than a correction.
+ * Instead the service report states when a period predates EVENT_RETENTION_DAYS,
+ * rather than printing «no connectivity losses» about days it cannot see. Raising
+ * EVENT_RETENTION_DAYS to 1095 is then a one-line choice, not a silent default.
  *
  * Usage:
  *   node scripts/cleanup-aux.js            # dry-run (counts only)
@@ -30,25 +52,36 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
+const { HOURLY_RETENTION_DAYS } = require('../src/lib/platform-defaults');
+
 const BATCH_SIZE = 10000;
 
 const SWEEPS = [
   { table: 'events',           column: 'time',       envKey: 'EVENT_RETENTION_DAYS',            defaultDays: 365 },
   { table: 'notification_log', column: 'created_at', envKey: 'NOTIFICATION_LOG_RETENTION_DAYS', defaultDays: 90 },
-  { table: 'alarms',           column: 'cleared_at', envKey: 'ALARM_RETENTION_DAYS',            defaultDays: 365, extraWhere: 'active = false' },
+  { table: 'alarms',           column: 'cleared_at', envKey: 'ALARM_RETENTION_DAYS',            defaultDays: 365, extraWhere: 'active = false', evidence: true },
   // Expired refresh tokens carry no security value: reuse detection only needs a
   // revoked token until it would have expired anyway.
   { table: 'refresh_tokens',   column: 'expires_at', envKey: null,                              defaultDays: 0 },
   // Closed maintenance hints (plan epic 2.4); open ones have closed_at NULL and never match.
-  { table: 'maintenance_hints', column: 'closed_at', envKey: 'MAINTENANCE_HINT_RETENTION_DAYS', defaultDays: 365 },
+  { table: 'maintenance_hints', column: 'closed_at', envKey: 'MAINTENANCE_HINT_RETENTION_DAYS', defaultDays: 365, evidence: true },
 ];
 
+/**
+ * Days this sweep keeps. An `evidence` table never keeps less than the hourly
+ * archive: a report may be asked for any period the archive still covers, and
+ * it must not print «no alarms» for a period whose alarms this script deleted.
+ * A disabled sweep (retention 0) stays disabled — the floor raises a horizon,
+ * it does not start deleting where the operator switched deletion off.
+ */
 function retentionFor(sweep, env) {
+  const floor = sweep.evidence ? HOURLY_RETENTION_DAYS : 0;
   if (!sweep.envKey) return sweep.defaultDays;
   const raw = env[sweep.envKey];
-  if (raw === undefined || raw === '') return sweep.defaultDays;
+  if (raw === undefined || raw === '') return Math.max(sweep.defaultDays, floor);
   const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(n, floor);
 }
 
 /**
@@ -81,8 +114,9 @@ async function run({ query, apply = false, now = new Date(), env = process.env, 
     const where = `${sweep.column} < $1` + (sweep.extraWhere ? ` AND ${sweep.extraWhere}` : '');
     const { rows } = await query(`SELECT count(*)::int AS n FROM ${sweep.table} WHERE ${where}`, [cutoff]);
     entry.candidates = rows[0].n;
+    const floored = sweep.evidence && days === HOURLY_RETENTION_DAYS;
     log(`${sweep.table}: ${entry.candidates} row(s) older than ${cutoff.toISOString().slice(0, 10)}` +
-        (sweep.envKey ? ` (${days} days)` : ' (expired)'));
+        (sweep.envKey ? ` (${days} days${floored ? ', the hourly archive horizon' : ''})` : ' (expired)'));
 
     if (!apply || entry.candidates === 0) continue;
 
