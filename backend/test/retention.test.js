@@ -182,7 +182,8 @@ describe('cleanup-aux.js', () => {
     user   = await createUser(tenant.id, { role: 'admin' });
     device = await createDevice(tenant.id);
 
-    // events: one past the 365-day default, one recent
+    // events: one past the 365-day default, one recent. events is not on the
+    // evidence floor — see the note in cleanup-aux.js.
     await db.query(
       `INSERT INTO events (tenant_id, device_id, event_type, time)
        VALUES ($1, $2, 'compressor_on', $3), ($1, $2, 'compressor_off', $4)`,
@@ -194,13 +195,16 @@ describe('cleanup-aux.js', () => {
        VALUES ($1, 'telegram', 'sent', $2), ($1, 'telegram', 'sent', $3)`,
       [tenant.id, daysAgo(100), daysAgo(1)]
     );
-    // alarms: old cleared (sweep), old still ACTIVE (keep), recently cleared (keep)
+    // alarms: cleared past the archive horizon (sweep), old still ACTIVE (keep),
+    // cleared past 365 days but inside the archive (kept by the floor),
+    // recently cleared (keep)
     await db.query(
       `INSERT INTO alarms (tenant_id, device_id, alarm_code, severity, active, triggered_at, cleared_at) VALUES
          ($1, $2, 'HI_TEMP', 'critical', false, $3, $4),
          ($1, $2, 'DOOR',    'warning',  true,  $3, NULL),
+         ($1, $2, 'PROBE',   'warning',  false, $7, $8),
          ($1, $2, 'LO_TEMP', 'warning',  false, $5, $6)`,
-      [tenant.id, device.mqtt_device_id, daysAgo(410), daysAgo(400), daysAgo(6), daysAgo(5)]
+      [tenant.id, device.mqtt_device_id, daysAgo(1210), daysAgo(1200), daysAgo(6), daysAgo(5), daysAgo(410), daysAgo(400)]
     );
     // refresh_tokens: one expired, one valid
     await db.query(
@@ -208,13 +212,16 @@ describe('cleanup-aux.js', () => {
        VALUES ($1, $2, 'expired-hash', $3), ($1, $2, 'valid-hash', $4)`,
       [user.id, tenant.id, daysAgo(1), daysAhead(20)]
     );
-    // maintenance_hints: old closed (sweep), old still OPEN (keep), recently closed (keep)
+    // maintenance_hints: closed past the archive horizon (sweep), still OPEN
+    // (keep), closed past 365 days but inside the archive (kept by the floor),
+    // recently closed (keep)
     await db.query(
       `INSERT INTO maintenance_hints (tenant_id, device_id, rule_key, opened_at, last_seen_at, closed_at, closed_reason) VALUES
          ($1, $2, 'cond_temp',         $3, $3, $4,   'resolved'),
          ($1, $2, 'compressor_starts', $3, $3, NULL, NULL),
+         ($1, $2, 'alarm_repeat',      $7, $7, $8,   'resolved'),
          ($1, $2, 'door_openings',     $5, $5, $6,   'dismissed')`,
-      [tenant.id, device.mqtt_device_id, daysAgo(410), daysAgo(400), daysAgo(6), daysAgo(5)]
+      [tenant.id, device.mqtt_device_id, daysAgo(1210), daysAgo(1200), daysAgo(6), daysAgo(5), daysAgo(410), daysAgo(400)]
     );
   });
 
@@ -228,7 +235,7 @@ describe('cleanup-aux.js', () => {
     expect(Object.values(r).every(x => x.deleted === 0)).toBe(true);
 
     const { rows } = await db.query('SELECT count(*)::int AS n FROM alarms WHERE tenant_id = $1', [tenant.id]);
-    expect(rows[0].n).toBe(3);
+    expect(rows[0].n).toBe(4);
   });
 
   it('a retention of 0 disables that sweep only', async () => {
@@ -252,18 +259,64 @@ describe('cleanup-aux.js', () => {
       const { rows } = await db.query(`SELECT count(*)::int AS n FROM ${t} WHERE tenant_id = $1`, [tenant.id]);
       counts[t] = rows[0].n;
     }
-    expect(counts).toEqual({ events: 1, notification_log: 1, alarms: 2, refresh_tokens: 1, maintenance_hints: 2 });
+    expect(counts).toEqual({ events: 1, notification_log: 1, alarms: 3, refresh_tokens: 1, maintenance_hints: 3 });
 
     const { rows: alarms } = await db.query(
       'SELECT alarm_code, active FROM alarms WHERE tenant_id = $1 ORDER BY alarm_code', [tenant.id]);
     expect(alarms).toEqual([
       { alarm_code: 'DOOR', active: true },
       { alarm_code: 'LO_TEMP', active: false },
+      { alarm_code: 'PROBE', active: false },
     ]);
 
     const { rows: tokens } = await db.query(
       'SELECT token_hash FROM refresh_tokens WHERE user_id = $1', [user.id]);
     expect(tokens.map(t => t.token_hash)).toEqual(['valid-hash']);
+  });
+});
+
+// ── the evidence floor ─────────────────────────────────────
+//
+// alarms and maintenance_hints are read by the report generators, and a report
+// may be asked for any period the hourly archive still covers. Swept at a flat
+// 365 days while the archive keeps 1095, they produced a PDF with a full
+// temperature log and the line «No alarms during the period» for a period whose
+// alarms this script had deleted.
+//
+// `events` is the same kind of evidence but an order of magnitude larger, so it
+// keeps its own retention and the service report states when a period predates
+// it — see the note at the top of cleanup-aux.js.
+describe('cleanup-aux.js: evidence outlives the report that cites it', () => {
+  const { HOURLY_RETENTION_DAYS } = require('../src/lib/platform-defaults');
+
+  it('keeps an evidence table for at least as long as the hourly archive', async () => {
+    const r = await cleanupAux.run({ query, now, env: {} });
+    for (const table of ['alarms', 'maintenance_hints']) {
+      expect(r[table].retentionDays).toBe(HOURLY_RETENTION_DAYS);
+    }
+  });
+
+  it('an env value below the archive horizon is raised to it, one above it is honoured', async () => {
+    const low  = await cleanupAux.run({ query, now, env: { ALARM_RETENTION_DAYS: '90' } });
+    expect(low.alarms.retentionDays).toBe(HOURLY_RETENTION_DAYS);
+
+    const high = await cleanupAux.run({ query, now, env: { ALARM_RETENTION_DAYS: '4000' } });
+    expect(high.alarms.retentionDays).toBe(4000);
+  });
+
+  it('leaves a table that is not evidence on its own env value', async () => {
+    const r = await cleanupAux.run({ query, now, env: { NOTIFICATION_LOG_RETENTION_DAYS: '30', EVENT_RETENTION_DAYS: '200' } });
+    expect(r.notification_log.retentionDays).toBe(30);
+    // events is the one report-facing table deliberately left off the floor:
+    // it is an order of magnitude larger than the other two, and the service
+    // report states when a period predates it instead.
+    expect(r.events.retentionDays).toBe(200);
+  });
+
+  it('the floor raises a horizon, it does not restart a sweep the operator switched off', async () => {
+    const r = await cleanupAux.run({ query, now, env: { ALARM_RETENTION_DAYS: '0' } });
+    expect(r.alarms.disabled).toBe(true);
+    expect(r.alarms.candidates).toBe(0);
   });
 });
 

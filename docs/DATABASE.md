@@ -995,17 +995,25 @@ SELECT drop_telemetry_partition('telemetry_2026_05');
 `backend/scripts/cleanup-aux.js --apply` (таймер `modesp-retention-cleanup.timer`, щодня 03:30,
 після `cleanup-weather.js`), пакетами по 10 000 рядків:
 
-| Таблиця | Колонка | Змінна | Дефолт |
-|---|---|---|---|
-| `events` | `time` | `EVENT_RETENTION_DAYS` | 365 |
-| `notification_log` | `created_at` | `NOTIFICATION_LOG_RETENTION_DAYS` | 90 |
-| `alarms` (лише `active = false`) | `cleared_at` | `ALARM_RETENTION_DAYS` | 365 |
-| `refresh_tokens` | `expires_at` | — | лише протерміновані |
-| `weather_observations` | `observed_at` | `WEATHER_RETENTION_DAYS` | 395 |
-| `maintenance_hints` (лише закриті) | `closed_at` | `MAINTENANCE_HINT_RETENTION_DAYS` | 365 |
+| Таблиця | Колонка | Змінна | Дефолт | Доказова |
+|---|---|---|---|---|
+| `events` | `time` | `EVENT_RETENTION_DAYS` | 365 | так |
+| `notification_log` | `created_at` | `NOTIFICATION_LOG_RETENTION_DAYS` | 90 | — |
+| `alarms` (лише `active = false`) | `cleared_at` | `ALARM_RETENTION_DAYS` | 365 | так |
+| `refresh_tokens` | `expires_at` | — | лише протерміновані | — |
+| `weather_observations` | `observed_at` | `WEATHER_RETENTION_DAYS` | 395 | — |
+| `maintenance_hints` (лише закриті) | `closed_at` | `MAINTENANCE_HINT_RETENTION_DAYS` | 365 | так |
 
 `0` вимикає окремий sweep. `audit_log` не чиститься — тригер `trg_audit_log_immutable` забороняє
 `UPDATE`/`DELETE`.
+
+**Доказові таблиці мають нижню межу.** `events`, `alarms` і `maintenance_hints` читають генератори
+звітів, а звіт можна замовити за будь-який період, який ще покриває погодинний архів
+(`HOURLY_RETENTION_DAYS`, типово 1095). Тому ці три ніколи не зберігаються менше за архів, хай що
+стоїть у змінній: інакше план, що продає 800 днів ретенції, для періоду 13-місячної давнини видає
+PDF із повним температурним журналом і рядком «Тривог за період не зафіксовано» — не тому, що їх
+не було, а тому, що історію тривог видалили. Щоб зберігати менше, знижують `HOURLY_RETENTION_DAYS`:
+це заразом скорочує те, що звіт узагалі має право стверджувати.
 
 ---
 

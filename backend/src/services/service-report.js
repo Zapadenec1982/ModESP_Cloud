@@ -17,6 +17,7 @@ const haccp = require('./haccp-report');
 const { fetchSeries, summarize, stepOf, defrostIntervals, detectExcursions, detectGaps, limitsFor, toleranceOf, limitSentence,
         localParts, fmtDuration, tpl, num, fmt1, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS } = haccp.helpers;
 const { localFmt, planSource, render, registerExport, verifyUrlFor, newCode, fmtCode, sha256 } = haccp;
+const { EVENT_RETENTION_DAYS } = require('../lib/platform-defaults');
 
 const CHANNELS = ['air', 'evap', 'cond', 'setpoint', 'comp', 'defrost'];
 const TEMP_CHANNELS = ['air', 'evap', 'cond', 'setpoint'];
@@ -45,7 +46,7 @@ const STRINGS = {
     alarms: 'Тривоги за період', no_alarms: 'Тривог за період не зафіксовано.',
     time: 'Час', event: 'Подія', severity: 'Важливість', value: 'Значення', limit: 'межа', cleared: 'Знято', active: 'Активна', ack: 'Підтверджено', note: 'нотатка', work_order: 'Наряд',
     sev: { critical: 'критична', warning: 'попередження', info: 'інформація' },
-    connectivity: 'Звʼязок із хмарою', no_offline: 'Втрат звʼязку за період не зафіксовано.', col_from: 'З', col_to: 'По', col_duration: 'Тривалість', still_offline: 'досі офлайн',
+    connectivity: 'Звʼязок із хмарою', no_offline: 'Втрат звʼязку за період не зафіксовано.', offline_not_retained: 'Журнал подій за цей період уже не зберігається, тож про втрати звʼязку сказати нічого.', col_from: 'З', col_to: 'По', col_duration: 'Тривалість', still_offline: 'досі офлайн',
     hints: 'Рекомендації з обслуговування', no_hints: 'Рекомендацій за період немає.', hint_names: { alarm_repeat: 'Аварія повторюється' },
     col_rule: 'Правило', col_opened: 'Відкрито', col_closed: 'Закрито', col_status: 'Стан', open: 'відкрита', closed: 'закрита',
     work: 'Наряди й сервісні записи', no_work: 'Нарядів і сервісних записів за період немає.', col_kind: 'Тип', col_what: 'Що зроблено / назва', col_who: 'Хто', service_record: 'Сервісний запис', parts: 'запчастини', duration: 'тривалість',
@@ -77,7 +78,7 @@ const STRINGS = {
     alarms: 'Alarms during the period', no_alarms: 'No alarms during the period.',
     time: 'Time', event: 'Event', severity: 'Severity', value: 'Value', limit: 'limit', cleared: 'Cleared', active: 'Active', ack: 'Acknowledged', note: 'note', work_order: 'Work order',
     sev: { critical: 'critical', warning: 'warning', info: 'info' },
-    connectivity: 'Cloud connectivity', no_offline: 'No connectivity losses during the period.', col_from: 'From', col_to: 'To', col_duration: 'Duration', still_offline: 'still offline',
+    connectivity: 'Cloud connectivity', no_offline: 'No connectivity losses during the period.', offline_not_retained: 'The event log no longer covers this period, so nothing can be said about connectivity losses.', col_from: 'From', col_to: 'To', col_duration: 'Duration', still_offline: 'still offline',
     hints: 'Maintenance hints', no_hints: 'No hints during the period.', hint_names: { alarm_repeat: 'Recurring alarm' },
     col_rule: 'Rule', col_opened: 'Opened', col_closed: 'Closed', col_status: 'State', open: 'open', closed: 'closed',
     work: 'Work orders and service records', no_work: 'No work orders or service records during the period.', col_kind: 'Kind', col_what: 'Work done / title', col_who: 'Who', service_record: 'Service record', parts: 'parts', duration: 'duration',
@@ -109,7 +110,7 @@ const STRINGS = {
     alarms: 'Alarmy w okresie', no_alarms: 'Brak alarmów w okresie.',
     time: 'Czas', event: 'Zdarzenie', severity: 'Ważność', value: 'Wartość', limit: 'limit', cleared: 'Zakończony', active: 'Aktywny', ack: 'Potwierdzony', note: 'uwaga', work_order: 'Zlecenie',
     sev: { critical: 'krytyczny', warning: 'ostrzeżenie', info: 'informacja' },
-    connectivity: 'Łączność z chmurą', no_offline: 'Brak utrat łączności w okresie.', col_from: 'Od', col_to: 'Do', col_duration: 'Czas trwania', still_offline: 'nadal offline',
+    connectivity: 'Łączność z chmurą', no_offline: 'Brak utrat łączności w okresie.', offline_not_retained: 'Dziennik zdarzeń nie obejmuje już tego okresu, więc o utratach łączności nic nie można powiedzieć.', col_from: 'Od', col_to: 'Do', col_duration: 'Czas trwania', still_offline: 'nadal offline',
     hints: 'Wskazówki serwisowe', no_hints: 'Brak wskazówek w okresie.', hint_names: { alarm_repeat: 'Alarm się powtarza' },
     col_rule: 'Reguła', col_opened: 'Otwarto', col_closed: 'Zamknięto', col_status: 'Stan', open: 'otwarta', closed: 'zamknięta',
     work: 'Zlecenia i wpisy serwisowe', no_work: 'Brak zleceń i wpisów serwisowych w okresie.', col_kind: 'Rodzaj', col_what: 'Wykonano / tytuł', col_who: 'Kto', service_record: 'Wpis serwisowy', parts: 'części', duration: 'czas',
@@ -141,7 +142,7 @@ const STRINGS = {
     alarms: 'Alarme im Zeitraum', no_alarms: 'Keine Alarme im Zeitraum.',
     time: 'Zeit', event: 'Ereignis', severity: 'Schwere', value: 'Wert', limit: 'Grenze', cleared: 'Beendet', active: 'Aktiv', ack: 'Bestätigt', note: 'Notiz', work_order: 'Auftrag',
     sev: { critical: 'kritisch', warning: 'Warnung', info: 'Info' },
-    connectivity: 'Cloud-Verbindung', no_offline: 'Keine Verbindungsverluste im Zeitraum.', col_from: 'Von', col_to: 'Bis', col_duration: 'Dauer', still_offline: 'noch offline',
+    connectivity: 'Cloud-Verbindung', no_offline: 'Keine Verbindungsverluste im Zeitraum.', offline_not_retained: 'Das Ereignisprotokoll deckt diesen Zeitraum nicht mehr ab; zu Verbindungsverlusten lässt sich daher nichts sagen.', col_from: 'Von', col_to: 'Bis', col_duration: 'Dauer', still_offline: 'noch offline',
     hints: 'Wartungshinweise', no_hints: 'Keine Hinweise im Zeitraum.', hint_names: { alarm_repeat: 'Alarm wiederholt sich' },
     col_rule: 'Regel', col_opened: 'Eröffnet', col_closed: 'Geschlossen', col_status: 'Status', open: 'offen', closed: 'geschlossen',
     work: 'Aufträge und Serviceeinträge', no_work: 'Keine Aufträge und Serviceeinträge im Zeitraum.', col_kind: 'Art', col_what: 'Erledigt / Titel', col_who: 'Wer', service_record: 'Serviceeintrag', parts: 'Teile', duration: 'Dauer',
@@ -404,7 +405,7 @@ function settingsRows(S, state) {
   return out;
 }
 
-function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single, doorMin }) {
+function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single, doorMin, eventsRetained }) {
   const dev = d.device;
   const state = dev.last_state && typeof dev.last_state === 'object' ? dev.last_state : null;
   const totalMin = (to.getTime() - from.getTime()) / 60000;
@@ -530,7 +531,10 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
         },
         layout: 'lightHorizontalLines', fontSize: 8, margin: [0, 4, 0, 10],
       }
-    : { text: S.no_offline, italics: true, margin: [0, 4, 0, 10] };
+    // An empty list means «no outages» only when the event log still reaches this
+    // far back. Past EVENT_RETENTION_DAYS the rows are gone, and the report says
+    // so instead of certifying a clean connection it cannot see.
+    : { text: eventsRetained ? S.no_offline : S.offline_not_retained, italics: true, margin: [0, 4, 0, 10] };
 
   // ── hints ──
   const hintsBlock = d.hints.length
@@ -613,6 +617,10 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
 
 function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucketKey, bucketSec, source, generatedBy, generatedAt, code, hash, verifyUrl, doorMin }) {
   const S = strings(lang);
+  // cleanup-aux.js sweeps `events` at EVENT_RETENTION_DAYS while the hourly
+  // archive keeps the temperatures far longer, so a report can legitimately
+  // cover a period whose event rows are gone.
+  const eventsRetained = from.getTime() >= new Date(generatedAt).getTime() - EVENT_RETENTION_DAYS * 86400e3;
   const title = kind === 'site' ? S.site_title : S.title;
   const orgName = tenant.legal_name || tenant.name;
   const address = site ? [site.address_line, site.city, site.region, site.country].filter(Boolean).join(', ') : null;
@@ -658,7 +666,7 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
         { text: title, style: 'title' },
         meta,
         { text: S.not_haccp, fontSize: 8, color: GREY, italics: true, margin: [0, 0, 0, 10] },
-        ...devices.flatMap(d => deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single: kind === 'device', doorMin })),
+        ...devices.flatMap(d => deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single: kind === 'device', doorMin, eventsRetained })),
         verifyBlock,
       ],
       styles: {

@@ -230,6 +230,39 @@ describe('Service report for technicians', () => {
       ]);
     });
 
+    it('an empty offline list reads as «no losses» only while the event log still reaches back', async () => {
+      // cleanup-aux.js sweeps `events` at EVENT_RETENTION_DAYS (365 by default)
+      // while the hourly archive keeps the temperatures for 1095. A report for a
+      // period in between has no event rows — which is not the same as having had
+      // no outages, and the document must not certify a connection it cannot see.
+      const { EVENT_RETENTION_DAYS } = require('../src/lib/platform-defaults');
+      const now = new Date('2030-06-01T00:00:00Z');
+      // A real collected device, with the offline list emptied: the question is
+      // only which sentence an empty list produces.
+      const collected = await service.__test.collectDevice({
+        query: (q, params) => db.query(q, params),
+        device: { ...device, mqtt_device_id: 'SRV001' }, tenantId: tenant.id,
+        from, to, bucketSec: 300, source: 'raw', excursionMin: 30, samplingSec: 60,
+      });
+      const blank = { ...collected, offline: [] };
+      const call = (periodFrom) => JSON.stringify(service.__test.buildDocument({
+        kind: 'device', lang: 'uk', tz: 'UTC', tenant, site: null,
+        devices: [blank], from: periodFrom, to: new Date(periodFrom.getTime() + 86400e3),
+        bucketKey: 'hour', bucketSec: 3600, source: 'hourly',
+        generatedBy: 'test', generatedAt: now.toISOString(),
+        code: 'AAAA-BBBB-CCCC', hash: 'x', verifyUrl: 'https://example.test/v', doorMin: 10,
+      }).docDefinition);
+
+      const S = service.strings('uk');
+      const recent = call(new Date(now.getTime() - 10 * 86400e3));
+      expect(recent).toContain(S.no_offline);
+      expect(recent).not.toContain(S.offline_not_retained);
+
+      const beyond = call(new Date(now.getTime() - (EVENT_RETENTION_DAYS + 30) * 86400e3));
+      expect(beyond).toContain(S.offline_not_retained);
+      expect(beyond).not.toContain(S.no_offline);
+    });
+
     it('chartSvg: draws the channels and the HACCP limit line, needs at least two air points', () => {
       const t0 = Date.parse('2026-09-04T00:00:00Z');
       const buckets = [0, 1, 2, 3].map(i => ({ time: new Date(t0 + i * 3600e3).toISOString(), air: { avg: -18 + i }, evap: { avg: -25 }, setpoint: { avg: -18 } }));
