@@ -15,6 +15,7 @@ const { Router } = require('express');
 const db         = require('../services/db');
 const otaSvc     = require('../services/ota');
 const { authorize } = require('../middleware/auth');
+const { requireFeature } = require('../middleware/plan');
 
 const router = Router();
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
@@ -120,7 +121,12 @@ router.post('/rollback', async (req, res, next) => {
 });
 
 // ── POST /api/ota/rollout — group OTA ──────── (admin only)
-router.post('/rollout', maybeAuthorize('admin'), async (req, res, next) => {
+// Mass rollout is a plan feature («Про» and up). The key was seeded in
+// plan_limits.features from the start and never checked anywhere, so a free
+// organisation could roll firmware across its whole fleet — the one OTA
+// operation with real blast radius. Single-device deploy stays open to every
+// plan; only the fleet-wide one is gated.
+router.post('/rollout', maybeAuthorize('admin'), requireFeature('ota_rollout'), async (req, res, next) => {
   try {
     const { firmware_id, device_ids, batch_size, batch_interval_s, fail_threshold_pct } = req.body || {};
     if (!firmware_id) {

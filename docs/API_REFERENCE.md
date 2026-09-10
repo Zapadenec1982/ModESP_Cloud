@@ -896,6 +896,9 @@ unit, overridden, default { … }, model_overrides [ … ]`.
 Наряд звʼязує аварію чи рекомендацію з техніком, точкою і візитом. Статуси:
 `new → assigned → in_progress → done | cancelled`. Видимість: адмін бачить усі наряди організації,
 технік і глядач — призначені їм і на пристроях, які вони можуть відкрити (`user_devices ∪ user_sites`).
+**Ключ API** бачить усі наряди організації незалежно від скоупу: ключ представляє організацію
+цілком, а не гранти конкретної особи. Скоуп визначає, що з ними можна робити — `read` лише читає,
+`write` створює, призначає, розпочинає й закриває.
 Кожен рядок: `id, title, description, priority (low|normal|high|urgent), status, device_id (uuid),
 device_mqtt_id, device_name, site_id, site_name, site_city, site_address, maps_url, alarm_id, hint_id,
 assigned_to, assigned_to_email, created_by_email, scheduled_at, assigned_at, started_at, closed_at,
@@ -2851,7 +2854,9 @@ superadmin і платформенної прошивки додає `visible_to
 `previous_version`), `409 already_on_version`.
 
 ### `POST /ota/rollout`
-Груповий OTA rollout з batching. **Ролі:** admin.
+Груповий OTA rollout з batching. **Ролі:** admin. **Функція плану `ota_rollout`**
+(«Про», Enterprise, «Партнер») — інакше `402 plan_feature`. Розгортання на один пристрій
+(`POST /ota/deploy`) доступне на будь-якому плані; під функцію заведена саме масова операція.
 
 ```json
 { "firmware_id": "uuid", "device_ids": ["F27FCD", "A4CF12"], "batch_size": 2, "batch_interval_s": 300, "fail_threshold_pct": 50 }

@@ -383,6 +383,9 @@ Upload, deploy, and monitor firmware updates — single device or fleet-wide rol
   marked "rollback" in the history. Who started each job is recorded (a person or an API key)
 
 ### Group Rollout
+Plan feature `ota_rollout` — "Pro", Enterprise and "Partner"; every other plan gets
+`402 plan_feature`. Single-device deploy stays open to all of them.
+
 - Select firmware + device list → deploy in configurable batches
 - **Batch size** — how many devices per wave
 - **Batch interval** — seconds between waves (prevent network congestion)

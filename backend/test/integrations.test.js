@@ -116,6 +116,29 @@ describe('integrations (plan epic 2.6)', () => {
       expect(r.body.error, path).toBe('api_key_scope');
     }
     expect((await request(app).get('/api/auth/sessions').set(bearer(writeKey))).status).toBe(403);
+
+    // Work orders — the surface the integration documentation promises to a key
+    // and the one it could not reach. filterDeviceAccess() leaves
+    // req.deviceFilter null for a key (it stands for the organisation, not for
+    // one person's grants), but this router read that as `req.deviceFilter || []`
+    // — «restricted to nothing». A read key saw an empty list and a 404 on every
+    // order.
+    const order = await request(app).post('/api/work-orders').set(bearer(writeKey))
+      .send({ title: 'Замінити ущільнювач', device_id: device.mqtt_device_id, priority: 'high' });
+    expect(order.status).toBe(201);
+    const orderId = order.body.data.id;
+
+    const orders = await request(app).get('/api/work-orders').set(bearer(readKey));
+    expect(orders.status).toBe(200);
+    expect(orders.body.data.map(o => o.id)).toContain(orderId);
+
+    const one = await request(app).get(`/api/work-orders/${orderId}`).set(bearer(readKey));
+    expect(one.status).toBe(200);
+    expect(one.body.data.title).toBe('Замінити ущільнювач');
+
+    // …and read stays read: the key may not close what it can see.
+    expect((await request(app).post(`/api/work-orders/${orderId}/close`).set(bearer(readKey)).send({ work_done: 'x' })).status).toBe(403);
+
     const { rows } = await db.query('SELECT last_used_at FROM api_keys WHERE id = $1', [readKeyId]);
     expect(rows[0].last_used_at).toBeTruthy();
     // the audit trail names the key
