@@ -1,7 +1,7 @@
 # Runbook: викочування виправлень аудиту цілісності
 
 Що зробити на продакшн-сервері, щоб узяти зміни, злиті після аудиту цілісності
-(PR #40–#58). Ці кроки **не покриваються** звичайним `deploy.sh release`: три
+(PR #40–#58). Ці кроки **не покриваються** звичайним викочуванням: три
 міграції, з яких одна важка, вимкнений на час викочування таймер, необовʼязкове
 відновлення історії, яке треба зробити **до** міграції, і чотири разові запити
 на пошук уже зіпсованих даних.
@@ -11,7 +11,7 @@
 | **Скільки триває** | 20–40 хв активної роботи; міграція 049 — від хвилин до годин залежно від обсягу `telemetry` |
 | **Простій** | не потрібен: бекенд працює, але на час міграції 049 зростає навантаження на БД |
 | **Що потрібно** | root на сервері, доступ до off-site архіву (якщо відновлюєте історію), вікно обслуговування |
-| **Відкат** | `infra/deploy.sh rollback` повертає код; міграції **не відкочуються** — див. розділ 6 |
+| **Відкат** | залежить від розкладки сервера (розділ 4); міграції **не відкочуються** в обох випадках — див. розділ 6 |
 
 ## 1. Перед початком: свіжий архів
 
@@ -82,12 +82,64 @@ pg_restore -d modesp_restore --no-owner /root/restore/db.dump
 
 ## 4. Викотити код і міграції
 
+**Спершу зʼясуйте, яка на цьому сервері розкладка.** Їх дві, і команда для них
+різна:
+
 ```bash
-infra/deploy.sh release v<версія>
+ls -ld /opt/modesp-cloud /opt/modesp-releases 2>&1
+```
+
+| Що видно | Розкладка | Куди далі |
+|---|---|---|
+| `/opt/modesp-cloud` — **symlink**, `/opt/modesp-releases` існує | релізна (після `deploy.sh init`) | 4.1 |
+| `/opt/modesp-cloud` — звичайний каталог, `/opt/modesp-releases` немає | git-checkout | 4.2 |
+
+Не пропускайте цю перевірку. `deploy.sh release` на git-checkout або впаде, або
+почне перебудовувати розкладку **посеред викочування** — цього не має статися
+між зупиненим таймером і незастосованими міграціями.
+
+### 4.1. Релізна розкладка
+
+```bash
+sudo /opt/modesp-cloud/infra/deploy.sh release v<версія>
 ```
 
 Скрипт сам робить dry-run міграцій, застосовує їх від власника схеми, наливає
-гранти і перевіряє `/api/health` з автоматичним відкатом. Три нові міграції:
+гранти і перевіряє `/api/health` з автоматичним відкатом.
+
+### 4.2. Git-checkout
+
+Той самий порядок, але кожна гарантія — окремою командою (це «Ручний шлях» із
+`docs/DEPLOYMENT.md`). Виконуйте по одній і дивіться на вивід кожної:
+
+```bash
+cd /opt/modesp-cloud && git pull origin main
+
+# міграції: спершу подивитися перелік, потім застосувати
+sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
+  node backend/src/scripts/migrate.js --dry-run
+sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
+  node backend/src/scripts/migrate.js
+
+# права застосунку і перевірка, що вони справді наливаються
+sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=postgres \
+  -d modesp_cloud -f infra/sql/app-grants.sql
+sudo -u postgres psql -v ON_ERROR_STOP=1 -v app_user=modesp_cloud \
+  -d modesp_cloud -f infra/sql/check-grants.sql
+
+(cd backend && npm ci --omit=dev) && (cd webui && npm ci && npm run build)
+sudo systemctl restart modesp-backend
+curl -s http://localhost:3000/api/health | jq .
+```
+
+Відкату «одним рухом» тут немає — це головна відмінність від 4.1. Якщо
+`/api/health` не піднявся, повертайтеся на попередній коміт (`git checkout
+<sha>`, `npm ci --omit=dev`, рестарт); міграції при цьому лишаються — див.
+розділ 6, вони сумісні зі старим кодом.
+
+---
+
+Три нові міграції:
 
 | Міграція | Що робить | Скільки триває |
 |---|---|---|
@@ -138,8 +190,16 @@ systemctl list-timers modesp-retention-cleanup.timer --no-pager
 
 ## 6. Якщо треба відкотитися
 
-`infra/deploy.sh rollback` повертає попередній реліз коду. **Міграції при цьому
-лишаються застосованими** — усі три сумісні зі старим кодом:
+Як саме — залежить від розкладки (розділ 4):
+
+- **релізна:** `sudo /opt/modesp-cloud/infra/deploy.sh rollback` — перемикає
+  symlink на `.previous`, рестарт, health-гейт;
+- **git-checkout:** `git checkout <попередній sha>`, `(cd backend && npm ci
+  --omit=dev)`, `(cd webui && npm ci && npm run build)`, рестарт — кроки ті
+  самі, але вручну і без автоматичного гейту.
+
+**Міграції в обох випадках лишаються застосованими** — усі три сумісні зі
+старим кодом:
 
 - 049 додає індекси й видаляє дублікати; старий код цього не помітить;
 - 050 створює таблицю, якою старий код не користується;
@@ -203,20 +263,23 @@ SELECT d.tenant_id, d.mqtt_device_id, d.name, d.model_id, m.tenant_id AS model_o
 
 ### 7.4. Точки з часовим поясом, який не є назвою IANA (PR #57)
 
-Такі значення кидають `RangeError` у кожному звіті, де є ця точка. У базі
-функції для перевірки немає, тож перевіряємо в Node:
+Такі значення кидають `RangeError` у кожному звіті, де є ця точка. PostgreSQL
+знає повну базу IANA у системному вигляді `pg_timezone_names`, тож перевірка —
+звичайний SQL:
 
-```bash
-cd /opt/modesp-cloud/backend
-sudo -u modesp node -e "
-const db = require('./src/services/db'); db.init(console);
-db.query('SELECT id, tenant_id, name, timezone FROM sites WHERE timezone IS NOT NULL').then(({rows}) => {
-  const bad = rows.filter(r => { try { new Intl.DateTimeFormat('en', { timeZone: r.timezone }); return false; } catch { return true; } });
-  console.log(bad.length ? bad : 'усі часові пояси придатні');
-  process.exit(0);
-});
-"
+```sql
+SELECT id, tenant_id, name, timezone
+  FROM sites
+ WHERE timezone IS NOT NULL
+   AND (timezone NOT IN (SELECT name FROM pg_timezone_names)
+        -- три імені, які знає PostgreSQL і не приймає Intl.DateTimeFormat,
+        -- тобто саме те, чим рендериться звіт
+        OR timezone IN ('Factory', 'localtime', 'posixrules'));
 ```
+
+Перевіряється проти бази часових поясів **цього сервера**, тож лишається
+правильним і після оновлення tzdata. Для пари PostgreSQL 16 / Node 22 цей запит
+точний: із 499 імен, які знає PostgreSQL, `Intl` відкидає рівно ці три.
 
 Виправлення: задати правильну назву через WebUI (тепер форма не прийме хибну)
 або `UPDATE sites SET timezone = NULL WHERE id IN (…)` — тоді звіт візьме пояс
