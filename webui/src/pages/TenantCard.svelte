@@ -207,7 +207,7 @@
         <div class="table">
           <div class="table-header">
             <span class="c-email">E-mail</span>
-            <span class="c-role">{$t('users.role')}</span>
+            <span class="c-role">{$t('users.col_role')}</span>
             <span class="c-flags">MFA · Telegram</span>
             <span class="c-login">{$t('tenants.card_last_login')}</span>
             <span class="c-actions"></span>

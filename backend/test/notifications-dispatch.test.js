@@ -173,6 +173,19 @@ describe('evaluatePrefs() and quiet hours', () => {
     expect(T.evaluatePrefs(user, { severity: 'info' }).reason).toBe('below_min_severity');
     expect(T.evaluatePrefs(user, { severity: 'warning' }, { now: at(3) }).reason).toBe('quiet_hours');
     expect(T.evaluatePrefs(user, { severity: 'critical' }, { now: at(3) }).deliver).toBe(true);
+
+    // The window runs in the person's own zone. quiet_tz used to be the only
+    // source and NOT NULL DEFAULT 'Europe/Kyiv', so a profile set to another
+    // zone was ignored — two fields for one fact, on the same settings page.
+    const window = { quiet_from: '22:00', quiet_to: '07:00' };
+    // 05:30 UTC — inside a 22:00–07:00 window in Kyiv (08:30 local? no: 08:30 → outside)
+    const utc0530 = new Date(Date.UTC(2026, 8, 2, 5, 30));
+    expect(T.inQuietHours({ ...window, quiet_tz: null, user_timezone: 'UTC' }, utc0530)).toBe(true);
+    expect(T.inQuietHours({ ...window, quiet_tz: null, user_timezone: 'Europe/Kyiv' }, utc0530)).toBe(false);
+    // an explicit quiet_tz still wins over the profile
+    expect(T.inQuietHours({ ...window, quiet_tz: 'UTC', user_timezone: 'Europe/Kyiv' }, utc0530)).toBe(true);
+    // neither set — the platform default, as before
+    expect(T.inQuietHours({ ...window, quiet_tz: null, user_timezone: null }, utc0530)).toBe(false);
     expect(T.evaluatePrefs(user, { severity: 'warning' }, { now: at(3), ignoreQuietHours: true }).deliver).toBe(true);
     expect(T.evaluatePrefs({ pref_enabled: false }, { severity: 'critical' }).reason).toBe('disabled');
     expect(T.evaluatePrefs({ pref_email: false }, { severity: 'warning' }).channels).toEqual({ telegram: true, webpush: true, email: false });

@@ -347,7 +347,11 @@ function buildEmail(payload) {
 }
 
 function openDeviceButton(payload, T) {
-  const deviceUrl = payload.deviceUuid ? `${appUrl}/app/#/device/${payload.deviceUuid}` : null;
+  // spaLink, not `${appUrl}/app/#/…`: EMAIL_APP_URL already points at the WebUI
+  // (…/cloud), so the old form produced …/cloud/app/#/device/X. /app is the
+  // separate mobile PWA, a sibling of /cloud — never a child of it. The link in
+  // every alarm e-mail led nowhere.
+  const deviceUrl = payload.deviceUuid ? spaLink(`device/${payload.deviceUuid}`) : null;
   return deviceUrl ? `
       <div style="margin-top:20px;">
         <a href="${deviceUrl}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.open_device}</a>
@@ -517,7 +521,7 @@ function buildRolloutEmail(payload, lang) {
       ${paused ? `<p style="margin:12px 0 0;color:#374151;font-size:14px;line-height:1.5;">${escHtml(fmt(T.rollout_paused_hint, payload.failPct ?? 0, payload.threshold ?? 0))}</p>` : ''}
       ${infoRow(T.time, formatTime(payload.timestamp, payload))}
       <div style="margin-top:20px;">
-        <a href="${appUrl}/app/#/firmware" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.rollout_open}</a>
+        <a href="${spaLink('firmware')}" style="display:inline-block;padding:10px 24px;background:#3b82f6;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;font-size:14px;">${T.rollout_open}</a>
       </div>
     </td></tr>
   `, lang);
@@ -1151,9 +1155,10 @@ module.exports = {
   __strings: { ALARM_NAMES, SEVERITY_LABELS, L, HINT_NAMES, HINT_ADVICE, PRIORITY_LABELS, TX, BILL, REPORTS },
   __test: {
     buildEmail,
-    /** Inject a fake Resend client (tests): { emails: { send } }, with the from/reply-to the env would set. */
-    setClient(client, { from = 'alerts@test.local', replyTo = null } = {}) {
+    /** Inject a fake Resend client (tests): { emails: { send } }, with the from/reply-to/app URL the env would set. */
+    setClient(client, { from = 'alerts@test.local', replyTo = null, app = null } = {}) {
       resend = client; fromAddress = from; replyToAddress = replyTo;
+      if (app !== null) appUrl = app;
     },
   },
 };

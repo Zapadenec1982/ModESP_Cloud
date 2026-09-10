@@ -42,6 +42,9 @@
   let profile = null
   let savedProfile = { locale: null, timezone: null }
   let savingPrefs = false
+  // How many devices actually hold a web push subscription (the mobile app
+  // creates them; this WebUI has no service worker and cannot).
+  let webpushDevices = 0
 
   async function savePrefs() {
     savingPrefs = true
@@ -60,8 +63,12 @@
         email: prefs.email,
         quiet_from: prefs.quiet_from || null,
         quiet_to: prefs.quiet_to || null,
-        quiet_tz: prefs.quiet_tz || 'Europe/Kyiv',
+        // Empty means «the time zone on my profile» — the server falls back to
+        // users.timezone. Sending 'Europe/Kyiv' here is what pinned a Warsaw
+        // user's quiet window to Kyiv.
+        quiet_tz: prefs.quiet_tz?.trim() || null,
       })
+      webpushDevices = prefs.webpush_devices ?? webpushDevices
       toast.success($t('notifications.saved'))
     } catch (e) {
       toast.error(e.message)
@@ -73,6 +80,7 @@
   async function load() {
     try {
       prefs = await getMyNotificationPrefs()
+      webpushDevices = prefs.webpush_devices || 0
       try {
         const p = await getProfile()
         profile = { locale: p.locale || '', timezone: p.timezone || '' }
@@ -194,6 +202,16 @@
               <label><input type="checkbox" bind:checked={prefs.webpush} /> Web Push</label>
               <label><input type="checkbox" bind:checked={prefs.email} /> Email</label>
             </div>
+            <!-- The switch says «send me web push»; the subscription itself is
+                 created by the mobile app, which owns the service worker. Ticked
+                 with nothing subscribed, it delivered nowhere and said nothing. -->
+            {#if prefs.webpush}
+              <p class="field-hint">
+                {webpushDevices > 0
+                  ? $t('notifications.webpush_devices').replace('{n}', webpushDevices)
+                  : $t('notifications.webpush_none')}
+              </p>
+            {/if}
           </div>
           <div class="form-field">
             <label class="field-label" for="pref-qf">{$t('notifications.quiet_from')}</label>
@@ -205,7 +223,8 @@
           </div>
           <div class="form-field">
             <label class="field-label" for="pref-tz">{$t('notifications.quiet_tz')}</label>
-            <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz} placeholder="Europe/Kyiv" />
+            <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz}
+                   placeholder={$t('notifications.quiet_tz_profile')} />
           </div>
           {#if profile}
             <div class="form-field">

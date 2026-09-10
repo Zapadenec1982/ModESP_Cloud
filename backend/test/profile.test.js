@@ -114,4 +114,41 @@ describe('Profile (self-service)', () => {
     const { rows } = await db.query('SELECT 1 FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
     expect(rows).toHaveLength(0);
   });
+
+  it('the preferences say how many devices web push can actually reach', async () => {
+    // The switch says «send me web push»; the subscription is created by the
+    // mobile app, which owns the service worker — this WebUI has none. Ticked
+    // with nothing subscribed, the channel delivered nowhere and said nothing,
+    // so the page is told the count and can say when it is zero.
+    const hdr = authHeader(admin, tenant.id);
+    const none = await request(app).get('/api/profile/notifications').set(hdr);
+    expect(none.status).toBe(200);
+    expect(none.body.data.webpush_devices).toBe(0);
+
+    await request(app).post('/api/profile/push-subscription').set(hdr)
+      .send({ endpoint: 'https://push.example/sub/count', keys: { p256dh: 'p', auth: 'a' } });
+    const one = await request(app).get('/api/profile/notifications').set(hdr);
+    expect(one.body.data.webpush_devices).toBe(1);
+  });
+
+  it('an empty quiet-hours zone means «the one on my profile», and can be cleared back to it', async () => {
+    const hdr = authHeader(viewer, tenant.id);
+    const put = (body) => request(app).put('/api/profile/notifications').set(hdr).send(body);
+
+    // nothing chosen → null, so the sender falls back to users.timezone
+    const fresh = await put({ quiet_from: '22:00', quiet_to: '07:00' });
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.data.quiet_tz).toBeNull();
+
+    // a window that genuinely belongs to another zone still wins
+    expect((await put({ quiet_tz: 'Europe/Warsaw' })).body.data.quiet_tz).toBe('Europe/Warsaw');
+
+    // omitting the field keeps it — the flag distinguishes «omitted» from «null»
+    expect((await put({ min_severity: 'warning' })).body.data.quiet_tz).toBe('Europe/Warsaw');
+
+    // and an empty string clears it back to «as on my profile»
+    expect((await put({ quiet_tz: '' })).body.data.quiet_tz).toBeNull();
+
+    expect((await put({ quiet_tz: 'Mars/Olympus' })).status).toBe(400);
+  });
 });

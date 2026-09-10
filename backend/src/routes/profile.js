@@ -350,21 +350,36 @@ const prefsSchema = z.object({
   email:        z.boolean().optional(),
   quiet_from:   z.string().regex(HHMM, 'quiet_from must be HH:MM').nullable().optional(),
   quiet_to:     z.string().regex(HHMM, 'quiet_to must be HH:MM').nullable().optional(),
-  quiet_tz:     z.string().min(1).max(64).optional(),
+  quiet_tz:     z.string().max(64).nullable().optional()
+                 .transform(v => (typeof v === 'string' && v.trim() === '' ? null : v)),
 }).refine(d => (d.quiet_from === undefined) === (d.quiet_to === undefined) || d.quiet_from === null || d.quiet_to === null, {
   message: 'quiet_from and quiet_to must be set together',
 });
 
 const PREF_DEFAULTS = {
+  // quiet_tz null means «the time zone on my profile» (users.timezone). It used
+  // to be NOT NULL DEFAULT 'Europe/Kyiv', so a person who set their profile to
+  // Europe/Warsaw got a quiet window an hour off — two fields for one fact, on
+  // the same screen, silently disagreeing.
   enabled: true, min_severity: 'info', telegram: true, webpush: true, email: true,
-  quiet_from: null, quiet_to: null, quiet_tz: 'Europe/Kyiv',
+  quiet_from: null, quiet_to: null, quiet_tz: null,
 };
 const PREF_COLUMNS = 'enabled, min_severity, telegram, webpush, email, quiet_from, quiet_to, quiet_tz, updated_at';
 
 router.get('/notifications', async (req, res) => {
   try {
     const { rows } = await db.query(`SELECT ${PREF_COLUMNS} FROM user_notification_prefs WHERE user_id = $1`, [req.user.id]);
-    res.json({ data: rows[0] ? { ...rows[0], quiet_from: rows[0].quiet_from?.trim() || null, quiet_to: rows[0].quiet_to?.trim() || null } : { ...PREF_DEFAULTS, updated_at: null } });
+    // Web push needs a subscription, and only the mobile app (ModESP_PWA, served
+    // at /app) creates one — this WebUI has no service worker and cannot. The
+    // preference switch on its own therefore promises nothing, so the page is
+    // told how many devices are actually subscribed and can say when the answer
+    // is none.
+    const { rows: subs } = await db.query(
+      'SELECT count(*)::int AS n FROM push_subscriptions WHERE user_id = $1 AND active = true', [req.user.id]);
+    const pref = rows[0]
+      ? { ...rows[0], quiet_from: rows[0].quiet_from?.trim() || null, quiet_to: rows[0].quiet_to?.trim() || null }
+      : { ...PREF_DEFAULTS, updated_at: null };
+    res.json({ data: { ...pref, webpush_devices: subs[0].n } });
   } catch (err) {
     req.log?.error?.({ err }, 'Get notification prefs failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to load preferences', status: 500 });
@@ -384,7 +399,7 @@ router.put('/notifications', async (req, res) => {
   try {
     const { rows } = await db.query(
       `INSERT INTO user_notification_prefs (user_id, enabled, min_severity, telegram, webpush, email, quiet_from, quiet_to, quiet_tz, updated_at)
-       VALUES ($1, COALESCE($2, true), COALESCE($3, 'info'), COALESCE($4, true), COALESCE($5, true), COALESCE($6, true), $7, $8, COALESCE($9, 'Europe/Kyiv'), now())
+       VALUES ($1, COALESCE($2, true), COALESCE($3, 'info'), COALESCE($4, true), COALESCE($5, true), COALESCE($6, true), $7, $8, $9, now())
        ON CONFLICT (user_id) DO UPDATE SET
          enabled      = COALESCE($2, user_notification_prefs.enabled),
          min_severity = COALESCE($3, user_notification_prefs.min_severity),
@@ -393,11 +408,15 @@ router.put('/notifications', async (req, res) => {
          email        = COALESCE($6, user_notification_prefs.email),
          quiet_from   = CASE WHEN $10 THEN $7 ELSE user_notification_prefs.quiet_from END,
          quiet_to     = CASE WHEN $10 THEN $8 ELSE user_notification_prefs.quiet_to END,
-         quiet_tz     = COALESCE($9, user_notification_prefs.quiet_tz),
+         quiet_tz     = CASE WHEN $11 THEN $9 ELSE user_notification_prefs.quiet_tz END,
          updated_at   = now()
        RETURNING ${PREF_COLUMNS}`,
       [req.user.id, d.enabled ?? null, d.min_severity ?? null, d.telegram ?? null, d.webpush ?? null, d.email ?? null,
-       d.quiet_from ?? null, d.quiet_to ?? null, d.quiet_tz ?? null, d.quiet_from !== undefined || d.quiet_to !== undefined]
+       d.quiet_from ?? null, d.quiet_to ?? null, d.quiet_tz ?? null,
+       d.quiet_from !== undefined || d.quiet_to !== undefined,
+       // null is a value here («follow my profile»), so «sent» and «omitted»
+       // cannot be told apart by COALESCE — the flag does it.
+       d.quiet_tz !== undefined]
     );
     req.auditContext = { entityId: req.user.id, action: 'profile.notification_prefs' };
     const row = rows[0];
