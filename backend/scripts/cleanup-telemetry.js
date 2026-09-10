@@ -36,7 +36,9 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const DEFAULT_RETENTION_DAYS   = 90;
-const HOURLY_RETENTION_DAYS    = parseInt(process.env.HOURLY_RETENTION_DAYS, 10) || 1095;
+// Shared with services/haccp-report.js, which prints this number to the inspector:
+// the sweep and the document must never disagree about how long the archive lives.
+const { HOURLY_RETENTION_DAYS } = require('../src/lib/platform-defaults');
 const DOWNSAMPLE_LOOKBACK_DAYS = parseInt(process.env.DOWNSAMPLE_LOOKBACK_DAYS, 10) || 3;
 
 // Raw retention is split by what the channel is for.

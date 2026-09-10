@@ -46,7 +46,9 @@ const BUCKETS = { '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '1d': 86400 };
 const RAW_MAX_DAYS    = 31;    // raw rows: keep the existing 31-day window
 const HOURLY_MAX_DAYS = 366;   // hourly archive: a year per report
 const MAX_ROWS        = 10000;
-const HOURLY_RETENTION_DAYS = 1095;
+const { HOURLY_RETENTION_DAYS, hourlyRetentionYears,
+        DOOR_ALARM_DELAY_MS: DEFAULT_DOOR_DELAY_MS,
+        HACCP_EXCURSION_MIN: DEFAULT_EXCURSION_MIN } = require('../lib/platform-defaults');
 
 const STRINGS = {
   uk: {
@@ -56,7 +58,7 @@ const STRINGS = {
     source: 'Джерело даних', source_raw: 'первинні вимірювання приладу', source_hourly: 'погодинний архів первинних вимірювань',
     method_title: 'Метод', method_raw: 'У таблиці — середнє за інтервал по первинних вимірюваннях (кожні {0}). Мін/макс у підсумку — по всіх первинних вимірюваннях за період.',
     method_hourly: 'Період старший за термін зберігання первинних вимірювань: у таблиці — середнє за інтервал з погодинного архіву (мін/макс/середнє за кожну годину), мін/макс у підсумку — по всіх годинах періоду.',
-    retention_title: 'Зберігання даних', retention_text: 'Первинні вимірювання зберігаються на платформі {0} днів, погодинний архів — 3 роки. Цей звіт доступний за кодом перевірки: {1}',
+    retention_title: 'Зберігання даних', retention_text: 'Первинні вимірювання зберігаються на платформі {0} днів, погодинний архів — {2} р. Цей звіт доступний за кодом перевірки: {1}',
     device: 'Обладнання', device_id: 'Ідентифікатор', serial: 'Серійний номер', model: 'Модель', product: 'Продукція / призначення',
     limit: 'Критична межа', limit_max: 'не вище {0} °C', limit_min: 'не нижче {0} °C', limit_range: 'від {0} до {1} °C', tolerance: 'допустиме відхилення {0} °C',
     limit_none: 'не задано', limit_none_hint: 'оператор має задати межі в картці обладнання', limits_org: 'за програмою HACCP підприємства', limits_controller: 'за налаштуваннями приладу',
@@ -83,7 +85,7 @@ const STRINGS = {
     source: 'Data source', source_raw: 'raw measurements of the device', source_hourly: 'hourly archive of raw measurements',
     method_title: 'Method', method_raw: 'The table shows the interval average of the raw measurements (every {0}). Min/max in the summary are over all raw measurements of the period.',
     method_hourly: 'The period is older than the raw-measurement retention: the table shows the interval average from the hourly archive (min/max/avg per hour); min/max in the summary are over all hours of the period.',
-    retention_title: 'Data retention', retention_text: 'Raw measurements are kept on the platform for {0} days, the hourly archive for 3 years. This report is available by its verification code: {1}',
+    retention_title: 'Data retention', retention_text: 'Raw measurements are kept on the platform for {0} days, the hourly archive for {2} years. This report is available by its verification code: {1}',
     device: 'Equipment', device_id: 'Identifier', serial: 'Serial number', model: 'Model', product: 'Product / purpose',
     limit: 'Critical limit', limit_max: 'not above {0} °C', limit_min: 'not below {0} °C', limit_range: 'from {0} to {1} °C', tolerance: 'allowed deviation {0} °C',
     limit_none: 'not set', limit_none_hint: 'the operator must set the limits on the equipment card', limits_org: "per the business's HACCP plan", limits_controller: "per the device's settings",
@@ -110,7 +112,7 @@ const STRINGS = {
     source: 'Źródło danych', source_raw: 'pomiary surowe urządzenia', source_hourly: 'archiwum godzinowe pomiarów surowych',
     method_title: 'Metoda', method_raw: 'W tabeli — średnia z interwału z pomiarów surowych (co {0}). Min/maks w podsumowaniu — ze wszystkich pomiarów surowych w okresie.',
     method_hourly: 'Okres jest starszy niż czas przechowywania pomiarów surowych: w tabeli — średnia z interwału z archiwum godzinowego (min/maks/średnia na godzinę), min/maks w podsumowaniu — ze wszystkich godzin okresu.',
-    retention_title: 'Przechowywanie danych', retention_text: 'Pomiary surowe są przechowywane na platformie przez {0} dni, archiwum godzinowe — 3 lata. Ten raport jest dostępny po kodzie weryfikacyjnym: {1}',
+    retention_title: 'Przechowywanie danych', retention_text: 'Pomiary surowe są przechowywane na platformie przez {0} dni, archiwum godzinowe — {2} lat. Ten raport jest dostępny po kodzie weryfikacyjnym: {1}',
     device: 'Urządzenie', device_id: 'Identyfikator', serial: 'Numer seryjny', model: 'Model', product: 'Produkt / przeznaczenie',
     limit: 'Limit krytyczny', limit_max: 'nie wyżej niż {0} °C', limit_min: 'nie niżej niż {0} °C', limit_range: 'od {0} do {1} °C', tolerance: 'dopuszczalne odchylenie {0} °C',
     limit_none: 'nie ustawiono', limit_none_hint: 'operator musi ustawić limity w karcie urządzenia', limits_org: 'wg planu HACCP przedsiębiorstwa', limits_controller: 'wg ustawień urządzenia',
@@ -137,7 +139,7 @@ const STRINGS = {
     source: 'Datenquelle', source_raw: 'Rohmessungen des Geräts', source_hourly: 'Stundenarchiv der Rohmessungen',
     method_title: 'Methode', method_raw: 'Die Tabelle zeigt den Intervallmittelwert der Rohmessungen (alle {0}). Min/Max in der Zusammenfassung gelten über alle Rohmessungen des Zeitraums.',
     method_hourly: 'Der Zeitraum liegt außerhalb der Aufbewahrung der Rohmessungen: die Tabelle zeigt den Intervallmittelwert aus dem Stundenarchiv (Min/Max/Mittel je Stunde), Min/Max in der Zusammenfassung gelten über alle Stunden des Zeitraums.',
-    retention_title: 'Datenaufbewahrung', retention_text: 'Rohmessungen werden auf der Plattform {0} Tage aufbewahrt, das Stundenarchiv 3 Jahre. Dieser Bericht ist über seinen Prüfcode abrufbar: {1}',
+    retention_title: 'Datenaufbewahrung', retention_text: 'Rohmessungen werden auf der Plattform {0} Tage aufbewahrt, das Stundenarchiv {2} Jahre. Dieser Bericht ist über seinen Prüfcode abrufbar: {1}',
     device: 'Anlage', device_id: 'Kennung', serial: 'Seriennummer', model: 'Modell', product: 'Produkt / Zweck',
     limit: 'Kritischer Grenzwert', limit_max: 'nicht über {0} °C', limit_min: 'nicht unter {0} °C', limit_range: 'von {0} bis {1} °C', tolerance: 'zulässige Abweichung {0} °C',
     limit_none: 'nicht festgelegt', limit_none_hint: 'der Betreiber muss die Grenzwerte in der Anlagenkarte festlegen', limits_org: 'laut HACCP-Konzept des Betriebs', limits_controller: 'laut Geräteeinstellungen',
@@ -257,8 +259,6 @@ function limitsFor(device) {
 function tpl(str, ...args) { return String(str).replace(/\{(\d+)\}/g, (_, i) => (args[i] === undefined ? '' : String(args[i]))); }
 
 const HACCP_CHANNEL = 'air';
-const DEFAULT_EXCURSION_MIN = 30;
-const DEFAULT_DOOR_DELAY_MS = 600000;
 const RAW_LIMIT = 200000;
 
 const fmt1 = (v) => (v === null || v === undefined || Number.isNaN(v) ? '—' : (Math.round(v * 10) / 10).toFixed(1));
@@ -687,7 +687,7 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
   const method = {
     text: [
       { text: `${S.method_title}: `, bold: true }, source === 'hourly' ? S.method_hourly : tpl(S.method_raw, fmtStep(stepSec, S)), '\n',
-      { text: `${S.retention_title}: `, bold: true }, tpl(S.retention_text, rawRetentionDays, verifyUrl),
+      { text: `${S.retention_title}: `, bold: true }, tpl(S.retention_text, rawRetentionDays, verifyUrl, hourlyRetentionYears()),
     ],
     fontSize: 8, color: '#444444', margin: [0, 0, 0, 12],
   };
