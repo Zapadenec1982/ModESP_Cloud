@@ -1890,6 +1890,7 @@ export default {
     metered: 'Zmierzone',
     power_profile: 'Profil mocy',
     equipment_model: 'Model urządzenia',
+    model_platform: 'platformowy',
     no_profile: 'Brak profilu mocy',
     no_profile_hint: 'Utwórz model urządzenia lub podaj wartości mocy w ustawieniach urządzenia',
     new_model: 'Nowy model',

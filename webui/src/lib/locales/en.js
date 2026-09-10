@@ -1890,6 +1890,7 @@ export default {
     metered: 'Metered',
     power_profile: 'Power Profile',
     equipment_model: 'Equipment Model',
+    model_platform: 'platform',
     no_profile: 'No power profile configured',
     no_profile_hint: 'Set up an equipment model or enter power values in device settings to enable energy monitoring',
     new_model: 'New Model',

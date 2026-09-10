@@ -1890,6 +1890,7 @@ export default {
     metered: 'Gemessen',
     power_profile: 'Leistungsprofil',
     equipment_model: 'Gerätemodell',
+    model_platform: 'Plattform',
     no_profile: 'Kein Leistungsprofil konfiguriert',
     no_profile_hint: 'Erstellen Sie ein Gerätemodell oder geben Sie die Leistungswerte in den Geräteeinstellungen ein',
     new_model: 'Neues Modell',

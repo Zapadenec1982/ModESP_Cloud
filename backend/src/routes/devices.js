@@ -70,12 +70,17 @@ function buildDeviceWhere(id, req) {
 // leaking another tenant's address.
 const SITE_JOIN = `LEFT JOIN sites s ON s.id = d.site_id AND s.tenant_id = d.tenant_id`;
 
-// device_models is tenant-scoped exactly like sites, and for the same reason its
-// join carries the tenant predicate: PATCH accepted any model UUID, so a device
-// could point at another organisation's power profile and the energy figures
-// were computed from a stranger's equipment. The predicate makes such a row read
-// as «no model» rather than silently borrowing one.
-const MODEL_JOIN = `LEFT JOIN device_models m ON m.id = d.model_id AND m.tenant_id = d.tenant_id`;
+// device_models carries the tenant predicate for the same reason sites do: PATCH
+// accepted any model UUID, so a device could point at another organisation's
+// power profile and the energy figures were computed from a stranger's equipment.
+//
+// `m.tenant_id IS NULL` is the platform model (migration 052), the same shape
+// firmware has had since 043: a power profile for a cabinet is a property of the
+// equipment, not one customer's secret, and several organisations running the
+// same hardware want the same numbers. Only a superadmin creates one.
+const MODEL_JOIN = `LEFT JOIN device_models m
+                           ON m.id = d.model_id
+                          AND (m.tenant_id IS NULL OR m.tenant_id = d.tenant_id)`;
 
 // Site columns exposed on the device payloads.
 //
@@ -1269,10 +1274,11 @@ router.patch('/:id', maybeAuthorize('admin', 'technician'), checkDeviceAccess(),
     // (device_models.tenant_id), and pointing a device at a stranger's profile
     // took the energy figures from their equipment — and left the true owner
     // unable to delete their own model, because a foreign device now referenced
-    // it and devices_model_id_fkey refused.
+    // it and devices_model_id_fkey refused. A platform model (tenant_id NULL,
+    // migration 052) is open to every organisation, like a platform firmware.
     if (fields.model_id != null && beforeDevice) {
       const { rows: modelRows } = await db.query(
-        `SELECT 1 FROM device_models WHERE id = $1 AND tenant_id = $2`,
+        `SELECT 1 FROM device_models WHERE id = $1 AND (tenant_id IS NULL OR tenant_id = $2)`,
         [fields.model_id, beforeDevice.tenant_id]
       );
       if (modelRows.length === 0) {

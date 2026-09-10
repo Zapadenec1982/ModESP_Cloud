@@ -64,11 +64,32 @@ systemctl is-active modesp-retention-cleanup.timer    # inactive
 працювало без звʼязку, лишилися в архіві розривами. Сирі рядки за ті періоди
 ще є, поки їх не видалила ретенція — тож згорнути їх можна **зараз**:
 
+**Пробний запуск на це питання не відповідає.** Він друкує лише
+`Downsample: would fold the last N day(s)` і кількість рядків у
+`telemetry_dirty_hours` — тобто нову чергу досинків, а не історичні розриви.
+Щоб дізнатися, чи є що згортати, потрібен прямий запит:
+
+```sql
+WITH raw_hours AS (
+  SELECT DISTINCT tenant_id, device_id, date_trunc('hour', time) AS hour
+    FROM telemetry
+   WHERE channel = 'air'
+     AND time >= now() - interval '90 days'
+     AND time <  now() - interval '3 days'
+)
+SELECT count(*) AS raw_hours,
+       count(*) FILTER (WHERE h.hour IS NULL) AS missing_in_archive
+  FROM raw_hours r
+  LEFT JOIN telemetry_hourly h
+    ON h.tenant_id = r.tenant_id AND h.device_id = r.device_id
+   AND h.channel = 'air' AND h.hour = r.hour;
+```
+
+Читає 87 діб каналу `air` — не в пік. `missing_in_archive` = 0 — крок можна
+закрити. Більше нуля:
+
 ```bash
 cd /opt/modesp-cloud/backend
-# спершу подивитися, скільки їх
-sudo -u modesp node scripts/cleanup-telemetry.js --backfill-days 400
-# якщо цифри виглядають розумно — виконати
 sudo -u modesp node scripts/cleanup-telemetry.js --apply --backfill-days 400
 ```
 
@@ -315,20 +336,22 @@ SELECT d.tenant_id, d.mqtt_device_id, d.name,
 обладнання його немає — `device_models.tenant_id` оголошена `NOT NULL`, — тож
 системна організація використовувалась замість нього.
 
-Виправлення PR #57 цього випадку не розрізняє: під новим правилом
-(`m.tenant_id = d.tenant_id`) така модель перестає діяти для всіх, хто нею
-користувався. Що з цим робити — рішення, а не операція; варіанти в порядку
-зростання вартості:
+**Це вже виправлено — міграцією 052.** Вона робить `device_models.tenant_id`
+nullable, і `NULL` означає «платформна модель»: видима кожній організації,
+редагована тільки суперадміном — той самий поділ, що у прошивок із міграції 043.
+Join'и стали `m.tenant_id IS NULL OR m.tenant_id = d.tenant_id`.
 
-1. **копія моделі в кожну організацію** — працює сьогодні, без змін у коді;
-   ціна — дублікати, які треба тримати синхронними;
-2. **заповнити `*_kw` самим пристроям** — теж сьогодні; ціна — числа
-   розповзаються по пристроях, тобто рівно те, від чого рятують моделі;
-3. **платформна модель за зразком прошивок** — `tenant_id` стає nullable, `NULL`
-   означає «платформна», join стає
-   `m.tenant_id IS NULL OR m.tenant_id = d.tenant_id`, створює й редагує тільки
-   superadmin. Це принциповий варіант, але він потребує міграції і змін у
-   роутері — окрема робота, не крок runbook'а.
+Заразом міграція **лагодить наявні дані**: моделі, що лежать під системною
+організацією, переводяться в платформні, бо саме ними вони й були за задумом —
+іншої причини класти модель туди немає. Пристрої, що на них вказують,
+повертають свою енергооцінку в момент застосування міграції, без ручних дій.
+
+Тож якщо перший запит показав `model_owner = 00000000-…`, після 052 нічого
+робити не треба — перевірте, що порожньо:
+
+```sql
+SELECT count(*) FROM device_models WHERE tenant_id = '00000000-0000-0000-0000-000000000000';
+```
 
 ### 7.4. Точки з часовим поясом, який не є назвою IANA (PR #57)
 

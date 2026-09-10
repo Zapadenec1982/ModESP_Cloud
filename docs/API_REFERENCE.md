@@ -655,10 +655,22 @@ Max range: 31 day.
 
 ## Моделі обладнання (Device Models)
 
-### `GET /device-models`
-Список моделей обладнання з профілями потужності.
+Профіль потужності обладнання: скільки споживає компресор, вентилятори, ТЕН
+відтайки і черговий режим. З нього рахується енергооцінка, коли лічильника немає
+(`energy_source: 'estimated'`). Пристрій може мати власні `*_kw` — вони мають
+пріоритет над моделлю.
 
-**Ролі:** admin
+**Модель належить організації** (`device_models.tenant_id`) **або платформі**
+(`tenant_id IS NULL`, міграція 052) — той самий поділ, що у прошивок. Платформну
+бачить кожна організація і може вказати на неї свій пристрій, але створює,
+редагує й видаляє її лише superadmin. Так профіль «бонета 2.5 м» задається один
+раз на всіх, а не копіюється в кожну організацію.
+
+### `GET /device-models`
+Власні моделі організації **плюс платформні**. Платформні йдуть першими.
+
+**Ролі:** будь-яка (читання); superadmin бачить моделі всіх організацій разом із
+`tenant_name`.
 
 **Response 200:**
 ```json
@@ -666,42 +678,66 @@ Max range: 31 day.
   "data": [
     {
       "id": "uuid",
-      "name": "ModESP-4R",
-      "compressor_watts": 450,
-      "defrost_watts": 200,
-      "fan_watts": 80,
-      "standby_watts": 15,
+      "tenant_id": null,
+      "platform": true,
+      "name": "Бонета 2.5 м",
+      "compressor_kw": 1.4,
+      "evap_fan_kw": 0.12,
+      "cond_fan_kw": 0.2,
+      "defrost_heater_kw": 0.9,
+      "standby_kw": 0.02,
+      "energy_source": "estimated",
+      "device_count": 3,
       "created_at": "2026-03-24T10:00:00Z"
     }
   ]
 }
 ```
 
-### `POST /device-models`
-Створити модель обладнання.
+`device_count` — **свої** пристрої на цій моделі (для superadmin на платформній —
+усі). `platform` дублює `tenant_id IS NULL` для зручності інтерфейсу.
 
-**Ролі:** admin
+### `POST /device-models`
+Створити модель.
+
+**Ролі:** admin — власну; **superadmin** — платформну (`platform: true`).
 
 **Body:**
 ```json
 {
-  "name": "ModESP-4R",
-  "compressor_watts": 450,
-  "defrost_watts": 200,
-  "fan_watts": 80,
-  "standby_watts": 15
+  "name": "Бонета 2.5 м",
+  "platform": false,
+  "compressor_kw": 1.4,
+  "evap_fan_kw": 0.12,
+  "cond_fan_kw": 0.2,
+  "defrost_heater_kw": 0.9,
+  "standby_kw": 0.02,
+  "energy_source": "estimated"
 }
 ```
 
-### `PATCH /device-models/:id`
-Оновити модель обладнання.
+Обовʼязкове тільки `name` (1–64). `energy_source` — `estimated` (типово) або
+`metered`. `platform: true` від не-superadmin — **403** `forbidden`.
 
-**Ролі:** admin
+**409** — назва вже зайнята: в межах організації
+(`device_models_tenant_id_name_key`) або серед платформних
+(`uq_device_models_global_name`).
+
+### `PATCH /device-models/:id`
+Оновити модель. Будь-яка підмножина полів `POST`, крім `platform` — модель не
+переводиться між організацією і платформою через API.
+
+**Ролі:** admin — свою; superadmin — будь-яку. Спроба змінити платформну не
+суперадміном — **403** `forbidden`; чужа організаційна — **404**.
 
 ### `DELETE /device-models/:id`
-Видалити модель (не можна видалити якщо є пов'язані пристрої).
+Видалити модель.
 
-**Ролі:** admin
+**Ролі:** admin — свою; superadmin — будь-яку, платформну лише він.
+
+**409** `in_use` — на модель ще посилаються пристрої. Для власної рахуються
+пристрої **своєї** організації; для платформної — **будь-чиї**, бо вона спільна.
+Спершу зніміть `model_id` з пристроїв (`PATCH /devices/:id` з `model_id: null`).
 
 ---
 
