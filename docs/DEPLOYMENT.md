@@ -723,7 +723,7 @@ sudo /opt/modesp-cloud/infra/deploy.sh status       # поточний релі�
 ### Ручний шлях (dev-сервер або до `init`)
 
 ```bash
-cd /opt/modesp-cloud && git pull origin main
+sudo -u modesp git -C /opt/modesp-cloud pull --ff-only origin main   # від modesp: pull від root робить файли root-власними
 sudo -u postgres env DB_HOST=/var/run/postgresql DB_PORT=5432 DB_NAME=modesp_cloud DB_USER=postgres DB_PASS= \
   node backend/src/scripts/migrate.js --dry-run    # потім без --dry-run
 sudo -u postgres psql -q -v ON_ERROR_STOP=1 -v app_user=modesp_cloud -v owner=postgres -d modesp_cloud -f infra/sql/app-grants.sql
