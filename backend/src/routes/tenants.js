@@ -9,6 +9,7 @@ const { deleteTenant } = require('../services/tenant-delete');
 const exportSvc  = require('../services/tenant-export');
 const { requireSuperadmin } = require('../middleware/auth');
 const { isUuidFormat } = require('../lib/ids');
+const platformDefaults = require('../lib/platform-defaults');
 const registrationSvc = require('../services/registration');
 
 const router = Router();
@@ -196,12 +197,12 @@ const SETTINGS_SELECT = `
 
 function settingsDefaults() {
   return {
-    door_alarm_delay_ms:     parseInt(process.env.DOOR_ALARM_DELAY_MS, 10)     || 600000,
+    door_alarm_delay_ms:     platformDefaults.DOOR_ALARM_DELAY_MS,
     pulldown_alarm_delay_ms: parseInt(process.env.PULLDOWN_ALARM_DELAY_MS, 10) || 300000,
     offline_threshold_ms:    parseInt(process.env.OFFLINE_THRESHOLD_MS, 10)    || 90000,
     offline_alarm_delay_ms:  parseInt(process.env.OFFLINE_ALARM_DELAY_MS, 10)  || 120000,
     ack_escalation_min:      parseInt(process.env.ALARM_ACK_ESCALATION_MIN, 10) || 15,
-    haccp_excursion_min:     parseInt(process.env.HACCP_EXCURSION_MIN, 10) || 30,
+    haccp_excursion_min:     platformDefaults.HACCP_EXCURSION_MIN,
   };
 }
 

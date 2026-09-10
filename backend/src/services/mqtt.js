@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 const db       = require('./db');
 const mqttAuth = require('./mqtt-auth');
 const { generateClaimCode } = require('../lib/claim-code');
+const platformDefaults = require('../lib/platform-defaults');
 
 const emitter = new EventEmitter();
 
@@ -724,7 +725,7 @@ const pendingAlarms = new Map();  // "deviceId:alarmCode" -> setTimeout handle
 // delivery traffic while still catching a door left open. Tune per deployment if a
 // site's loading routine is slower.
 const NUISANCE_DELAY = {
-  door_alarm:     parseInt(process.env.DOOR_ALARM_DELAY_MS, 10)     || 600000,  // 10 min
+  door_alarm:     platformDefaults.DOOR_ALARM_DELAY_MS,   // 10 min — the same value the HACCP report prints
   pulldown_alarm: parseInt(process.env.PULLDOWN_ALARM_DELAY_MS, 10) || 300000,  // 5 min
 };
 
