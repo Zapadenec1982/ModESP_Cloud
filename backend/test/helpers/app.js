@@ -145,6 +145,7 @@ function createTestApp() {
   app.use('/api/devices', require('../../src/routes/events'));
   app.use('/api/notifications', authorize('admin'), require('../../src/routes/notifications'));
   app.use('/api/fleet',   require('../../src/routes/fleet'));
+  app.use('/api/device-models', require('../../src/routes/device-models'));
   // Sites and exports, mounted as index.js does (plan-limit and feature gates live there)
   app.use('/api/sites',   require('../../src/routes/sites'));
   const { deviceRouter: exportDevices, alarmRouter: exportAlarms, siteRouter: exportSites } = require('../../src/routes/export');

@@ -41,15 +41,20 @@ router.get('/', async (req, res, next) => {
     if (isSuperAdmin) {
       ({ rows } = await db.query(
         `SELECT dm.*, t.name AS tenant_name,
-                (SELECT COUNT(*)::int FROM devices d WHERE d.model_id = dm.id) AS device_count
+                (SELECT COUNT(*)::int FROM devices d
+                  WHERE d.model_id = dm.id AND d.tenant_id = dm.tenant_id) AS device_count
          FROM device_models dm
          JOIN tenants t ON t.id = dm.tenant_id
          ORDER BY t.name, dm.name`
       ));
     } else {
+      // d.tenant_id = dm.tenant_id: the count is «my devices on my model». Without
+      // it a stale cross-tenant model_id inflated the number with rows the
+      // organisation cannot see, and the delete below refused over them.
       ({ rows } = await db.query(
         `SELECT dm.*,
-                (SELECT COUNT(*)::int FROM devices d WHERE d.model_id = dm.id) AS device_count
+                (SELECT COUNT(*)::int FROM devices d
+                  WHERE d.model_id = dm.id AND d.tenant_id = dm.tenant_id) AS device_count
          FROM device_models dm
          WHERE dm.tenant_id = $1
          ORDER BY dm.name`,
@@ -147,10 +152,12 @@ router.patch('/:id', authorize('admin'), async (req, res, next) => {
 // Delete equipment model if no devices are linked (admin+).
 router.delete('/:id', authorize('admin'), async (req, res, next) => {
   try {
-    // Check for linked devices
+    // Linked devices of THIS organisation. Counting every tenant's rows made the
+    // message name devices the caller cannot see, and blocked a delete over a
+    // reference they had no way to remove.
     const { rows: linked } = await db.query(
-      'SELECT COUNT(*)::int AS count FROM devices WHERE model_id = $1',
-      [req.params.id]
+      'SELECT COUNT(*)::int AS count FROM devices WHERE model_id = $1 AND tenant_id = $2',
+      [req.params.id, req.tenantId]
     );
     if (linked[0].count > 0) {
       return res.status(409).json({

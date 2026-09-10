@@ -196,12 +196,18 @@ modesp/v1/acme/A4CF12/heartbeat → {"proto":1,"fw":"1.2.3","up":86400,"heap":80
 modesp/v1/acme/A4CF12/cmd/thermostat.setpoint     ← "4.0"
 modesp/v1/acme/A4CF12/cmd/protection.reset_alarms  ← "true"
 modesp/v1/acme/A4CF12/cmd/defrost.manual_start     ← "true"
+modesp/v1/acme/A4CF12/cmd/defrost.manual_stop      ← "true"
 ```
+
+`defrost.manual_start` і `defrost.manual_stop` — парні: перша запускає відтайку поза розкладом,
+друга завершує поточну. Обидві, як і решта ключів із `dangerous` у `GET /api/meta`
+(`config/command-policy.js`), приймаються хмарою лише з `confirm: true`, тож інтерфейс
+перепитує перед надсиланням.
 
 Firmware валідує значення за типом і min/max з STATE_META перед застосуванням.
 Невалідні або read-only ключі ігноруються з попередженням в логах.
 
-#### Повний перелік subscribe keys (60 ключів)
+#### Повний перелік subscribe keys (61 ключ)
 
 **Equipment (калібрування сенсорів):**
 `equipment.ntc_beta`, `equipment.ntc_r_series`, `equipment.ntc_r_nominal`,
@@ -229,7 +235,7 @@ Firmware валідує значення за типом і min/max з STATE_MET
 `defrost.termination`, `defrost.end_temp`, `defrost.max_duration`,
 `defrost.demand_temp`, `defrost.drip_time`, `defrost.fan_delay`, `defrost.fad_temp`,
 `defrost.stabilize_time`, `defrost.valve_delay`, `defrost.equalize_time`,
-`defrost.manual_start`
+`defrost.manual_start`, `defrost.manual_stop`
 
 **DataLogger (конфігурація логера):**
 `datalogger.enabled`, `datalogger.retention_hours`, `datalogger.sample_interval`,
