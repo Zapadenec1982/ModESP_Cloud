@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const dns    = require('dns').promises;
 const net    = require('net');
 const db     = require('./db');
+const { servingSql } = require('../lib/tenant-status');
 const mqttSvc = require('./mqtt');
 const { encryptSecret, decryptSecret } = require('./mfa');
 
@@ -118,10 +119,21 @@ function envelope(id, event, tenantId, data, now) {
   return { id, event, created_at: now.toISOString(), tenant_id: tenantId, data };
 }
 
-/** Queue `event` for every enabled hook of the organisation that listens to it. Resolves the delivery ids. */
+/**
+ * Queue `event` for every enabled hook of the organisation that listens to it.
+ * Resolves the delivery ids.
+ *
+ * The join on tenants is the point: a suspended or closed organisation stops
+ * receiving deliveries. Without it the queue kept POSTing their alarms to their
+ * integration long after the platform had stopped serving them — data leaving the
+ * platform for a customer who is no longer one, and a retry backlog nobody reads.
+ */
 async function enqueue(tenantId, event, data, { now = new Date() } = {}) {
   const { rows: hooks } = await db.query(
-    `SELECT id FROM webhooks WHERE tenant_id = $1 AND enabled AND ($2 = ANY(events) OR '*' = ANY(events))`, [tenantId, event]);
+    `SELECT w.id FROM webhooks w
+       JOIN tenants t ON t.id = w.tenant_id
+      WHERE w.tenant_id = $1 AND w.enabled AND ($2 = ANY(w.events) OR '*' = ANY(w.events))
+        AND ${servingSql('t')}`, [tenantId, event]);
   if (hooks.length === 0) return [];
   const ids = [];
   for (const h of hooks) {

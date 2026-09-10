@@ -175,3 +175,58 @@ describe('device_offline alarm after the broker publishes the will', () => {
     expect(T.stateMap.get(WDEV)._offlineSince).toBe(since);
   });
 });
+
+// A suspended or closed organisation is not served (M3). Every controller of an
+// organisation that leaves goes quiet at once, so without this the platform raised
+// one offline alarm per cabinet two minutes later — and each of those would have
+// gone out as a push, a webhook and, fifteen minutes on, an escalation.
+describe('device_offline alarm respects the organisation status', () => {
+  const SDEV = 'OFFS01';
+  let tenant;
+
+  beforeAll(async () => {
+    await cleanDatabase();
+    T.setLogger(pino({ level: 'silent' }));
+    tenant = await createTenant({ slug: SLUG });
+    await createDevice(tenant.id, { mqttId: SDEV });
+    await mqttSvc.refreshRegistries();
+  });
+
+  afterAll(async () => {
+    T.reset();
+    vi.useRealTimers();
+    await cleanDatabase();
+  });
+
+  const alarms = async () => (await db.query(
+    `SELECT count(*)::int AS n FROM alarms WHERE device_id = $1 AND alarm_code = 'device_offline'`,
+    [SDEV])).rows[0].n;
+
+  const goDark = async (t0) => {
+    T.reset();
+    await T.handleStateKey(SLUG, SDEV, 'equipment.air_temp', '-18', false);
+    T.handleStatus(SLUG, SDEV, 'offline', false);
+    vi.setSystemTime(t0 + T.OFFLINE_ALARM_DELAY + 1000);
+    await T.offlineDetector();
+  };
+
+  it('stays silent while the organisation is suspended, and speaks again when it returns', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+
+    await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, 'suspended']);
+    await mqttSvc.refreshRegistries();
+    await goDark(Date.now());
+    expect(await alarms()).toBe(0);
+
+    await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, 'closed']);
+    await mqttSvc.refreshRegistries();
+    await goDark(Date.now());
+    expect(await alarms()).toBe(0);
+
+    // past_due is still a customer: an unpaid invoice must not switch an alarm off.
+    await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, 'past_due']);
+    await mqttSvc.refreshRegistries();
+    await goDark(Date.now());
+    expect(await alarms()).toBe(1);
+  });
+});
