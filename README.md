@@ -143,7 +143,7 @@ ModESP_Cloud/
 │   │       ├── schema.sql          # Full DB schema (15 tables)
 │   │       ├── seed-admin.js       # Create first admin user
 │   │       └── migrations/         # 002–015 (incremental)
-│   ├── test/                        # 931 tests across 79 test files
+│   ├── test/                        # 935 tests across 80 test files
 │   │   ├── helpers/                 # Test app, factories, migration runner
 │   │   ├── auth.test.js            # JWT, login/logout, RBAC
 │   │   ├── tenant-isolation.test.js # Cross-tenant data leak prevention
@@ -249,7 +249,7 @@ Full documentation: [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 
 ## Testing
 
-**931 integration tests** across 79 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
+**935 integration tests** across 80 test suites, powered by **Vitest + Supertest** against a real PostgreSQL instance (counts below are per area, approximate):
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
