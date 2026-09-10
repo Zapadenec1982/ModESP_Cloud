@@ -79,7 +79,7 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
     request: { params: deviceParam, body: { content: { 'application/json': { schema: DevicePatch } } } },
     responses: withCommon({
       200: dataOf(DeviceListItem.pick({ id: true, mqtt_device_id: true, name: true, location: true, serial_number: true, model: true, comment: true, manufactured_at: true, firmware_version: true, status: true, created_at: true, haccp_min: true, haccp_max: true, haccp_tolerance: true, haccp_product: true, latitude: true, longitude: true, site_id: true }), 'The updated fields'),
-      400: errorOf('`validation_failed` or `invalid_site`'), ...deviceErrors,
+      400: errorOf('`validation_failed`, `invalid_site` or `invalid_model` — the site or the equipment model belongs to another organisation'), ...deviceErrors,
     }),
   });
   const HaccpPreset = registry.register('HaccpPreset', z.object({

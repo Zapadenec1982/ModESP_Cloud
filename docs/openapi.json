@@ -2648,7 +2648,7 @@
             }
           },
           "400": {
-            "description": "`validation_failed` or `invalid_site`",
+            "description": "`validation_failed`, `invalid_site` or `invalid_model` — the site or the equipment model belongs to another organisation",
             "content": {
               "application/json": {
                 "schema": {

@@ -26,6 +26,7 @@ const routingSvc = require('../services/routing');
 const { authorize } = require('../middleware/auth');
 const { filterDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
+const { isValidTimezone } = require('../lib/locale');
 
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 
@@ -273,7 +274,10 @@ async function resolveTimezone(latitude, longitude) {
   if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) return null;
   try {
     if (!weatherSvc.isEnabled()) return null;
-    return trimOrNull(await weatherSvc.timezoneFor(latitude, longitude), MAX_LEN.timezone);
+    // Open-Meteo returns IANA names, but this lands in the same column the report
+    // generators read, so it is checked like a typed one rather than trusted.
+    const tz = trimOrNull(await weatherSvc.timezoneFor(latitude, longitude), MAX_LEN.timezone);
+    return tz && isValidTimezone(tz) ? tz : null;
   } catch {
     return null;   // weather is a best-effort enrichment — never fail a site write over it
   }
@@ -352,7 +356,13 @@ const addressSchema = {
   postal_code:  z.string().max(16).nullable().optional(),
   latitude:     z.number().min(-90).max(90).nullable().optional(),
   longitude:    z.number().min(-180).max(180).nullable().optional(),
-  timezone:     z.string().max(64).nullable().optional(),
+  // An IANA name, checked like users.timezone already is. It reaches
+  // Intl.DateTimeFormat in every report the site appears in, and an unknown name
+  // throws RangeError there — so «Kyiv» or «UTC+2» typed once turned the HACCP
+  // PDF and the scheduled report for that site into a 500, long after the typo.
+  timezone:     z.string().max(64).nullable().optional()
+                  .refine(v => v === null || v === undefined || v === '' || isValidTimezone(v),
+                          { message: 'timezone must be an IANA time zone, e.g. Europe/Kyiv' }),
   notes:        z.string().max(4000).nullable().optional(),
   // HACCP excursion threshold of this site (minutes); null = the organisation's value
   haccp_excursion_min: z.number().int().min(1).max(1440).nullable().optional(),
