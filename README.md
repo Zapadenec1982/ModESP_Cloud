@@ -180,6 +180,7 @@ ModESP_Cloud/
 │   ├── openapi.json                # OpenAPI 3.1 of the integration surface (generated, served at /api/docs)
 │   ├── DEPLOYMENT.md               # VPS setup, migrations, systemd timers, backups
 │   ├── runbooks/restore.md         # Disaster recovery, measured RTO/RPO
+│   ├── runbooks/audit-rollout.md   # Rolling out the integrity-audit fixes (#40–#58)
 │   └── ROADMAP.md                  # Development phases & progress
 │
 └── LICENSE                         # PolyForm Noncommercial License
