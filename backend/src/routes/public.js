@@ -30,6 +30,7 @@ const { Router } = require('express');
 const crypto     = require('crypto');
 const rateLimit  = require('express-rate-limit');
 const db         = require('../services/db');
+const { servingSql } = require('../lib/tenant-status');
 const mqttSvc    = require('../services/mqtt');
 const emailSvc   = require('../services/email');
 
@@ -164,6 +165,11 @@ router.get('/site', async (req, res) => {
     // on every statement in this file, as the codebase requires.
     // Brand (plan epic 2.5): the organisation's own, else the partner's that
     // manages it, else nothing — the page then shows only "works on ModESP Cloud".
+    //
+    // servingSql: a suspended or closed organisation's page stops answering. The
+    // link is shareable and needs no sign-in, so without this a company that left
+    // the platform kept publishing its equipment names and temperatures to anyone
+    // who still had the URL — including, after a purge, data nobody could correct.
     const { rows: siteRows } = await db.query(
       `SELECT s.name, s.city, s.region, s.country, t.name AS organisation,
               COALESCE(own.brand_name, par.brand_name)         AS brand_name,
@@ -173,7 +179,8 @@ router.get('/site', async (req, res) => {
          JOIN tenants t ON t.id = s.tenant_id
          LEFT JOIN tenant_settings own ON own.tenant_id = t.id
          LEFT JOIN tenant_settings par ON par.tenant_id = t.parent_tenant_id
-        WHERE s.id = $1 AND s.tenant_id = $2`,
+        WHERE s.id = $1 AND s.tenant_id = $2
+          AND ${servingSql('t')}`,
       [link.site_id, link.tenant_id]
     );
 

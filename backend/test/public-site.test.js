@@ -69,6 +69,9 @@ function createPublicApp() {
 
 const app = createPublicApp();
 
+// File level: the pool must outlive every describe here, not just the first.
+afterAll(async () => { await shutdownDb(); });
+
 const PUBLIC_PATH = '/api/public/site';
 const get = token => {
   const req = request(app).get(PUBLIC_PATH);
@@ -188,10 +191,6 @@ describe('GET /api/public/site', () => {
     await db.query(`UPDATE devices SET status = 'pending' WHERE id = $1`, [devPending.id]);
 
     link = await createLink(site, { label: 'Lobby screen' });
-  });
-
-  afterAll(async () => {
-    await shutdownDb();
   });
 
   beforeEach(async () => {
@@ -473,5 +472,50 @@ describe('GET /api/public/site', () => {
       await publicRouter.resetRateLimit();
       expect((await get(link.raw)).status).toBe(200);
     });
+  });
+});
+
+// M15 — the page belongs to an organisation, and an organisation can leave.
+//
+// The lookup asked only for the site and its tenant id, never whether that tenant
+// is still served. So a suspended or closed organisation kept publishing its
+// equipment names, its cities and its temperatures to anyone still holding the
+// link — and the link needs no sign-in and cannot be revoked by the customer once
+// their account is closed.
+describe('A suspended or closed organisation stops publishing (M15)', () => {
+  const { SERVING, NOT_SERVING } = require('../src/lib/tenant-status');
+  let tenant, site, link;
+
+  beforeAll(async () => {
+    tenant = await createTenant({ slug: `pub-serving-${rnd(6)}` });
+    site = await createSite(tenant.id, { name: 'Магазин №3' });
+    link = await createLink(site);
+  });
+
+  afterAll(async () => {
+    await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, 'active']);
+  });
+
+  it('answers while the organisation is served — an unpaid invoice included', async () => {
+    for (const status of SERVING) {
+      await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, status]);
+      const res = await get(link.raw);
+      expect(res.status).toBe(200);
+      expect(res.body.data.name).toBe('Магазин №3');
+    }
+  });
+
+  it('answers 404 once suspended or closed, and leaks nothing in the refusal', async () => {
+    for (const status of NOT_SERVING) {
+      await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, status]);
+      const res = await get(link.raw);
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toMatch(/Магазин|Київ|pub-serving/);
+    }
+  });
+
+  it('and starts again if the organisation comes back', async () => {
+    await db.query('UPDATE tenants SET status = $2 WHERE id = $1', [tenant.id, 'active']);
+    expect((await get(link.raw)).status).toBe(200);
   });
 });

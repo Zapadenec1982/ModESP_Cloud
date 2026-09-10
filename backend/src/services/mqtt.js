@@ -6,6 +6,7 @@ const db       = require('./db');
 const mqttAuth = require('./mqtt-auth');
 const { generateClaimCode } = require('../lib/claim-code');
 const platformDefaults = require('../lib/platform-defaults');
+const { isServing } = require('../lib/tenant-status');
 
 const emitter = new EventEmitter();
 
@@ -1458,6 +1459,11 @@ function startOfflineClock(state, now) {
 
 async function raiseOfflineAlarm(state, deviceId) {
   if (!state._tenantId || state._tenantSlug === 'pending' || state._tenantId === db.SYSTEM_TENANT_ID) return;
+  // A suspended or closed organisation is not served: no new alarm rows, and so no
+  // push, no webhook, no escalation. Their controllers go quiet when they leave, and
+  // every one of them would otherwise raise an offline alarm two minutes later.
+  const reg = tenantRegistry.get(state._tenantSlug);
+  if (reg && !isServing(reg.status)) return;
   try {
     const { rows: existing } = await db.query(
       `SELECT id FROM alarms
