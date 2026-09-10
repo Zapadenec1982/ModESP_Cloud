@@ -1701,6 +1701,7 @@ export default {
     metered: 'Виміряно',
     power_profile: 'Енергопрофіль',
     equipment_model: 'Модель обладнання',
+    model_platform: 'платформна',
     no_profile: 'Енергопрофіль не налаштовано',
     no_profile_hint: 'Створіть модель обладнання або вкажіть потужності в налаштуваннях пристрою',
     new_model: 'Нова модель',

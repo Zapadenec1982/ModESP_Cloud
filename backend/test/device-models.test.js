@@ -82,6 +82,90 @@ describe('Equipment models', () => {
     expect(foreign.status).toBe(404);
   });
 
+  // ── platform models (migration 052) ──────────────────────
+  //
+  // A power profile for a cabinet is a property of the equipment, not one
+  // customer's secret. Before 052 there was no way to say so, and someone put
+  // the shared model under the system organisation; PR #57's tenant predicate
+  // then cut it off from the devices using it, and those devices — whose own
+  // *_kw were empty — lost their energy estimate entirely.
+  describe('platform models', () => {
+    let platform;
+
+    it('only a superadmin creates one', async () => {
+      const refused = await create(adminA, tenantA, { name: 'Спроба', platform: true });
+      expect(refused.status).toBe(403);
+
+      const res = await create(superadmin, tenantA, {
+        name: 'Бонета 2.5 м (платформна)', platform: true, compressor_kw: 1.4, standby_kw: 0.03,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.data.tenant_id).toBeNull();
+      platform = res.body.data;
+    });
+
+    it('every organisation sees it, marked as platform, and neither owns it', async () => {
+      for (const [user, tenant] of [[adminA, tenantA], [adminB, tenantB]]) {
+        const list = await request(app).get('/api/device-models').set(authHeader(user, tenant.id));
+        const row = list.body.data.find(m => m.id === platform.id);
+        expect(row, tenant.slug).toBeTruthy();
+        expect(row.platform).toBe(true);
+        expect(row.tenant_id).toBeNull();
+      }
+    });
+
+    it('an organisation may point its device at it, and the energy profile is read', async () => {
+      const device = await createDevice(tenantA.id, { mqttId: 'PLAT01', name: 'Бонета' });
+      const res = await request(app).patch(`/api/devices/${device.id}`)
+        .set(authHeader(adminA, tenantA.id)).send({ model_id: platform.id });
+      expect(res.status).toBe(200);
+
+      // the join that feeds GET /devices/:id/energy/summary and the live estimate
+      const { rows } = await db.query(
+        `SELECT COALESCE(d.compressor_kw, m.compressor_kw, 0) AS kw
+           FROM devices d
+           LEFT JOIN device_models m ON m.id = d.model_id
+                                    AND (m.tenant_id IS NULL OR m.tenant_id = d.tenant_id)
+          WHERE d.id = $1`, [device.id]);
+      expect(Number(rows[0].kw)).toBe(1.4);
+    });
+
+    it('an organisation cannot edit or delete it', async () => {
+      const patch = await request(app).patch(`/api/device-models/${platform.id}`)
+        .set(authHeader(adminA, tenantA.id)).send({ compressor_kw: 99 });
+      expect(patch.status).toBe(403);
+
+      const del = await request(app).delete(`/api/device-models/${platform.id}`)
+        .set(authHeader(adminA, tenantA.id));
+      expect(del.status).toBe(403);
+    });
+
+    it('a superadmin edits it, and cannot delete it while any organisation still uses it', async () => {
+      const patch = await request(app).patch(`/api/device-models/${platform.id}`)
+        .set(authHeader(superadmin, tenantA.id)).send({ compressor_kw: 1.6 });
+      expect(patch.status).toBe(200);
+      expect(Number(patch.body.data.compressor_kw)).toBe(1.6);
+
+      // tenantA's device still points at it — shared model, so anyone's device counts
+      const busy = await request(app).delete(`/api/device-models/${platform.id}`)
+        .set(authHeader(superadmin, tenantB.id));
+      expect(busy.status).toBe(409);
+
+      await db.query('UPDATE devices SET model_id = NULL WHERE model_id = $1', [platform.id]);
+      const gone = await request(app).delete(`/api/device-models/${platform.id}`)
+        .set(authHeader(superadmin, tenantB.id));
+      expect(gone.status).toBe(200);
+    });
+
+    it('two platform models cannot share a name', async () => {
+      const first = await create(superadmin, tenantA, { name: 'Унікальна', platform: true });
+      expect(first.status).toBe(201);
+      const second = await create(superadmin, tenantB, { name: 'Унікальна', platform: true });
+      expect(second.status).toBe(409);
+      await db.query('DELETE FROM device_models WHERE id = $1', [first.body.data.id]);
+    });
+  });
+
   it('a model in use is not deleted, and the count is of the organisation\'s own devices', async () => {
     const { rows: [model] } = await db.query(
       `INSERT INTO device_models (tenant_id, name, compressor_kw) VALUES ($1, 'У вжитку', 1) RETURNING id`, [tenantA.id]);

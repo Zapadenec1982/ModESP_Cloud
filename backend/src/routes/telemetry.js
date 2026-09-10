@@ -271,10 +271,11 @@ router.get('/:id/energy/summary', requireFeature('energy'), checkDeviceAccess(),
          COALESCE(d.standby_kw, m.standby_kw, 0)        AS standby_kw,
          COALESCE(m.energy_source, 'estimated')          AS energy_source
        FROM devices d
-       -- m.tenant_id = d.tenant_id, as on every devices↔device_models join: a
-       -- device left pointing at another organisation's profile must read as
-       -- «no model», not compute this organisation's energy from their kW.
-       LEFT JOIN device_models m ON m.id = d.model_id AND m.tenant_id = d.tenant_id
+       -- Own model or a platform one (tenant_id NULL, migration 052); a device
+       -- left pointing at another CUSTOMER's profile reads as «no model» rather
+       -- than computing this organisation's energy from their kW.
+       LEFT JOIN device_models m ON m.id = d.model_id
+                                AND (m.tenant_id IS NULL OR m.tenant_id = d.tenant_id)
        WHERE d.mqtt_device_id = $1`,
       [device.mqttId]
     );
