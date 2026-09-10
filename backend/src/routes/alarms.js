@@ -12,7 +12,13 @@ const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const maybeAuthorize = (...roles) =>
   AUTH_ENABLED ? authorize(...roles) : (_req, _res, next) => next();
 
-const router = Router();
+// Two routers, because this file serves two prefixes. Mounting one router at
+// both /api/alarms and /api/devices would give every path a twin under the
+// wrong prefix — GET /api/devices/stats answering with alarm counts, and a
+// GET /api/alarms shadow of the device list. Same split as maintenance and
+// work orders.
+const router       = Router();   // mounted at /api/alarms
+const deviceRouter = Router();   // mounted at /api/devices
 
 // ── GET /api/alarms ───────────────────────────────────────
 // List alarms. Superadmin sees cross-tenant; others see tenant-scoped.
@@ -156,7 +162,7 @@ router.get('/stats', filterDeviceAccess(), async (req, res, next) => {
 
 // ── GET /api/devices/:id/alarms ───────────────────────────
 // Alarms for a specific device. Query: active, from, to, limit, offset
-router.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
+deviceRouter.get('/:id/alarms', checkDeviceAccess(), async (req, res, next) => {
   try {
     const { id } = req.params;
     const active = req.query.active;
@@ -321,4 +327,4 @@ router.get('/:id/deliveries', maybeAuthorize('admin'), async (req, res, next) =>
   }
 });
 
-module.exports = router;
+module.exports = { router, deviceRouter };

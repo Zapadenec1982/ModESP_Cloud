@@ -29,6 +29,54 @@ Complete tenant isolation at every layer — database, MQTT broker, API, and UI.
 - **Cross-tenant operations** — superadmin can view all tenants, reassign devices between tenants
 - **Tenant-aware RBAC** — users belong to one or more tenants; admin sees only their tenant's data
 - **Tenant switching** — multi-tenant users select active tenant on login or switch mid-session
+- **Partner plan** (epic 2.5) — a service company on the "Partner" plan creates organisations for its
+  own clients (`tenants.parent_tenant_id`), staffs them with its technicians under a per-organisation
+  role, sees every client's alarms, work orders, hints and sites on one "Clients" page, and signs into
+  any of them in one click. A partner's clients share its billing account (`billing_accounts`) — the
+  basis for the consolidated invoice of epic 2.2. Partner A does not see partner B's clients; a client's
+  admin does not see the partner's other clients
+- **Branding** (plan feature `branding`) — the organisation's name, logo and website on the public site
+  status pages and in HACCP reports; a client with no brand of its own shows the partner's
+- **Self-registration and trial** (epic 2.1) — `#/register`: an organisation on the "Start" plan with a
+  14-day trial and its first administrator, no card. `REGISTRATION_MODE=approve` (the default) holds the
+  organisation suspended until a superadmin approves it on the "Organisations" page; `open` starts the
+  trial straight away; `off` disables the form. With e-mail configured the administrator confirms the
+  address from a link before the first sign-in. An expired trial is moved to `past_due` by the hourly
+  watchdog — access and the fleet stay, a banner asks for a plan
+- **The "First steps" checklist** — on the administrator's dashboard: create a site → connect a controller
+  by its code → invite a technician → link Telegram → export the first HACCP report. The steps are read
+  from the data; progress and dismissal live in `tenant_settings.onboarding`
+- **Closing an organisation** (epic 2.10) — the `closed` status keeps sign-in but read-only (a banner with
+  the date; changes answer 423); after `CLOSED_RETENTION_DAYS` (30) the watchdog deletes telemetry, alarms,
+  reports, firmware and sites, returns the controllers to the pending queue with their credentials, and
+  keeps the organisation, its users and its invoices
+- **Data export** — an administrator orders an archive on the "Settings" page: a CSV per table of the
+  organisation with no passwords or tokens, a HACCP report per site for the year, and a manifest; prepared
+  in the background, the link lives `EXPORT_TTL_DAYS` (7). A customer may leave with their data
+- **Audit without the person** — a deleted user leaves their actions in the audit log but not their
+  identity: the e-mail becomes a stable pseudonym, IP and browser disappear; the immutability trigger is
+  not switched off to do it
+- **An audit log for the administrator** (epic 2.13) — the "Audit log" page is open to an organisation's
+  administrator: its own records only, filters by entity, action, user, result and dates, an "support
+  actions only" switch, CSV export (the export itself is audited too). A superadmin sees every
+  organisation and narrows to one
+- **Support sign-in as a user** (epic 2.13) — a superadmin signs in as a user from the organisation card
+  or the "Users" page, and must give a reason. It is not a session but a token for `IMPERSONATION_TTL_MIN`
+  minutes with no renewal; an orange banner on every page says who, where and until when, and returns to
+  the engineer's own account in one click. The record with its reason lands in the audit log of the user's
+  organisation, and every action carries the engineer's name beside the user's (the administrator sees a
+  "support" mark). Secrets (API keys, webhooks, the MQTT passwords in all four places they are issued,
+  public site tokens), account security, creating users and invitations, changing the organisation and
+  exporting data are all unavailable under such a token
+- **The organisation card** (epic 2.13) — a superadmin sees everything before answering a customer: the
+  plan's limits and features, the recent data (controller connectivity, alarms, sign-ins, actions, open
+  work orders and hints, imports, reports), the notification channels and whether they deliver, billing,
+  60 days of usage, the users with a "Sign in as" button, the latest actions and support requests
+- **Support** (epic 2.13) — a sidebar link for any role: contacts (`SUPPORT_EMAIL`, `SUPPORT_TELEGRAM`,
+  the documentation), a form with a category, subject, message and diagnostics (organisation, page,
+  browser, version, time zone), and a list of requests (own / the organisation's / all, for a superadmin,
+  with status changes). The request is stored first and mailed second, with the author's `Reply-To`; it
+  works in a closed organisation too
 
 ---
 
@@ -111,7 +159,38 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Tamper evidence:** every report gets a 12-character verification code and a SHA-256 of its data, printed in the footer; anyone can confirm it at `GET /api/public/report/:code` without logging in; every download is written to the audit log
 - **Three-year history:** recent periods come from raw telemetry (up to 31 days per report); periods beyond the plan's raw retention are served from the hourly archive `telemetry_hourly` (up to a year per report, kept 1095 days)
 - Cyrillic support (Roboto font), server-side generation (pdfmake) — no browser dependency
+- **Critical limits on the equipment** — `haccp_max`/`haccp_min`, the allowed deviation and "what is
+  stored" on the device card (the HACCP block of the edit form); the excursion threshold in the
+  organisation's and the site's settings; with no limits the log falls back to the controller's alarm
+  limits, and with neither it prints "not set"
+- **Limits in bulk** — typical limits by what the equipment is for (frozen ≤ −18 ±3, ice cream, chilled
+  0…6, meat 0…4, fish 0…2, dairy 2…6, vegetables 2…10, medicines 2…8 ±0; labels in four languages) as a
+  starting point: a preset on the device card, the "HACCP limits" bulk action on the dashboard (by default
+  only devices with no limits — what an officer typed is never overwritten), and the columns
+  `haccp_preset`/`haccp_min`/`haccp_max`/`haccp_tolerance`/`haccp_product` in the network CSV import, so a
+  controller arrives from the pending queue with its limits already set
+- **The equipment service report** — the engineering counterpart of the HACCP log, from the same data, for
+  the technician and the service company (a button next to "HACCP PDF" on the device chart, a report type
+  in the site dialog): the appliance's settings from its last state (setpoint, hysteresis, alarm limits and
+  delays, defrost, protections — with units), every temperature channel with min/max/average, ΔT and a
+  vector chart carrying the critical-limit line, how the equipment worked (compressor duty and starts, the
+  longest run, defrost cycles and their length, the door, offline, gaps, HACCP excursions), every alarm
+  with its name in the report's language and its work orders, cloud connectivity, maintenance hints, work
+  orders and service records, and an engineering log by interval; the same verification code, SHA-256 and
+  QR; a separate type in the report archive
 - Empty periods answer `404 no_data` instead of producing a blank document
+
+### Scheduled Reports
+- **A schedule per site or for the whole network** — weekly (Mon–Sun) or monthly, in the site's time zone;
+  at 06:00 the day after the period the report goes to its recipients by e-mail with the PDF attached
+- **Three types** — HACCP (the same document as the manual export), alarms (a summary by severity and
+  equipment, time to acknowledgement, the log — a week with no alarms is a document too) and energy
+  (kWh per device, compressor run time, cost at the tariff)
+- **The archive** — the "Reports" page shows everything generated for the organisation: a scheduled PDF can
+  be downloaded again (3 years) and every report carries a verification code; a technician and a viewer see
+  only their own sites
+- **No duplicates** — a schedule remembers the last period it delivered; the "Send now" button produces the
+  past period immediately
 
 ### Rate Limiting
 - 10 exports per minute per user — prevents abuse without blocking legitimate use
@@ -286,19 +365,37 @@ Upload, deploy, and monitor firmware updates — single device or fleet-wide rol
 - Upload `.bin` files (up to 4 MB) with version tag, board type, release notes
 - SHA-256 checksum computed at upload, verified by device on download
 - Board compatibility check — prevents deploying wrong firmware to wrong hardware
+- **Deletion without consequences** — firmware with active jobs or a running rollout cannot be deleted (409);
+  finished history stays readable: a job keeps its version even when the file is gone
 
 ### Single Device Deploy
 - One-click deploy from UI or API
 - MQTT command with download URL, version, checksum
 - Status tracking: queued → sent → success / failed (10-minute timeout)
 - Pre-OTA version captured for reliable success detection via heartbeat
+- **Pre-update checks** — the command will not go to a device that is offline, defrosting, carrying an
+  active critical alarm, or outside the organisation's update window; the interface names the reason, and
+  an administrator may knowingly pass all of them but "offline" (the job is then marked "forced")
+- **The update window** — in the organisation's settings: a span of local time (it may cross midnight)
+  in which OTA is allowed; empty means any time
+- **Rollback** — return a controller to the version it had before the last successful update: the page
+  shows the current and previous versions and whether that version is still in the library; such jobs are
+  marked "rollback" in the history. Who started each job is recorded (a person or an API key)
 
 ### Group Rollout
 - Select firmware + device list → deploy in configurable batches
 - **Batch size** — how many devices per wave
 - **Batch interval** — seconds between waves (prevent network congestion)
-- **Failure threshold** — auto-pause rollout if failure rate exceeds configured percentage
-- Admin can resume paused rollouts
+- **Failure threshold** — auto-pause the rollout if the failure rate exceeds the configured percentage
+  (set in the form); the reason for the pause (automatic or manual) is visible in the list
+- **Deferral, not failure** — a device that is offline, defrosting or in alarm when its batch comes round
+  is moved to the next batch; only after 12 deferrals (`OTA_MAX_DEFERRALS`) is the job counted as failed.
+  Outside the update window a rollout simply waits
+- Admin can resume paused rollouts — the failures they accepted no longer stop it, and the threshold
+  watches only new ones
+- **Notifications to administrators** — a finished rollout and an automatic pause arrive in Telegram, by
+  e-mail and by web push (with a "succeeded / failed on N" summary), and as the webhooks
+  `ota.rollout_completed` / `ota.rollout_paused`
 - Survives server restart — reconstructed from database on boot
 
 ### Background Monitoring
@@ -485,12 +582,17 @@ Production-ready deployment with TLS, backups, and monitoring.
 
 Clean codebase with testing infrastructure and local development tools.
 
-- **130+ integration tests** — Vitest + Supertest against real PostgreSQL (Docker, tmpfs-backed)
-- **Test suites** — auth, RBAC, tenant isolation, CRUD, audit logging, OTA, notifications
+- **900+ integration tests** — Vitest + Supertest against a real PostgreSQL (Docker, tmpfs-backed)
+- **Test suites** — auth, RBAC, tenant isolation, CRUD, audit logging, OTA, notifications, billing,
+  work orders, maintenance hints, reports, integrations, retention
 - **Vite dev server** — frontend hot-reload on port 5173
 - **Dev mode** — `AUTH_ENABLED=false` bypasses JWT for rapid development
-- **Structured migrations** — 15 numbered SQL migration files, applied in order
-- **State metadata** — `state_meta.json` defines all 48 device parameters with types, units, groups, writable flags
+- **Structured migrations** — 50 numbered SQL migration files, applied in order
+- **State metadata** — `state_meta.json` defines all 49 device parameters with types, units, groups, writable flags
+- **Checks a test cannot make** — CI also verifies things that stay green while being wrong: the parity of
+  the uk/en/pl/de dictionaries and of the two feature files, that `docs/openapi.json` matches the code,
+  that `docs/API_REFERENCE.md` lists the endpoints Express mounts, that the firmware upload form sends
+  what the route reads, and that a migrated database and a fresh install have the same catalog
 
 ---
 
@@ -536,6 +638,119 @@ Clean codebase with testing infrastructure and local development tools.
                                   │  · Audit      │
                                   └──────────────┘
 ```
+
+---
+
+## 18. Maintenance Hints
+
+The controller decides what an alarm is: it counts compressor starts, run time and defrost
+timeouts itself and raises `rapid_cycle_alarm`, `continuous_run_alarm`, `high_temp_alarm` and
+the rest. The cloud does not duplicate those thresholds. What the controller cannot see is
+history — the same alarm on the same room for the third time this week is no longer a reason
+for another acknowledgement, it is a reason for a visit. That is the whole of the single rule
+(`maintenance_rules`: a platform value, an organisation override, optionally per equipment model):
+
+| Signal | What is read | What it advises |
+|---|---|---|
+| A repeating alarm | the same controller alarm code on one device ≥ N times in a window (3 in 7 days by default); `device_offline` does not count | «The controller keeps raising this alarm — it needs a visit: assign a work order» |
+
+- **One hint per device and alarm code** — opens when the counter reaches the threshold, updates
+  while the window still holds that many alarms, and closes itself (`resolved`) as soon as the old
+  alarms fall out of the window.
+- **Lifecycle** — "take it on" (a technician with access to the device), "dismiss" (an admin; the hint
+  returns within the hour if the alarms have not gone anywhere), "assign a work order" — a dialog that
+  picks the assignee straight from the hint; the history sits on the device tab and in the organisation's list.
+- **Notifications** go to administrators as `info` (Telegram, e-mail, web push) with the alarm name,
+  the count and the window; a WebSocket `hint` refreshes the dashboard tile and the device-card badge live.
+- **Thresholds** (N and the window in days) are edited by the organisation's admin in Settings; the
+  platform ones by a superadmin. Plan feature `maintenance` — from the "Site" tariff up.
+- **Retention** of closed hints — `MAINTENANCE_HINT_RETENTION_DAYS` (365).
+
+The controller's own counters (`defrost.consecutive_timeouts`, `protection.compressor_starts_1h`,
+`protection.compressor_duty`, running hours) are visible on the chart and in the device state — with
+no server-side thresholds.
+
+---
+
+## 19. Work Orders
+
+An alarm or a hint becomes a work order; the order has an assignee, a site with an address, a
+priority and a schedule; closing it writes a structured service record (who, how long, which parts,
+what it cost). It is this chain — alarm → order → visit → record — that lets prevented repairs be
+counted, rather than notifications sent.
+
+- **Where they come from** — the "Work order" button next to an alarm, "Create work order" on a hint,
+  from the device card, or by hand on the "Work orders" page. Creating one from an alarm acknowledges
+  the alarm; from a hint, the hint.
+- **Who may do what** — an admin assigns anyone and cancels; a technician takes an order for themselves
+  but cannot hand it to a colleague; starting and closing is the assignee or an admin; a viewer only
+  sees orders on their own devices.
+- **The assignee** gets a notification with the site name, the address and a Google Maps route link
+  (Telegram, e-mail, web push); WebSocket keeps the lists live.
+- **Closing** — work done, duration, parts (name; quantity; cost), total and currency → `service_records`
+  carrying `user_id` and `work_order_id`; the device's older service-record list shows it too.
+- **Statistics** — counts by status, how many came from alarms and how many from hints, and the average
+  time to assignment, to start and to close over a period.
+
+---
+
+## 20. Billing
+
+An invoice is built from the system's own data, not from a spreadsheet: every hour the platform
+records how many controllers, sites and users each organisation has (`usage_snapshots`), and on the
+1st it invoices the previous month from the average daily usage × the plan's prices. Payment is by
+bank transfer; card payments arrive with the acquiring contract.
+
+- **What is on the invoice** — the plan's subscription (prorated by the days the organisation existed
+  that month), controllers at volume prices (from 100 — 80 UAH, from 500 — 60 UAH on "Network"), and
+  sites on the "Network" plan. A controller that ran for a week costs a quarter of a month. Plans with
+  no price (Enterprise) and zero totals (Start) are not invoiced.
+- **A partner** receives one consolidated invoice: the "Partner" subscription plus a "controllers" line
+  per client at the partner tariff; the client only sees "invoices go to the partner".
+- **PDF and e-mail** — the invoice in the organisation's language (uk/en/pl/de) with the seller's
+  details and the payment reference, attached to a letter to `billing_email` (or to the administrators).
+- **Dunning** — 7 days past due the organisation becomes "past due" (in-app banner, e-mail), at 14 a
+  second reminder, at 21 "suspended" (sign-in and controller data are blocked; the controllers keep
+  running on their own). Payment or voiding the invoice restores access automatically.
+- **The "Payment" page** for an admin: plan and prices, an estimate for the current month, how to pay,
+  the organisation's payment details, invoices with PDFs, usage by month, a plan-change request.
+- **"Billing"** for a superadmin: every invoice with filters and the "paid / void / send" actions,
+  jobs by hand (snapshot, invoices for a period, dunning), plan-change requests, seller details.
+- **Safety catches** — invoices are not issued until the seller's name and a valid IBAN are filled in
+  (structure, country length and checksum are checked, so a single wrong digit does not pass), and an
+  invoice that was never sent stops at "past due" and never suspends an organisation. The automation
+  cannot quietly cut off a fleet over an invoice the customer never saw.
+
+---
+
+## 21. Integrations
+
+Plan epic 2.6: a customer with their own CMMS, BI or ERP connects without a human in between. The
+"Integrations" page is for administrators on the "Pro", "Network" and "Partner" plans (plan feature `api`).
+
+- **API keys** — a key of the form `modesp_…` in the same `Authorization: Bearer` header people use.
+  Only the hash is stored; the full key is shown once, at creation. A key represents the whole
+  organisation — it sees all of its devices, not one person's grants — with "Read" (like a viewer),
+  "Write" (like a technician: acknowledging alarms, commands, work orders, service records) or
+  "Admin" (sites, models, firmware, OTA) rights. No key ever reaches users, other keys, webhooks,
+  organisations, billing, profiles or sessions. Expiry, revocation, "last used"; in the audit log the
+  actions are signed `apikey:<name>`.
+- **Webhooks** — an HTTP POST to the customer's address on every subscribed event: alarm raised /
+  cleared / acknowledged, device offline / online, work order created / updated / assigned / started /
+  closed / cancelled, hint opened. The body carries the device, the site and the event's data; the
+  headers are `X-ModESP-Event`, `X-ModESP-Delivery`, `X-ModESP-Timestamp` and the signature
+  `X-ModESP-Signature: v1=HMAC-SHA256(secret, "<timestamp>.<body>")`, so the receiver can verify
+  authenticity and reject replays. Public http(s) addresses only — private networks and localhost
+  are refused.
+- **Delivery reliability** — a non-2xx response or 10 seconds of silence counts as a failure; retries
+  at 1 min, 5 min, 30 min, 2 h, 12 h, after which the delivery is marked undelivered. After 10
+  consecutive failures the webhook disables itself until an administrator switches it back on. A
+  "Test" button sends a `ping`, the delivery log shows state, attempts, response code and body, any
+  delivery can be re-sent, and the secret rotates in one click and is shown only once.
+- **Documentation for the integrator** — `GET /api/docs`: an interactive description of the integration
+  surface (OpenAPI 3.1, Swagger UI, no external CDNs), including the format of every outgoing webhook
+  event, the headers and the signature formula. `docs/openapi.json` is generated from the code and
+  checked in CI, so it does not go stale.
 
 ---
 

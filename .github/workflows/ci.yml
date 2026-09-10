@@ -63,6 +63,19 @@ jobs:
         run: node scripts/openapi-export.js --check
         working-directory: backend
 
+      # Only one of the two feature files gets updated when a feature ships:
+      # the English one sat at section 17 while the Ukrainian one had grown to 21.
+      - name: FEATURES.md and FEATURES_UA.md describe the same product
+        run: node scripts/check-features-parity.js
+        working-directory: backend
+
+      # docs/API_REFERENCE.md is the hand-written manual — nothing generates it,
+      # so a renamed or new endpoint drifts out of it silently. This asks Express
+      # which paths it actually mounts and compares that with the manual.
+      - name: The API manual lists the endpoints the code mounts
+        run: node scripts/check-api-reference.js
+        working-directory: backend
+
       # A build compiles the client but never calls it. The upload form passed
       # its platform-firmware options to a function that took fewer arguments,
       # so the «global» switch was a dead click and nothing said so.

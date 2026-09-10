@@ -511,8 +511,9 @@ if (AUTH_ENABLED) {
 // ── Routes ─────────────────────────────────────────────
 app.use('/api/devices',  require('./routes/devices'));
 app.use('/api/devices',  require('./routes/telemetry'));  // /:id/telemetry
-app.use('/api/alarms',   require('./routes/alarms'));     // /alarms
-app.use('/api/devices',  require('./routes/alarms'));     // /:id/alarms
+const alarmRoutes = require('./routes/alarms');
+app.use('/api/alarms',   alarmRoutes.router);              // /alarms, /stats, /:id/ack, /:id/deliveries
+app.use('/api/devices',  alarmRoutes.deviceRouter);        // /:id/alarms
 app.use('/api/devices',  require('./routes/events'));     // /:id/events
 const maintenanceRoutes = require('./routes/maintenance');
 app.use('/api/maintenance', maintenanceRoutes.router);         // hints, rules (plan epic 2.4)

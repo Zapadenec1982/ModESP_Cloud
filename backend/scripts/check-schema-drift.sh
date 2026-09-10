@@ -73,6 +73,40 @@ build "$HEAD_DB" "$DB_DIR/schema.sql"
 echo "building $BASE_DB from baseline.sql + migrations"
 build "$BASE_DB" "$DB_DIR/baseline.sql"
 
+# ── docs/DATABASE.md: the tables that carry no tenant_id ────────────────
+# The manual states multi-tenancy as a principle, so the list of tables that
+# escape it has to be exact — it is the list a reader checks a new query
+# against. It drifted to one table while the schema had nine.
+echo "checking the tenantless-table list in docs/DATABASE.md"
+psql -At "$PGURL/$HEAD_DB" -c "
+  SELECT t.table_name FROM information_schema.tables t
+   WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+     AND t.table_name NOT LIKE 'telemetry\_%'
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                      WHERE c.table_schema = 'public' AND c.table_name = t.table_name
+                        AND c.column_name = 'tenant_id')
+   ORDER BY 1" | sed '/^$/d' > "$WORK/tenantless-schema.txt"
+
+awk '
+  /<!-- tenantless-tables:/ { inblock = 1; next }
+  inblock && /^\| `/ { gsub(/^\| `/, ""); sub(/`.*$/, ""); print }
+  inblock && /^## / { inblock = 0 }
+' "$HERE/../../docs/DATABASE.md" | sort > "$WORK/tenantless-doc.txt"
+
+if ! diff -u "$WORK/tenantless-doc.txt" "$WORK/tenantless-schema.txt" > "$WORK/tenantless.diff"; then
+  echo
+  echo "docs/DATABASE.md — «Таблиці без tenant_id» does not match the schema."
+  echo "  '-' lines: listed in the manual but the table does carry tenant_id (or is gone)"
+  echo "  '+' lines: in the schema without tenant_id and missing from the manual"
+  echo
+  cat "$WORK/tenantless.diff"
+  echo
+  echo "Give the new table a tenant_id, or add a row to that table in docs/DATABASE.md"
+  echo "saying why it stands outside multi-tenancy."
+  exit 1
+fi
+echo "the tenantless-table list matches the schema ($(wc -l < "$WORK/tenantless-schema.txt") tables)"
+
 dump "$HEAD_DB" "$WORK/head.txt"
 dump "$BASE_DB" "$WORK/base.txt"
 
