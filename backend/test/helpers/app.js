@@ -134,8 +134,8 @@ function createTestApp() {
   // Routes that all authed users can access
   app.use('/api/devices', require('../../src/routes/devices'));
   app.use('/api/devices', require('../../src/routes/telemetry'));
-  app.use('/api/alarms',  require('../../src/routes/alarms'));
-  app.use('/api/devices', require('../../src/routes/alarms'));
+  app.use('/api/alarms',  require('../../src/routes/alarms').router);
+  app.use('/api/devices', require('../../src/routes/alarms').deviceRouter);
   const maintenanceRoutes = require('../../src/routes/maintenance');
   app.use('/api/maintenance', maintenanceRoutes.router);
   app.use('/api/devices',     maintenanceRoutes.deviceRouter);

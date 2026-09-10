@@ -2,7 +2,10 @@
 
 ## Загальні принципи
 
-**Base URL:** `https://cloud.example.com/api/v1`
+**Base URL:** `https://cloud.example.com/api`
+
+Версії в шляху немає і ніколи не було: усе змонтовано під `/api`. Шляхи в цьому файлі
+пишуться без цього префікса — `POST /auth/login` означає `POST /api/auth/login`.
 
 **Авторизація:** Bearer JWT токен в заголовку
 ```
@@ -438,6 +441,59 @@ TOTP (RFC 6238, крок 30 с, вікно ±1) з будь-яким засто�
 > нової точки — fire-and-forget через масову чергу: імпорт на 500 рядків не має чекати на геокодер із
 > лімітом 1 запит/с. Рядки, що потрапляють у системний тенант (`pre_register`), `site_id` не отримують
 > взагалі — пристрій системного тенанта не може володіти точкою тенанта.
+
+---
+
+### `POST /devices/recover`
+Скинути пристрій у стан `pending` з bootstrap-обліковими даними, коли він втратив свої
+(перепрошивка, заміна плати, стерта NVS). Роль `admin`; свій пристрій або нічий.
+
+**Body:** `{ "mqtt_device_id": "C7B0E9" }` — 6–12 hex-символів.
+
+**Response 200:**
+```json
+{
+  "data": {
+    "mqtt_device_id": "C7B0E9",
+    "status": "pending",
+    "message": "Device recovery initiated. It will appear in Pending Devices when it reconnects with bootstrap credentials."
+  }
+}
+```
+
+Пристрій потрапляє у чергу очікування **тієї організації, що його відновлює**
+(`claimed_by_tenant_id`), тож чужа мережа його там не побачить; коли відновлює суперадмін —
+пристрій лишається незакріпленим. Пристрій чужої організації дає `404 not_found`, а не `403`:
+адміністратор не має дізнаватися з коду відповіді, що такий пристрій узагалі існує.
+
+`503 not_configured` — на сервері не заданий `MQTT_BOOTSTRAP_PASSWORD`.
+
+### `POST /devices/:id/request-state`
+Попросити контролер надіслати повний стан (`state_full`) — коли WebUI підозрює, що його
+копія стану застаріла.
+
+**Response 200:** `{ "data": { "device_id": "A4CF12", "requested": true } }`
+
+`503 mqtt_unavailable` — брокер зараз недоступний.
+
+### `GET /api/meta`
+Словник ключів стану контролера: тип, діапазон, крок, значення за замовчуванням, чи ключ
+записуваний. Без авторизації, статичний — WebUI бере його один раз і будує з нього форми.
+
+**Response 200:**
+```json
+{
+  "meta": [
+    { "key": "protection.high_limit", "type": "float", "writable": true, "persist": true,
+      "min": -50, "max": 99, "step": 0.5, "default": 12, "dangerous": false }
+  ],
+  "publishKeys": ["..."],
+  "subscribeKeys": ["..."]
+}
+```
+
+`dangerous: true` позначає ключі, які `POST /devices/:id/command` приймає лише з `confirm: true`
+(див. «Команди»). Це єдине поле, яке сервер додає до словника на льоту.
 
 ---
 
@@ -2081,6 +2137,36 @@ Bulk-заміна списку пристроїв користувача (вид
 
 **Response 200:** `{ "data": { "mfa_enabled": false, "sessions_revoked": 1 } }`. Аудит: `user.mfa_reset`.
 
+### `POST /users/:id/password-reset`
+Видати код відновлення пароля співробітникові, який його забув. Код показується адміністраторові
+**один раз** — сервер зберігає його з терміном дії 30 хвилин; переказує код адміністратор сам,
+поштою чи голосом.
+
+**Ролі:** admin — користувач, для якого ця організація **домашня**; superadmin — будь-хто.
+Адміністратор організації, у якій людина лише учасник (партнерський персонал), може міняти їй
+роль, але не отримувати код до її акаунта.
+
+**Response 200:**
+```json
+{ "data": { "reset_code": "6f2a9c1d84b0e7f3", "expires_at": "2026-09-09T21:44:00Z", "email": "user@example.com" } }
+```
+
+Аудит: `user.password_reset_generate`. `404 not_found` — немає такого активного користувача
+в межах доступу того, хто питає.
+
+### `POST /users/:id/telegram-link`
+Видати код прив'язки Telegram-бота іншому користувачеві (свій код людина бере сама через
+`POST /profile/telegram-link`). Код живе 15 хвилин.
+
+**Ролі:** admin — користувач своєї організації; superadmin — будь-хто.
+
+**Response 200:**
+```json
+{ "data": { "link_code": "3b8f01ce7d29a45f", "expires_at": "2026-09-09T21:29:00Z", "email": "user@example.com" } }
+```
+
+`404 not_found` — немає такого активного користувача.
+
 ### `GET /users/:id/sites`
 Точки, до яких користувач має доступ.
 
@@ -2212,6 +2298,95 @@ superadmin, що діє в тенанті A, видав би користува�
 
 ---
 
+### `GET /notifications/subscribers`
+Отримувачі тривог організації. Роль `admin`.
+
+**Query:** `active=false` — показати й вимкнених (типово лише активні).
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "channel": "telegram",
+      "address": "123456789",
+      "label": "Черговий інженер",
+      "device_filter": null,
+      "active": true,
+      "created_at": "2026-09-01T10:00:00Z"
+    }
+  ]
+}
+```
+
+### `POST /notifications/subscribers`
+Додати отримувача. Роль `admin`.
+
+**Body:**
+```json
+{ "channel": "telegram", "address": "123456789", "label": "Черговий інженер", "device_filter": null }
+```
+
+`channel` — `telegram`, `fcm` або `email`. `device_filter` (необов'язково) звужує адресата до
+переліку пристроїв. Пара `channel` + `address`, що вже існує, не дублюється: вимкнений запис
+вмикається знову.
+
+`400 validation_failed` — немає `channel` чи `address`, або канал не з переліку.
+
+### `DELETE /notifications/subscribers/:id`
+Вимкнути отримувача. Роль `admin`. Запис не видаляється — `active = false`, щоб журнал доставок
+лишився читабельним.
+
+**Response 200:** `{ "data": { "id": "uuid", "active": false } }`
+
+`404 not_found` — немає такого активного отримувача в цій організації.
+
+### `POST /notifications/test`
+Надіслати тестове повідомлення одному отримувачу — перевірка, що бот прив'язаний, а адреса жива.
+Роль `admin`.
+
+**Body:** `{ "subscriber_id": "uuid" }`
+
+**Response 200:** `{ "data": { ... результат надсилання ... } }`
+
+`404 not_found` — отримувача немає.
+
+### `GET /notifications/log`
+Журнал доставок сповіщень організації. Роль `admin`.
+
+**Query:** `limit` (типово 50, максимум 200), `offset`.
+
+**Response 200:**
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "channel": "telegram",
+      "device_id": "A4CF12",
+      "alarm_code": "high_temp_alarm",
+      "status": "sent",
+      "error_message": null,
+      "created_at": "2026-09-09T21:14:00Z",
+      "subscriber_label": "Черговий інженер",
+      "subscriber_address": "123456789"
+    }
+  ]
+}
+```
+
+### `GET /api/vapid-public-key`
+Публічний ключ VAPID для Web Push. Без авторизації — браузер має отримати його **до** того,
+як створить підписку.
+
+**Response 200:** `{ "key": "BN..." }`
+
+`503 not_configured` — `VAPID_PUBLIC_KEY` на сервері не заданий; сторінка сповіщень тоді
+не пропонує браузерний push.
+
+---
+
 ## Партнерський план (plan epic 2.5)
 
 Усі маршрути під `/api/partner` вимагають функцію плану `partner` у **поточній** організації
@@ -2231,7 +2406,7 @@ active_alarms, critical_alarms, open_orders, open_hints, my_role` (роль то
 ### `PATCH /partner/clients/:id`
 `{ name?, plan? }` (лише free/basic/pro). Чужий клієнт — `404`.
 
-### `GET /partner/clients/:id/members` · `POST …/members` · `DELETE …/members/:userId`
+### `GET /partner/clients/:id/members` · `POST /partner/clients/:id/members` · `DELETE /partner/clients/:id/members/:userId`
 Хто є в організації клієнта (`partner_staff: true` — люди партнера). `POST { user_id, role }` ставить
 активного члена партнерської організації в клієнта з роллю (`400`, якщо це не людина партнера);
 `DELETE` прибирає лише людей партнера разом із їхніми грантами на точки клієнта.
@@ -2293,7 +2468,7 @@ estimate, seller, plan_request, open_invoices[] }`. `estimate` — оцінка 
 ### `GET /billing/admin/invoices?status=issued|overdue|paid|void&tenant_id=&limit=`
 Усі рахунки з `tenant_name`, `tenant_slug`, `tenant_status`, `dunning_stage`, `sent_at`.
 
-### `POST /billing/admin/invoices/:id/pay` · `…/void` · `…/send`
+### `POST /billing/admin/invoices/:id/pay` · `POST /billing/admin/invoices/:id/void` · `POST /billing/admin/invoices/:id/send`
 `pay { paid_at?, note? }` → `status: paid`, у відповіді `restored[]` — організації, яким повернуто `active`;
 `void { note? }` — анулювати (теж відновлює); `send` — (пере)надіслати лист із PDF (`503` без пошти, `409` без
 одержувача). `409`, якщо рахунок уже не `issued`.
@@ -2313,9 +2488,35 @@ suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`,
 Невалідне значення → `400` з причиною (`format`, `length`, `checksum`); валідне зберігається
 нормалізованим (без пробілів, у верхньому регістрі), тож `ua21 3223 …` і `UA213223…` дають один рядок.
 
-### `GET /billing/admin/plan-requests?status=pending` · `POST …/:id/approve` · `POST …/:id/reject`
+### `GET /billing/admin/plan-requests` · `POST /billing/admin/plan-requests/:id/approve` · `POST /billing/admin/plan-requests/:id/reject`
 Заявки на зміну плану; `approve { note? }` міняє `tenants.plan` (і скидає індивідуальну ретенцію), `reject`
 лише закриває.
+
+### `GET /billing/admin/settings` · `PUT /billing/admin/settings`
+Реквізити продавця, які потрапляють у кожен рахунок. Тільки superadmin.
+
+**Response 200 / Body PUT:**
+```json
+{
+  "data": {
+    "seller_name": "ТОВ «МодЕСП»",
+    "seller_tax_id": "12345678",
+    "seller_iban": "UA213223130000026007233566001",
+    "seller_bank": "АТ «Банк»",
+    "seller_address": "м. Львів, вул. Прикладна, 1",
+    "seller_email": "billing@example.com",
+    "due_days": 14,
+    "invoice_note": "Призначення платежу: за послуги моніторингу"
+  }
+}
+```
+
+`PUT` приймає будь-яку підмножину полів; порожнє тіло — `400 validation_failed`.
+`seller_iban` перевіряється як у банку: структура, довжина для країни й контрольна сума
+MOD 97-10; зберігається без пробілів, у верхньому регістрі. `due_days` — 1…90.
+Зміна пишеться в `audit_log` (`billing.settings_update`).
+
+---
 
 ## Онбординг (plan epic 2.1)
 
@@ -2367,6 +2568,15 @@ suspended[], held[] }`; `held` — рахунки з порожнім `sent_at`,
   ]
 }
 ```
+
+### `GET /tenants/:id`
+Одна організація тими самими полями, що й у списку.
+
+**Ролі:** superadmin — будь-яка; admin — тільки своя (інакше `403 forbidden`).
+
+**Response 200:** `{ "data": { ... той самий рядок, що в `GET /tenants` ... } }`
+
+`404 not_found` — такої організації немає.
 
 ### `POST /tenants`
 Створити новий тенант.
@@ -2548,6 +2758,20 @@ Superadmin, plan epic 2.1. Організація, що зареєструвал
 платформенні, опубліковані для неї; superadmin бачить усі платформенні. Кожен рядок містить
 `global`, `visibility`, `uploaded_by_email`, `job_count`, `active_job_count`, `visible_to_count`.
 
+### `GET /firmware/dl`
+Віддає сам бінарник за підписаним посиланням. **Без JWT** — його качає контролер, а не браузер.
+
+**Query:** `file`, `device`, `expires`, `sig` — усі обов'язкові. Посилання видає сервер під час
+розгортання; підпис HMAC прив'язує ім'я файлу до конкретного пристрою й має термін дії.
+
+**Response 200:** тіло прошивки, `application/octet-stream`.
+
+| Код | Коли |
+|-----|------|
+| `400 missing_params` | немає котрогось із чотирьох параметрів |
+| `400 invalid_filename` | у `file` є `..`, `/` або `\` |
+| `403 forbidden` | підпис не сходиться або посилання прострочене |
+
 ### `POST /firmware/upload`
 **Ролі:** admin (власна), superadmin (платформенна).
 
@@ -2661,7 +2885,7 @@ completed_at, error, pre_ota_version, firmware_id, firmware_version, firmware_de
 ### `GET /ota/rollouts/:id`
 Деталі з переліком завдань (`kind`, `deferrals`, `defer_reason`).
 
-### `POST /ota/rollouts/:id/pause` · `/resume` · `/cancel`
+### `POST /ota/rollouts/:id/pause` · `POST /ota/rollouts/:id/resume` · `POST /ota/rollouts/:id/cancel`
 **Ролі:** admin. `pause` ставить `paused_reason: manual`; `resume` знімає причину і приймає невдачі, що вже
 сталися; `cancel` переводить `queued` завдання в `cancelled`.
 
@@ -3031,7 +3255,18 @@ duration_ms, created_at, delivered_at, payload`.
 
 **URL:** `wss://cloud.example.com/ws`
 
-**Авторизація:** query param `?token=<access_token>`
+**Авторизація:** одноразовий тікет у query param — `?ticket=<ticket>`.
+
+### `GET /ws-ticket`
+Видати тікет на одне підключення. Звичайний авторизований REST-запит; будь-яка роль.
+
+**Response 200:** `{ "data": { "ticket": "…64 hex…" } }`
+
+Тікет живе **30 секунд** і згорає при першому використанні. Так довгоживучий JWT не потрапляє
+в URL вебсокета, звідки він осідав би в журналах nginx, історії браузера і заголовку `Referer`.
+
+`?token=<access_token>` ще приймається як запасний шлях — щоб уже завантажений старий клієнт
+пережив викочування, — але сервер пише про це попередження в лог. Нові клієнти мають брати тікет.
 
 ### Підписка на пристрій
 ```json
