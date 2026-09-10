@@ -3,23 +3,14 @@
 const path = require('path');
 const db   = require('./db');
 
+// The same words the browser push uses, in the recipient's language. This file used
+// to carry eleven alarm names in English and read nothing else — payload.lang, which
+// push.js resolves for every recipient, was ignored, so a Ukrainian user got «High
+// Temperature» on the phone and «Висока температура» in the same alarm's e-mail.
+const { buildNotification } = require('../lib/push-strings');
+
 let admin  = null;
 let logger = null;
-
-// Alarm names for FCM notification title
-const ALARM_NAMES = {
-  'protection.high_temp_alarm':       'High Temperature',
-  'protection.low_temp_alarm':        'Low Temperature',
-  'protection.sensor1_alarm':         'Sensor 1 Fault',
-  'protection.sensor2_alarm':         'Sensor 2 Fault',
-  'protection.door_alarm':            'Door Open',
-  'protection.short_cycle_alarm':     'Short Cycle',
-  'protection.rapid_cycle_alarm':     'Rapid Cycling',
-  'protection.continuous_run_alarm':  'Continuous Run',
-  'protection.pulldown_alarm':        'Slow Pulldown',
-  'protection.rate_alarm':            'Rate of Change',
-  'test_notification':                'Test Notification',
-};
 
 /**
  * Initialize Firebase Cloud Messaging.
@@ -66,29 +57,18 @@ function shutdown() {
 // ── Send notification ──────────────────────────────────────
 
 /**
- * Send push notification via FCM.
+ * The FCM message for one notification. Pure — no Firebase, no database — so a test
+ * can read what the phone would actually show without a service account.
  * @param {string} fcmToken  - device registration token
- * @param {object} payload   - { deviceId, alarmCode, severity, airTemp, deviceName, timestamp, isTest }
+ * @param {object} payload   - { deviceId, alarmCode, severity, airTemp, deviceName, lang, timestamp, isTest }
  */
-async function send(fcmToken, payload) {
-  if (!admin) throw new Error('FCM not initialized');
+function buildMessage(fcmToken, payload) {
+  // Title and body come from the shared builder, which already carries the siren for
+  // a raised alarm, the device name, its location and the temperature — all in
+  // payload.lang. FCM adds only what is its own: priority, channel, sound.
+  const { title, body } = buildNotification(payload);
 
-  const alarmName = ALARM_NAMES[payload.alarmCode] || payload.alarmCode;
-
-  let title, body;
-
-  if (payload.isTest) {
-    title = 'ModESP Cloud — Test';
-    body  = 'Test notification sent successfully.';
-  } else {
-    title = `${payload.severity === 'critical' ? '\u{1F6A8} ' : ''}${alarmName}`;
-    body  = `Device: ${payload.deviceName || payload.deviceId}`;
-    if (payload.airTemp != null) {
-      body += ` | Temp: ${Number(payload.airTemp).toFixed(1)}\u{00B0}C`;
-    }
-  }
-
-  const message = {
+  return {
     token: fcmToken,
     notification: { title, body },
     data: {
@@ -115,9 +95,18 @@ async function send(fcmToken, payload) {
       },
     },
   };
+}
+
+/**
+ * Send push notification via FCM.
+ * @param {string} fcmToken  - device registration token
+ * @param {object} payload   - see buildMessage
+ */
+async function send(fcmToken, payload) {
+  if (!admin) throw new Error('FCM not initialized');
 
   try {
-    await admin.messaging().send(message);
+    await admin.messaging().send(buildMessage(fcmToken, payload));
   } catch (err) {
     // Check if token is stale and deactivate subscriber
     if (isStaleTokenError(err)) {
@@ -158,4 +147,6 @@ async function deactivateSubscriber(fcmToken) {
   }
 }
 
-module.exports = { init, shutdown };
+// buildMessage is pure, so test/push-locale.test.js reads the message the phone
+// would show without a Firebase service account.
+module.exports = { init, shutdown, __test: { buildMessage } };

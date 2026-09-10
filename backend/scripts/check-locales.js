@@ -16,7 +16,7 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 const { SUPPORTED_LOCALES } = require('../src/lib/locale');
 const telegram = require('../src/services/telegram');
 const email    = require('../src/services/email');
-const webpush  = require('../src/services/webpush');
+const pushStrings = require('../src/lib/push-strings');
 const invoicePdf = require('../src/services/invoice-pdf');
 const periodReports = require('../src/services/period-reports');
 const haccpReport = require('../src/services/haccp-report');
@@ -47,7 +47,9 @@ function check(name, dict) {
 
 check('telegram.STRINGS', telegram.__strings.STRINGS);
 for (const [name, dict] of Object.entries(email.__strings)) check(`email.${name}`, dict);
-for (const [name, dict] of Object.entries(webpush.__strings)) check(`webpush.${name}`, dict);
+// Shared by browser push and FCM (lib/push-strings.js) — one dictionary, two channels.
+check('push.ALARM_NAMES', pushStrings.ALARM_NAMES);
+check('push.W', pushStrings.W);
 check('invoice-pdf.STRINGS', invoicePdf.STRINGS);
 check('period-reports.STRINGS', periodReports.STRINGS);
 check('haccp-report.STRINGS', haccpReport.STRINGS);
