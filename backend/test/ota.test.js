@@ -70,6 +70,37 @@ describe('OTA Routes', () => {
     expect(res.body.data.status).toBe('running');
   });
 
+  it('mass rollout is a plan feature; a free organisation is refused, a «Про» one is not', async () => {
+    // `ota_rollout` sat in plan_limits.features from the first seed and was never
+    // checked, so a free organisation could roll firmware across its whole fleet —
+    // the one OTA operation with real blast radius. Single-device deploy stays
+    // open to every plan.
+    const freeTenant = await createTenant({ slug: 'ota-free', plan: 'free' });
+    const freeAdmin  = await createUser(freeTenant.id, { role: 'admin', email: 'admin@ota-free.test' });
+    const freeDevice = await createDevice(freeTenant.id, { name: 'Free Device' });
+    const freeFw     = await createFirmware(freeTenant.id, { version: '1.0.0-free' });
+
+    const refused = await request(app)
+      .post('/api/ota/rollout')
+      .set(authHeader(freeAdmin, freeTenant.id))
+      .send({ firmware_id: freeFw.id, device_ids: [freeDevice.mqtt_device_id] });
+    expect(refused.status).toBe(402);
+    expect(refused.body.error).toBe('plan_feature');
+
+    // the single-device path is not gated
+    const single = await request(app)
+      .post('/api/ota/deploy')
+      .set(authHeader(freeAdmin, freeTenant.id))
+      .send({ firmware_id: freeFw.id, device_id: freeDevice.mqtt_device_id });
+    expect(single.status).toBe(201);
+
+    const allowed = await request(app)
+      .post('/api/ota/rollout')
+      .set(authHeader(admin, tenant.id))
+      .send({ firmware_id: firmware.id, device_ids: [device.mqtt_device_id] });
+    expect(allowed.status).toBe(201);
+  });
+
   it('rejects rollout without firmware_id', async () => {
     const res = await request(app)
       .post('/api/ota/rollout')

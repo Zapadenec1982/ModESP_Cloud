@@ -284,12 +284,20 @@ function parseHHMM(v) {
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
 }
 
-/** True when `date` falls inside [from, to) local time; ranges may cross midnight. */
+/**
+ * True when `date` falls inside [from, to) local time; ranges may cross midnight.
+ *
+ * The zone is the person's own: quiet_tz when they set one for the window
+ * specifically, otherwise the time zone on their profile (users.timezone). It
+ * used to be quiet_tz alone, NOT NULL DEFAULT 'Europe/Kyiv' — so someone who set
+ * their profile to Europe/Warsaw got a quiet window an hour off, from a second
+ * field for the same fact sitting on the same settings page.
+ */
 function inQuietHours(pref, date = new Date()) {
   const from = parseHHMM(pref.quiet_from);
   const to   = parseHHMM(pref.quiet_to);
   if (from === null || to === null || from === to) return false;
-  const now = localMinutes(date, pref.quiet_tz || 'Europe/Kyiv');
+  const now = localMinutes(date, pref.quiet_tz || pref.user_timezone || 'Europe/Kyiv');
   return from < to ? (now >= from && now < to) : (now >= from || now < to);
 }
 

@@ -50,6 +50,22 @@ const ORDER_JOINS = `
   LEFT JOIN users  cu ON cu.id = w.created_by`;
 
 function isAdmin(req)  { return !AUTH_ENABLED || !req.user || req.user.role === 'admin' || req.user.role === 'superadmin'; }
+/**
+ * No device restriction applies to this caller.
+ *
+ * filterDeviceAccess() sets req.deviceFilter to an array for a technician or a
+ * viewer — where an EMPTY array deliberately means «nothing» — and to null for
+ * anyone who is not restricted at all: administrators, and an API key, which
+ * stands for the whole organisation rather than one person's grants.
+ *
+ * Every other router in the codebase reads that as `if (req.deviceFilter)`. This
+ * one wrote `req.deviceFilter || []`, which collapses «no restriction» into
+ * «restricted to nothing»: a read- or write-scope API key matched no assignee
+ * (its user id is null) and no device, so GET /work-orders returned an empty
+ * list and every single order answered 404 — while the integration
+ * documentation promises work orders to exactly those keys.
+ */
+function unrestricted(req) { return isAdmin(req) || req.deviceFilter == null; }
 function isSuper(req)  { return req.user && req.user.role === 'superadmin'; }
 function userId(req)   { return req.user ? req.user.id : null; }
 function bad(res, message) { return res.status(400).json({ error: 'validation_failed', message, status: 400 }); }
@@ -81,7 +97,7 @@ async function loadOrder(req, id) {
        LEFT JOIN tenants t ON t.id = w.tenant_id WHERE w.id = $1${scope}`, params);
   const order = rows[0];
   if (!order) return null;
-  if (isAdmin(req)) return order;
+  if (unrestricted(req)) return order;
   if (order.assigned_to === userId(req)) return order;
   if (order.device_id && req.deviceFilter && req.deviceFilter.includes(order.device_id)) return order;
   return null;
@@ -97,7 +113,7 @@ async function resolveDevice(req, id) {
     `SELECT id, tenant_id, mqtt_device_id, name, site_id FROM devices WHERE ${field} = $1${scope}`, params);
   const dev = rows[0];
   if (!dev) return { error: 404 };
-  if (!isAdmin(req) && req.deviceFilter && !req.deviceFilter.includes(dev.id)) return { error: 403 };
+  if (!unrestricted(req) && !req.deviceFilter.includes(dev.id)) return { error: 403 };
   return { device: dev };
 }
 
@@ -144,8 +160,8 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     if (String(req.query.mine) === '1' && req.user) { params.push(req.user.id); where.push(`w.assigned_to = $${params.length}`); }
     if (req.query.device_id && isUuidFormat(String(req.query.device_id))) { params.push(String(req.query.device_id)); where.push(`w.device_id = $${params.length}`); }
     if (req.query.site_id && isUuidFormat(String(req.query.site_id)))     { params.push(String(req.query.site_id));   where.push(`w.site_id = $${params.length}`); }
-    if (!isAdmin(req)) {
-      params.push(userId(req), req.deviceFilter || []);
+    if (!unrestricted(req)) {
+      params.push(userId(req), req.deviceFilter);
       where.push(`(w.assigned_to = $${params.length - 1} OR w.device_id = ANY($${params.length}))`);
     }
     params.push(limit, offset);

@@ -47,3 +47,36 @@ describe('EMAIL_REPLY_TO', () => {
     emailSvc.__test.setClient(null);
   });
 });
+
+// ── where the links in an e-mail point ─────────────────────
+//
+// EMAIL_APP_URL already names the WebUI (…/cloud, since the landing page took
+// "/"). Two builders still appended the pre-move `/app/#/…`, producing
+// …/cloud/app/#/device/X — /app is the separate mobile PWA, a sibling of /cloud
+// and never a child of it. So the button in every alarm e-mail, and the one in
+// the rollout e-mail, led nowhere. The rest of the file had already moved to the
+// spaLink() helper; these two had not.
+describe('e-mail links point at the WebUI, not at the old /app path', () => {
+  const APP = 'https://modesp.example/cloud';
+
+  beforeAll(() => { emailSvc.__test.setClient(null, { app: APP }); });
+
+  it('the alarm e-mail opens the device page', () => {
+    const { html } = emailSvc.__test.buildEmail({
+      lang: 'uk', severity: 'critical', alarmCode: 'high_temp_alarm',
+      deviceId: 'A4CF12', deviceName: 'Камера', deviceUuid: '11111111-1111-1111-1111-111111111111',
+      timestamp: '2026-09-09T10:00:00Z',
+    });
+    expect(html).toContain(`${APP}/#/device/11111111-1111-1111-1111-111111111111`);
+    expect(html).not.toContain('/app/#/');
+  });
+
+  it('the rollout e-mail opens the firmware page', () => {
+    const { html } = emailSvc.__test.buildEmail({
+      lang: 'uk', type: 'rollout', firmwareVersion: '1.2.3', total: 10, succeeded: 9, failed: 1,
+      timestamp: '2026-09-09T10:00:00Z',
+    });
+    expect(html).toContain(`${APP}/#/firmware`);
+    expect(html).not.toContain('/app/#/');
+  });
+});

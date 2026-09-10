@@ -53,6 +53,11 @@ async function send(subscriptionJson, payload) {
 
   const { title, body, tag } = buildNotification(payload);
 
+  // /app, not /cloud: this notification is rendered by the mobile app's service
+  // worker (ModESP_PWA, a separate project served from /app — nginx even routes
+  // /app/sw.js by hand). The WebUI at /cloud has no service worker and never
+  // creates a subscription, so nothing here is ever displayed by it. The e-mail
+  // links are the opposite case and use spaLink(); do not make these match them.
   const notifPayload = JSON.stringify({
     title,
     body,
