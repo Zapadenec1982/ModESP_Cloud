@@ -9,8 +9,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:legacy": "node test/test_mqtt_logic.js",
-    "test:all": "npm run test:legacy && npm run test",
     "migrate": "node src/scripts/migrate.js",
     "check:locales": "node scripts/check-locales.js",
     "openapi:export": "node scripts/openapi-export.js",

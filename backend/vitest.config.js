@@ -8,7 +8,6 @@ export default defineConfig({
     pool: 'forks',
     fileParallelism: false,
     include: ['test/**/*.test.js'],
-    exclude: ['test/test_mqtt_logic.js'],
     globalSetup: ['test/helpers/globalSetup.js'],
     coverage: {
       provider: 'v8',
