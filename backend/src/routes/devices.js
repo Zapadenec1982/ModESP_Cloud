@@ -1690,8 +1690,10 @@ router.post('/:id/reassign', async (req, res, next) => {
       req.log?.warn?.({ err: mqttErr, mqttId }, 'Reassign: MQTT commands failed (device may be offline)');
     }
 
-    // 3. Update DB: move tenant + rotate credentials in one transaction
-    await db.transaction(async (client) => {
+    // 3. Update DB: move tenant, rotate credentials, and settle everything the
+    //    previous organisation still had open on this controller — one transaction.
+    const oldTenantId = device.tenant_id;
+    const closed = await db.transaction(async (client) => {
       await client.query(
         `UPDATE devices SET tenant_id = $1, status = 'active',
                 mqtt_username = $2, mqtt_password_hash = $3,
@@ -1704,6 +1706,44 @@ router.post('/:id/reassign', async (req, res, next) => {
         `DELETE FROM user_devices WHERE device_id = $1`,
         [device.id]
       );
+
+      // Alarms, hints, OTA jobs and work orders are keyed by the controller's id,
+      // which follows it across organisations, and carry the tenant that owned it
+      // at the time. Nothing here moves to the new owner: their contents are the
+      // previous organisation's — its temperatures, its faults, its technicians.
+      //
+      // But an open row cannot be left as it is either. The controller now
+      // publishes into another organisation's space, so the platform will never
+      // hear the message that would close it: the old owner's alarm stays active
+      // for ever, counts in their dashboard for ever, and their technician is sent
+      // to a cabinet the company no longer owns. So the open rows are settled here
+      // and the closed ones — the history — stay exactly where they are.
+      const alarms = await client.query(
+        `UPDATE alarms SET active = false, cleared_at = NOW()
+          WHERE tenant_id = $1 AND device_id = $2 AND active = true`,
+        [oldTenantId, mqttId]);
+      const hints = await client.query(
+        `UPDATE maintenance_hints
+            SET closed_at = NOW(), closed_reason = 'dismissed'
+          WHERE tenant_id = $1 AND device_id = $2 AND closed_at IS NULL`,
+        [oldTenantId, mqttId]);
+      const ota = await client.query(
+        `UPDATE ota_jobs SET status = 'cancelled', completed_at = NOW(),
+                error = COALESCE(error, 'device reassigned to another organisation')
+          WHERE tenant_id = $1 AND device_id = $2 AND status IN ('queued', 'sent')`,
+        [oldTenantId, mqttId]);
+      const orders = await client.query(
+        `UPDATE work_orders
+            SET status = 'cancelled', closed_at = NOW(), updated_at = NOW(),
+                closed_reason = 'Пристрій переведено в іншу організацію'
+          WHERE tenant_id = $1 AND (device_id = $3 OR device_mqtt_id = $2)
+            AND status IN ('new', 'assigned', 'in_progress')`,
+        [oldTenantId, mqttId, device.id]);
+
+      return {
+        alarms: alarms.rowCount, hints: hints.rowCount,
+        ota_jobs: ota.rowCount, work_orders: orders.rowCount,
+      };
     });
 
     // Record assign timestamp for stuck-device detection grace period
@@ -1730,6 +1770,8 @@ router.post('/:id/reassign', async (req, res, next) => {
         new_tenant: newSlug,
         mqtt_commands_sent: mqttSent,
         credentials_rotated: true,
+        // What the previous organisation had open and no longer can close itself.
+        closed_for_old_tenant: closed,
       },
     });
   } catch (err) {
