@@ -1651,7 +1651,10 @@ async function loadPowerProfiles() {
               COALESCE(d.defrost_heater_kw, m.defrost_heater_kw, 0) AS defrost_heater_kw,
               COALESCE(d.standby_kw, m.standby_kw, 0)        AS standby_kw
        FROM devices d
-       LEFT JOIN device_models m ON d.model_id = m.id
+       -- m.tenant_id = d.tenant_id, as on every devices↔device_models join: this
+       -- cache feeds the live energy estimate, and a stale cross-tenant model_id
+       -- would price this organisation's compressor from another one's profile.
+       LEFT JOIN device_models m ON m.id = d.model_id AND m.tenant_id = d.tenant_id
        WHERE d.status = 'active'`
     );
 

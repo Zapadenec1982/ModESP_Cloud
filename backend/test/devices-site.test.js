@@ -388,6 +388,48 @@ describe('Devices ↔ sites', () => {
       expect(res.body.error).toBe('validation_failed');
     });
 
+    // device_models is tenant-scoped exactly like sites, and PATCH checked
+    // neither. A device pointing at another organisation's power profile made the
+    // energy figures come from a stranger's equipment — and left that stranger
+    // unable to delete their own model, because devices_model_id_fkey now saw a
+    // foreign device referencing it.
+    it('rejects an equipment model belonging to another tenant with 400 invalid_model', async () => {
+      const device = await createDevice(tenantA.id, { name: 'Cross model', mqttId: nextMqttId() });
+      const { rows: [foreign] } = await db.query(
+        `INSERT INTO device_models (tenant_id, name, compressor_kw) VALUES ($1, 'Чужа бонета', 2.5) RETURNING id`,
+        [tenantB.id]);
+
+      const res = await request(app)
+        .patch(`/api/devices/${device.id}`)
+        .set(authHeader(admin, tenantA.id))
+        .send({ model_id: foreign.id });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_model');
+      expect((await readDevice(device.id)).model_id).toBeNull();
+
+      // …and its owner can still delete it, because nothing foreign points at it.
+      // devices_model_id_fkey is what made the old behaviour stick: once a
+      // stranger's device referenced the model, this DELETE raised 23503 and the
+      // owner had no way to see why.
+      await expect(db.query('DELETE FROM device_models WHERE id = $1', [foreign.id])).resolves.toBeTruthy();
+    });
+
+    it('accepts a model of the caller\'s own organisation', async () => {
+      const device = await createDevice(tenantA.id, { name: 'Own model', mqttId: nextMqttId() });
+      const { rows: [own] } = await db.query(
+        `INSERT INTO device_models (tenant_id, name, compressor_kw) VALUES ($1, 'Своя бонета', 1.8) RETURNING id`,
+        [tenantA.id]);
+
+      const res = await request(app)
+        .patch(`/api/devices/${device.id}`)
+        .set(authHeader(admin, tenantA.id))
+        .send({ model_id: own.id });
+
+      expect(res.status).toBe(200);
+      expect((await readDevice(device.id)).model_id).toBe(own.id);
+    });
+
     it("tenant B's admin cannot reach a tenant A device at all", async () => {
       const device = await createDevice(tenantA.id, { name: 'Foreign patch', mqttId: nextMqttId() });
 

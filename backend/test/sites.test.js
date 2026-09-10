@@ -440,6 +440,41 @@ describe('Sites API', () => {
       expect(res.body.data.timezone).toBe('Europe/Kyiv');
     });
 
+    // The column reaches Intl.DateTimeFormat in every report the site appears in,
+    // and an unknown name throws RangeError there — so a typo accepted here came
+    // back as a 500 on the HACCP PDF and a crashed scheduled report, long after
+    // anyone could connect the two. users.timezone was already checked this way.
+    it('refuses a time zone that is not an IANA name', async () => {
+      for (const bad of ['Kyiv', 'UTC+2', 'Europe/Atlantis']) {
+        const res = await request(app)
+          .post('/api/sites')
+          .set(authHeader(adminA, tenantA.id))
+          .send({ name: `Bad TZ ${rnd()}`, timezone: bad });
+        expect(res.status, bad).toBe(400);
+        expect(res.body.error, bad).toBe('validation_failed');
+      }
+
+      const ok = await request(app)
+        .post('/api/sites')
+        .set(authHeader(adminA, tenantA.id))
+        .send({ name: `Good TZ ${rnd()}`, timezone: 'Europe/Warsaw' });
+      expect(ok.status).toBe(201);
+      expect(ok.body.data.timezone).toBe('Europe/Warsaw');
+    });
+
+    it('does not store a time zone the weather provider returns if it is not an IANA name', async () => {
+      weatherSvc.isEnabled   = () => true;
+      weatherSvc.timezoneFor = async () => 'GMT+3';
+
+      const res = await request(app)
+        .post('/api/sites')
+        .set(authHeader(adminA, tenantA.id))
+        .send({ name: `Provider TZ ${rnd()}`, latitude: 50.4498, longitude: 30.5231 });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.timezone).toBeNull();
+    });
+
     it('duplicate name in the same tenant is a 409, case- and space-insensitive', async () => {
       // ASCII on purpose: uq_sites_tenant_name folds case with lower(), whose
       // behaviour for Cyrillic depends on the database collation.
