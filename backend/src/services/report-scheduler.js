@@ -159,8 +159,7 @@ function scheduleTimezone(schedule, tenant, sites) {
 /** `<type>_<site>_<first day>_<last day>.pdf`, the days in the site's local time. */
 function fileNameFor({ type, site, from, to, tz = DEFAULT_TZ }) {
   const name = String(site.name || 'site').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'site';
-  const lastDay = new Date(new Date(to).getTime() - 1);
-  return `${type}_${name}_${haccp.localFmt(from, tz, false)}_${haccp.localFmt(lastDay, tz, false)}.pdf`;
+  return haccp.reportFileName(`${type}_${name}`, from, to, tz);
 }
 
 async function buildReport({ type, tenant, site, from, to, bucketKey, lang, scheduleId, now }) {

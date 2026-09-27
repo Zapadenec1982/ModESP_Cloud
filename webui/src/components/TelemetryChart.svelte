@@ -829,7 +829,12 @@
   async function handleExportPdf(kind = 'haccp') {
     exporting = true;
     try {
-      const fromISO = new Date(range.from).toISOString();
+      // The PDF journals are hourly, so the period starts on a whole hour: the
+      // first row is then complete and only the newest one, up to «now», is
+      // partial — and the report marks it «until hh:mm».
+      const from = new Date(range.from);
+      from.setMinutes(0, 0, 0);
+      const fromISO = from.toISOString();
       const toISO = new Date(range.to).toISOString();
       const meta = kind === 'service'
         ? await exportServicePdf(deviceId, fromISO, toISO, '1h', $locale)

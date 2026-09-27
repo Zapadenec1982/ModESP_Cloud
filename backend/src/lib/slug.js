@@ -56,4 +56,17 @@ async function uniqueSlug(name, taken, { reserved = new Set() } = {}) {
   throw new Error('No free slug found');
 }
 
-module.exports = { slugify, uniqueSlug };
+/**
+ * Cyrillic letters to Latin, everything else untouched — for the ASCII form of
+ * a file name whose UTF-8 form a modern client reads anyway (RFC 5987).
+ */
+function transliterate(text) {
+  let out = '';
+  for (const ch of String(text || '')) {
+    const t = CYRILLIC[ch.toLowerCase()];
+    out += t === undefined ? ch : t;
+  }
+  return out;
+}
+
+module.exports = { slugify, uniqueSlug, transliterate };
