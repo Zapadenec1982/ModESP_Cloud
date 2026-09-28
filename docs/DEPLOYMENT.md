@@ -115,7 +115,8 @@ Ubuntu 24.04
 │   ├── backend.env                  # → releases/*/backend/.env (символьні посилання)
 │   ├── firmware/                    # → releases/*/backend/firmware
 │   ├── backup.env                   # → releases/*/infra/backup.env
-│   └── webui.env                    # → releases/*/webui/.env (лише для локальної збірки)
+│   ├── webui.env                    # → releases/*/webui/.env (лише для локальної збірки)
+│   └── landing-config.js            # → releases/*/landing/config.js (демо-посилання, контактна пошта)
 ├── downloads/                       # завантажені архіви і .sha256
 └── .previous                        # шлях попереднього релізу для rollback
 /opt/modesp-cloud -> /opt/modesp-releases/releases/v1.0.0
@@ -139,8 +140,10 @@ Ubuntu 24.04
 бачить hash-маршрут і перенаправляє на `/cloud/#/…`. У `backend/.env` `EMAIL_APP_URL` має
 вказувати на застосунок (`https://modesp.com.ua/cloud`), а `PUBLIC_BASE_URL` — на корінь
 (`https://modesp.com.ua`; використовується в URL перевірки звіту HACCP). `landing/config.js`
-задає адреси демо-точки, демо-кабінету, статус-сторінки і контактну пошту; форма пілота
-пише в `pilot_requests` і надсилає лист на `PILOT_REQUEST_EMAIL`.
+задає адреси демо-точки, демо-кабінету, статус-сторінки і контактну пошту; на сервері його
+редагують у `/opt/modesp-releases/shared/landing-config.js` — `deploy.sh` підставляє цей файл у
+кожен реліз, тож правки переживають оновлення (перший реліз після переходу переносить туди
+чинну копію сам). Форма пілота пише в `pilot_requests` і надсилає лист на `PILOT_REQUEST_EMAIL`.
 
 ---
 
@@ -683,7 +686,7 @@ sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекен
 ```
 
 `init` переносить checkout у `/opt/modesp-releases/releases/checkout-<час>`, виносить
-`backend/.env`, `backend/firmware`, `infra/backup.env`, `webui/.env` у `shared/`, ставить
+`backend/.env`, `backend/firmware`, `infra/backup.env`, `webui/.env`, `landing/config.js` у `shared/`, ставить
 символьні посилання назад, робить `/opt/modesp-cloud` посиланням, перевстановлює юніти
 (`ReadWritePaths` тепер включає `shared/`) і посилання nginx. Якщо `FIRMWARE_STORAGE_PATH`
 у `.env` абсолютний — каталог прошивок не чіпається.
@@ -699,7 +702,8 @@ sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0 --archive /tmp/modesp-clou
 Що робить скрипт, по кроках:
 1. завантажує архів і `.sha256` з GitHub Releases (або бере `--archive`), перевіряє контрольну суму;
 2. розпаковує в `releases/<version>`, `npm ci --omit=dev` від `modesp`;
-3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`);
+3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`, `landing-config.js`;
+   якщо конфіг лендингу ще не в `shared/`, спершу переносить туди копію з чинного релізу);
 4. `migrate.js --dry-run`, потім `migrate.js` як `postgres` через сокет, далі
    `infra/sql/app-grants.sql` і `infra/sql/check-grants.sql` — роль застосунку гарантовано
    бачить кожну нову таблицю (`--no-migrate` пропускає цей крок);
@@ -980,5 +984,6 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-09-02 — HACCP і погодинний архів: міграція 028 (`report_exports`, `telemetry_hourly`); `cleanup-telemetry.js` тепер щодня в `modesp-retention-cleanup` (згортання в архів, ретенція сирих даних за планом, партиції, архів на 3 роки), окремий `modesp-telemetry-cleanup.timer` вилучено — після оновлення виконати `systemctl disable --now modesp-telemetry-cleanup.timer` і разовий `--backfill-days`; наявні організації отримують `tenant_settings.raw_retention_days = 400` (grandfathering, скидається явною зміною плану); `EMAIL_APP_URL` потрапляє в URL перевірки звіту.
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
+- 2026-09-28 — `landing/config.js` у `shared/landing-config.js`: `deploy.sh init` переносить, перший `release` після оновлення забирає чинну копію, далі — лише посилання; `deploy.sh status` показує, де конфіг.
 - 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.
