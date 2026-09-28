@@ -617,6 +617,21 @@ async function logDelivery(tenantId, subscriberId, channel, deviceId, alarmCode,
   }
 }
 
+/** The payload of a test message: every channel renders it as «test», not as an alarm. */
+function testPayload() {
+  return {
+    deviceId:  'TEST',
+    alarmCode: 'test_notification',
+    severity:  'info',
+    active:    true,
+    airTemp:   null,
+    evapTemp:  null,
+    deviceName: 'Test Device',
+    timestamp: new Date().toISOString(),
+    isTest:    true,
+  };
+}
+
 /**
  * Send a test notification to a specific subscriber.
  */
@@ -632,26 +647,68 @@ async function testSend(tenantId, subscriberId) {
   if (!handler) throw new Error(`Channel '${sub.channel}' not configured`);
   const tenantPrefs = await tenantLocale(tenantId);
 
-  const testPayload = {
-    deviceId:  'TEST',
-    alarmCode: 'test_notification',
-    severity:  'info',
-    active:    true,
-    airTemp:   null,
-    evapTemp:  null,
-    deviceName: 'Test Device',
-    timestamp: new Date().toISOString(),
-    isTest:    true,
-  };
-
   try {
-    await handler.send(sub.address, withUserLocale(testPayload, null, tenantPrefs));
+    await handler.send(sub.address, withUserLocale(testPayload(), null, tenantPrefs));
     await logDelivery(tenantId, sub.id, sub.channel, 'TEST', 'test_notification', 'sent');
     return { status: 'sent' };
   } catch (err) {
     await logDelivery(tenantId, sub.id, sub.channel, 'TEST', 'test_notification', 'failed', err.message);
     return { status: 'failed', error: err.message };
   }
+}
+
+/**
+ * A test message to the signed-in person's own channel (the notifications
+ * page, product audit item 4): it proves the path an alarm would take — the
+ * same handler, the same recipient — instead of trusting a ticked checkbox.
+ * Logged with user_id like a real delivery, so the page can show «last
+ * delivery». Web push tries every subscribed device and counts.
+ *
+ * @returns {Promise<{ status: 'sent'|'failed', error?: string, devices?: number, sent?: number }
+ *                 | { status: 'not_ready', reason: 'channel_unavailable'|'not_linked'|'no_address'|'no_devices' }>}
+ */
+async function testSendToUser(tenantId, userId, channel) {
+  const handler = channels.get(channel);
+  if (!handler) return { status: 'not_ready', reason: 'channel_unavailable' };
+  const { rows } = await db.query(
+    'SELECT id, email, telegram_id, locale AS user_locale, timezone AS user_timezone FROM users WHERE id = $1', [userId]);
+  const user = rows[0];
+  if (!user) throw new Error('User not found');
+  const payload = withUserLocale(testPayload(), user, await tenantLocale(tenantId));
+  const ctx = { userId };
+
+  const attempt = async (target) => {
+    try {
+      await handler.send(target, payload);
+      await logDelivery(tenantId, null, channel, 'TEST', 'test_notification', 'sent', null, ctx);
+      return { status: 'sent' };
+    } catch (err) {
+      const error = String((err && (err.statusCode || err.message)) || err);
+      await logDelivery(tenantId, null, channel, 'TEST', 'test_notification', 'failed', error, ctx);
+      return { status: 'failed', error };
+    }
+  };
+
+  if (channel === 'telegram') {
+    if (user.telegram_id == null) return { status: 'not_ready', reason: 'not_linked' };
+    return attempt(String(user.telegram_id));
+  }
+  if (channel === 'email') {
+    if (!user.email) return { status: 'not_ready', reason: 'no_address' };
+    return attempt(user.email);
+  }
+  if (channel === 'webpush') {
+    const { rows: subs } = await db.query(
+      'SELECT endpoint, key_p256dh, key_auth FROM push_subscriptions WHERE user_id = $1 AND active = true', [userId]);
+    if (!subs.length) return { status: 'not_ready', reason: 'no_devices' };
+    let sent = 0, error = null;
+    for (const s of subs) {
+      const r = await attempt({ endpoint: s.endpoint, keys: { p256dh: s.key_p256dh, auth: s.key_auth } });
+      if (r.status === 'sent') sent++; else error = r.error;
+    }
+    return sent > 0 ? { status: 'sent', devices: subs.length, sent } : { status: 'failed', devices: subs.length, sent, error };
+  }
+  return { status: 'not_ready', reason: 'channel_unavailable' };
 }
 
 /** Delivery health per registered channel (empty when nothing is configured). */
@@ -662,7 +719,7 @@ function channelHealth() {
 }
 
 module.exports = {
-  registerChannel, start, shutdown, testSend, channelHealth, notifyHint, notifyRollout, notifyWorkOrder,
+  registerChannel, start, shutdown, testSend, testSendToUser, channelHealth, notifyHint, notifyRollout, notifyWorkOrder,
   // test/notifications-dispatch.test.js drives the dispatch without a broker
   __test: { withUserLocale, tenantLocale,
     handleAlarm, dispatchToLinkedUsers, runEscalations, evaluatePrefs, inQuietHours,

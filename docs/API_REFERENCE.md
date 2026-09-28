@@ -2002,6 +2002,27 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 застосунок** (ModESP_PWA на `/app`), бо service worker належить йому; WebUI на `/cloud` його не
 має і підписати не може. Нуль означає, що канал увімкнений, але доставляти нікуди.
 
+`channels` (лише у відповіді `GET`) — стан кожного каналу для того, хто запитує (продуктовий аудит, п. 4):
+```json
+{ "telegram": { "available": true, "bot_username": "modesp_bot", "linked": false, "last": null },
+  "webpush":  { "available": true, "devices": 1, "last": { "status": "sent", "at": "2026-09-28T07:00:00Z", "error": null } },
+  "email":    { "available": false, "address": "tech@example.com", "last": null } }
+```
+`available` — канал налаштований на платформі (бот, VAPID-ключі, поштовий провайдер); `linked` /
+`devices` / `address` — чи є куди доставляти саме цій людині; `last` — останній запис
+`notification_log` цієї людини на каналі (тест або справжня аварія), `null` — ще не було. Галочки
+`telegram` / `webpush` / `email` лишаються побажанням «надсилати сюди» і стану каналу не змінюють.
+
+### `POST /profile/notifications/test`
+Тестове повідомлення на власний канал тим самим шляхом і на ту саму адресу, що йде аварія:
+```json
+{ "channel": "telegram" }
+```
+`200` — `{ "status": "sent" }` або `{ "status": "failed", "error": "…" }` (для `webpush` ще `devices` і
+`sent` — скільком пристроям дійшло); спроба записується в `notification_log` з `user_id`, тож стає
+`last` у `GET`. `409 channel_not_ready` з `reason` — `not_linked`, `no_devices`, `no_address`,
+`channel_unavailable` — коли канал не можна навіть спробувати; `400` — невідомий канал.
+
 ---
 
 ## Публічна сторінка статусу точки
