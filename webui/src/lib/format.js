@@ -64,6 +64,33 @@ export function formatDuration(seconds) {
 }
 
 /**
+ * How long ago something started, in whole units, coarsest two: "12 хв",
+ * "3 год 20 хв", "2 дн 4 год". For the dashboard's «поза межею N хв» and the
+ * durations in «Потребують уваги» — timeAgo() says "2 год тому", which reads as a
+ * moment, while this reads as a span that is still running. Under a minute: "<1 хв".
+ * @param {string|Date} since
+ * @param {number} [now=Date.now()]
+ * @returns {string}
+ */
+export function durationSince(since, now = Date.now()) {
+  if (!since) return '—'
+  const then = new Date(since).getTime()
+  if (Number.isNaN(then)) return '—'
+  const tr = get(t)
+  const minutes = Math.max(0, Math.floor((now - then) / 60000))
+  if (minutes < 1) return `<1 ${tr('time.min')}`
+  if (minutes < 60) return `${minutes} ${tr('time.min')}`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    const m = minutes % 60
+    return m ? `${hours} ${tr('time.h')} ${m} ${tr('time.min')}` : `${hours} ${tr('time.h')}`
+  }
+  const days = Math.floor(hours / 24)
+  const h = hours % 24
+  return h ? `${days} ${tr('time.d')} ${h} ${tr('time.h')}` : `${days} ${tr('time.d')}`
+}
+
+/**
  * Human-readable alarm label (alarm_code → display name).
  * Uses i18n dictionary key `alarm.{code}` with fallback to humanized code.
  * @param {string} code

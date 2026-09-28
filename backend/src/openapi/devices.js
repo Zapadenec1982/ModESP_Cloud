@@ -32,11 +32,15 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
     ...SiteColumns,
     hints_open: z.number().int().openapi({ description: 'Open maintenance hints' }),
     alarms_open: z.number().int().openapi({ description: 'Alarms the platform recorded for this device and has not cleared — the same rows GET /alarms returns. Anything a UI calls an alarm counts these.' }),
+    alarm_codes: z.array(z.string()).openapi({ description: 'Codes of the open alarms counted in `alarms_open`, oldest first, each once (`high_temp_alarm`, `door_alarm` …). Empty when none.', example: ['high_temp_alarm'] }),
+    temp_alarm_since: isoDate.nullable().openapi({ description: 'When the oldest open temperature alarm (`high_temp_alarm` / `low_temp_alarm`) was raised: how long the product has been out of its range. null while no temperature alarm is open.' }),
     alarm_active: z.boolean().openapi({ description: "The controller's own aggregate alarm flag, live from the device. True the moment a door opens, before the nuisance delay decides whether that is an alarm at all, so it is a state readout and not a count." }),
     air_temp: z.number().nullable().openapi({ description: 'Last air temperature, °C', example: -18.4 }),
     door_open: z.boolean().nullable(),
+    compressor: z.boolean().nullable().openapi({ description: 'Compressor running, live from the device (`equipment.compressor`). null when the device has not published the key.' }),
+    defrost: z.boolean().nullable().openapi({ description: 'Defrost cycle in progress, live from the device (`defrost.active`). null when the device has not published the key.' }),
   }));
-  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarm_active: true, air_temp: true, door_open: true }).extend({
+  const DeviceDetail = registry.register('DeviceDetail', DeviceListItem.omit({ hints_open: true, alarm_codes: true, temp_alarm_since: true, alarm_active: true, air_temp: true, door_open: true, compressor: true, defrost: true }).extend({
     proto_version: z.number().int().nullable(),
     last_state: z.record(z.any()).nullable().openapi({ description: 'Latest reported state keyed by parameter (`thermostat.setpoint`, `sensors.air` …); see `GET /meta` for the key registry' }),
     tenant_id: uuid, tenant_slug: z.string(),
