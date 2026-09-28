@@ -181,7 +181,7 @@ Invalid cross-device link`).
 ```bash
 cd /root/restore/x
 tar -xzf files.tar.gz -C / --no-same-owner --keep-directory-symlink --exclude=opt/modesp-cloud
-# відновлює /opt/modesp-releases/shared/{backend.env,webui.env,backup.env,firmware/},
+# відновлює /opt/modesp-releases/shared/{backend.env,webui.env,backup.env,landing-config.js,firmware/},
 # /etc/mosquitto/…, /etc/letsencrypt/…, /etc/nginx/…, /etc/systemd/system/modesp-*
 
 S=<shared_dir з manifest.txt>        # напр. /opt/modesp-releases/shared
@@ -189,6 +189,7 @@ ln -sfn "$S/backend.env" /opt/modesp-cloud/backend/.env
 rm -rf /opt/modesp-cloud/backend/firmware && ln -sfn "$S/firmware" /opt/modesp-cloud/backend/firmware
 [ -f "$S/backup.env" ] && ln -sfn "$S/backup.env" /opt/modesp-cloud/infra/backup.env
 [ -f "$S/webui.env" ]  && ln -sfn "$S/webui.env"  /opt/modesp-cloud/webui/.env
+[ -f "$S/landing-config.js" ] && ln -sfn "$S/landing-config.js" /opt/modesp-cloud/landing/config.js
 
 # власники й права — як після deploy.sh init
 chown modesp:modesp "$S/backend.env" && chmod 600 "$S/backend.env"

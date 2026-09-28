@@ -692,7 +692,7 @@ sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекен
 у `.env` абсолютний — каталог прошивок не чіпається.
 
 Бекап окремого кроку не потребує: `backup-postgres.sh` сам бачить `shared/`, архівує його цілком (у
-релізі ці чотири шляхи — лише символьні посилання, а tar зберігає посилання без вмісту) і пише в
+релізі ці шляхи — лише символьні посилання, а tar зберігає посилання без вмісту) і пише в
 `manifest.txt` `layout=release`. Відновлення такої розкладки — `docs/runbooks/restore.md`, кроки 3б
 і 6б.
 
@@ -940,8 +940,8 @@ systemctl list-timers 'modesp-*'
 | `db.dump` | `pg_dump --format=custom --no-owner` бази `modesp_cloud` (стиснений, для `pg_restore`) |
 | `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto`, `/etc/letsencrypt`, конфіг nginx, юніти systemd, `infra/backup.env`; у релізній розкладці — ще весь `/opt/modesp-releases/shared` |
 
-**Релізна розкладка.** Після `deploy.sh init` `backend/.env`, `backend/firmware`, `infra/backup.env`
-і `webui/.env` у релізі — символьні посилання на `/opt/modesp-releases/shared/`, а tar зберігає
+**Релізна розкладка.** Після `deploy.sh init` `backend/.env`, `backend/firmware`, `infra/backup.env`,
+`webui/.env` і `landing/config.js` у релізі — символьні посилання на `/opt/modesp-releases/shared/`, а tar зберігає
 посилання з командного рядка як посилання, без вмісту. Тому скрипт, щойно бачить
 `${MODESP_RELEASES:-/opt/modesp-releases}/shared`, архівує його цілком, а в `manifest.txt` пише
 `layout=release`, `release_dir` і `shared_dir` (на git-checkout — `layout=checkout`). Розіменування
@@ -1005,5 +1005,6 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
 - 2026-09-28 — `landing/config.js` у `shared/landing-config.js`: `deploy.sh init` переносить, перший `release` після оновлення забирає чинну копію, далі — лише посилання; `deploy.sh status` показує, де конфіг.
+- 2026-09-28 — Бекап релізної розкладки: `backup-postgres.sh` архівує `shared/` цілком (посилання в релізі tar зберігав без вмісту), кожен шлях — один раз, `layout`/`release_dir`/`shared_dir` у `manifest.txt`; змінні `BACKUP_EXTRA_PATHS` і `MODESP_RELEASES` у таблиці; `restore.md` — гілки 3а/3б і 6а/6б.
 - 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

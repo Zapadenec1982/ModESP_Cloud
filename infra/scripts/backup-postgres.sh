@@ -82,11 +82,11 @@ FW_PATH="${FW_PATH#./}"; FCM_PATH="${FCM_PATH#./}"
 [ -n "$FCM_PATH" ] && [ "${FCM_PATH#/}" = "$FCM_PATH" ] && FCM_PATH="$APP_DIR/backend/$FCM_PATH"
 
 # Release layout (infra/deploy.sh init — APP_DIR is a symlink, the same test
-# deploy.sh uses): backend/.env, backend/firmware, infra/backup.env and
-# webui/.env are symlinks into SHARED_DIR. tar keeps a symlink named on its
-# command line as a symlink, without the file behind it, so SHARED_DIR itself
-# is archived. Nothing is dereferenced: /etc/letsencrypt/live/* must come back
-# as symlinks for certbot.
+# deploy.sh uses): backend/.env, backend/firmware, infra/backup.env,
+# webui/.env and landing/config.js are symlinks into SHARED_DIR. tar keeps a
+# symlink named on its command line as a symlink, without the file behind it,
+# so SHARED_DIR itself is archived. Nothing is dereferenced:
+# /etc/letsencrypt/live/* must come back as symlinks for certbot.
 SHARED_DIR="${MODESP_RELEASES:-/opt/modesp-releases}/shared"
 LAYOUT=checkout
 [ -L "$APP_DIR" ] && LAYOUT=release
