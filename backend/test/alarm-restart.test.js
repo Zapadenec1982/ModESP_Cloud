@@ -26,14 +26,7 @@ async function activeAlarms(code) {
   return rows[0].n;
 }
 
-/** Yield to the event loop until cond() holds (I/O completes between iterations). */
-async function waitFor(cond, iterations = 200) {
-  for (let i = 0; i < iterations; i++) {
-    if (await cond()) return true;
-    await new Promise(r => setImmediate(r));
-  }
-  return false;
-}
+const { waitFor } = require('./helpers/wait');
 
 afterAll(async () => {
   await shutdownDb();
@@ -130,7 +123,7 @@ describe('nuisance alarms across a backend restart', () => {
     expect(T.pendingAlarms.size).toBe(0);
 
     await vi.advanceTimersByTimeAsync(DOOR_DELAY + 10);
-    await waitFor(async () => false, 20);
+    await waitFor(async () => false, 50);   // 50 ms for anything still in flight to land
     expect(await activeAlarms('door_alarm')).toBe(0);
   });
 

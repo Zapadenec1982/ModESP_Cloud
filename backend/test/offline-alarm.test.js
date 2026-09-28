@@ -15,13 +15,7 @@ const T = mqttSvc.__test;
 const SLUG = 'offline-test';
 const DEV  = 'OFF001';
 
-async function waitFor(cond, iterations = 200) {
-  for (let i = 0; i < iterations; i++) {
-    if (await cond()) return true;
-    await new Promise(r => setImmediate(r));
-  }
-  return false;
-}
+const { waitFor } = require('./helpers/wait');
 
 afterAll(async () => { await shutdownDb(); });
 
