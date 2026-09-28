@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-28
+
 ### Додано
 - **Головна панель показує роботу на сьогодні** (аудит продукту, пункт 1). Перший екран був
   переліком карток за назвою: лічильники зверху не натискалися, картка не казала, якою має бути
@@ -685,5 +687,6 @@
 030 (ціни планів, `pilot_requests`), 031 (функції `weather`/`routing`).
 Застосувати `migrate.js` як власник схеми, потім `infra/sql/app-grants.sql`.
 
-[Unreleased]: https://github.com/Zapadenec1982/ModESP_Cloud/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Zapadenec1982/ModESP_Cloud/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Zapadenec1982/ModESP_Cloud/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Zapadenec1982/ModESP_Cloud/releases/tag/v1.0.0
