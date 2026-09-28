@@ -7,6 +7,34 @@
 
 ## [Unreleased]
 
+### Виправлено
+- **Ключ FCM переживає реліз.** `docs/DEPLOYMENT.md` радив
+  `FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-cloud/backend/fcm-service-account.json`, але після
+  `deploy.sh init` `/opt/modesp-cloud` — посилання на реліз, а кожен `deploy.sh release` розпаковує
+  новий каталог з архіву, де ключа немає. `init` виносив у `shared/` лише `.env`, прошивки,
+  `backup.env`, `webui/.env` і конфіг лендингу, тож ключ лишався в каталозі колишнього checkout: після
+  першого ж релізу бекенд його не знаходив і вимикав мобільний push («FCM initialization failed» у
+  журналі, а `/api/health` лишався `ok`, тож health-гейт релізу цього не помічав), бекап мовчки
+  пропускав шлях, бо файлу там уже не було, а очищення старих релізів урешті видаляло і сам ключ.
+  Відносний шлях (`./fcm-service-account.json`) мав ту саму ваду.
+
+  Тепер, коли `FCM_SERVICE_ACCOUNT_PATH` вказує всередину checkout (відносний шлях — від `backend/` —
+  або шлях під `/opt/modesp-cloud`), `init` переносить ключ у `shared/fcm-service-account.json`
+  (`modesp:modesp`, `600`) і лишає на старому місці посилання, а кожен `release` ставить таке саме
+  посилання в новий реліз — `.env` правити не треба. Якщо ключ є і в checkout, і вже в `shared/`,
+  `init` зупиняється до будь-яких змін; якщо шлях вказує в реліз, а ключа в `shared/` немає, `init` і
+  `release` пишуть попередження. `DEPLOYMENT.md` тепер радить повний шлях
+  `/opt/modesp-releases/shared/fcm-service-account.json`: так ключ не залежить від посилань у релізі, а
+  бекап архівує сам файл, а не посилання.
+
+  **Сервер, де `init` уже виконано з ключем усередині checkout**, потребує одного ручного кроку:
+  перенести ключ з `releases/checkout-<час>/backend/` у `shared/fcm-service-account.json`
+  (`modesp:modesp`, `600`), поставити на нього посилання в чинному релізі, вказати в
+  `shared/backend.env` `FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-releases/shared/fcm-service-account.json`
+  і перезапустити бекенд. Повний шлях тут обов'язковий: реліз із цим виправленням встановлює
+  `deploy.sh` попереднього релізу, який про ключ ще не знає, і релізи, залишені для відкату, посилання
+  не мають.
+
 ## [1.2.0] — 2026-09-28
 
 ### Додано
