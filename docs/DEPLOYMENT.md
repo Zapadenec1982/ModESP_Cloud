@@ -116,7 +116,8 @@ Ubuntu 24.04
 │   ├── firmware/                    # → releases/*/backend/firmware
 │   ├── backup.env                   # → releases/*/infra/backup.env
 │   ├── webui.env                    # → releases/*/webui/.env (лише для локальної збірки)
-│   └── landing-config.js            # → releases/*/landing/config.js (демо-посилання, контактна пошта)
+│   ├── landing-config.js            # → releases/*/landing/config.js (демо-посилання, контактна пошта)
+│   └── fcm-service-account.json     # ключ FCM; → releases/*/<шлях>, лише якщо FCM_SERVICE_ACCOUNT_PATH вказує в реліз
 ├── downloads/                       # завантажені архіви і .sha256
 └── .previous                        # шлях попереднього релізу для rollback
 /opt/modesp-cloud -> /opt/modesp-releases/releases/v1.0.0
@@ -493,8 +494,9 @@ AUTH_ENABLED=true
 MQTT_BOOTSTRAP_PASSWORD=shared_bootstrap_password_here
 MQTT_PUBLIC_HOST=modesp.com.ua
 
-# Firebase FCM (опціонально) — шлях до JSON сервісного акаунта, не server key
-FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-cloud/backend/fcm-service-account.json
+# Firebase FCM (опціонально) — шлях до JSON сервісного акаунта, не server key.
+# Ключ лежить поза релізом, у shared/ — див. «Ключ FCM» нижче
+FCM_SERVICE_ACCOUNT_PATH=/opt/modesp-releases/shared/fcm-service-account.json
 
 # Telegram (опціонально)
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -545,6 +547,22 @@ ORS_TIMEOUT_MS=10000
 | `WEATHER_RETENTION_DAYS` | глибина `weather_observations`; чистить таймер `modesp-retention-cleanup.timer` (розділ «Таймери systemd») |
 | `OSRM_URL=` | планувальник обʼїзду лишається робочим: порядок рахується по прямій, deep-link Google Maps працює завжди |
 | `ORS_API_KEY=` | ізохрони стають наближеними кільцями і **видимо позначаються** такими в UI. Гейт стоїть саме на ключі, не на `ORS_URL` |
+
+**Ключ FCM** кладуть поза каталогом застосунку: після `deploy.sh init` `/opt/modesp-cloud` — лише
+посилання на поточний реліз, кожен `deploy.sh release` розпаковує новий каталог з архіву, де ключа
+немає, а старі релізи з часом видаляються. Його місце — `shared/` розкладки релізів, а
+`FCM_SERVICE_ACCOUNT_PATH` називає файл повним шляхом, як у прикладі вище: тоді ключ не залежить від
+посилань у релізі, а бекап архівує сам файл. Так само й на сервері, що ще працює з git-checkout, —
+`init` цей каталог лише доповнить. Порожнє значення вимикає мобільний push (FCM); решта каналів
+працює.
+
+```bash
+sudo install -D -o modesp -g modesp -m 600 fcm-service-account.json /opt/modesp-releases/shared/fcm-service-account.json
+```
+
+Шлях усередину checkout — відносний (від `backend/`) або під `/opt/modesp-cloud` — теж переживає
+релізи: `deploy.sh init` переносить ключ у `shared/` і лишає на його місці посилання (розділ «Один
+раз: перехід із git-checkout на розкладку релізів»).
 
 Створити адміністратора:
 
@@ -691,6 +709,14 @@ sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекен
 (`ReadWritePaths` тепер включає `shared/`) і посилання nginx. Якщо `FIRMWARE_STORAGE_PATH`
 у `.env` абсолютний — каталог прошивок не чіпається.
 
+Ключ FCM переїжджає туди ж, коли `FCM_SERVICE_ACCOUNT_PATH` вказує всередину checkout (відносний
+шлях — від `backend/` — або шлях під `/opt/modesp-cloud`): файл стає `shared/fcm-service-account.json`
+(`modesp:modesp`, `600`), на старому місці лишається посилання, а кожен `release` ставить таке саме в
+новий реліз, тож `.env` правити не треба. Шлях поза checkout, як-от рекомендований у `shared/`, `init`
+не чіпає. Якщо ключ є і в checkout, і вже в `shared/`, `init` зупиняється до будь-яких змін — лишіть
+один. Коли шлях вказує в реліз, а `shared/fcm-service-account.json` немає, `init` і `release` пишуть
+`WARNING`: такий реліз стартує без FCM, і health-гейт цього не помітить — `/api/health` лишається `ok`.
+
 ### Реліз
 
 ```bash
@@ -702,8 +728,9 @@ sudo /opt/modesp-cloud/infra/deploy.sh release v1.0.0 --archive /tmp/modesp-clou
 Що робить скрипт, по кроках:
 1. завантажує архів і `.sha256` з GitHub Releases (або бере `--archive`), перевіряє контрольну суму;
 2. розпаковує в `releases/<version>`, `npm ci --omit=dev` від `modesp`;
-3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`, `landing-config.js`;
-   якщо конфіг лендингу ще не в `shared/`, спершу переносить туди копію з чинного релізу);
+3. підключає `shared/` (символьні посилання на `.env`, прошивки, `backup.env`, `landing-config.js`
+   і ключ FCM, якщо `FCM_SERVICE_ACCOUNT_PATH` вказує в реліз; якщо конфіг лендингу ще не в
+   `shared/`, спершу переносить туди копію з чинного релізу);
 4. `migrate.js --dry-run`, потім `migrate.js` як `postgres` через сокет, далі
    `infra/sql/app-grants.sql` і `infra/sql/check-grants.sql` — роль застосунку гарантовано
    бачить кожну нову таблицю (`--no-migrate` пропускає цей крок);
@@ -985,5 +1012,6 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
 - 2026-09-28 — `landing/config.js` у `shared/landing-config.js`: `deploy.sh init` переносить, перший `release` після оновлення забирає чинну копію, далі — лише посилання; `deploy.sh status` показує, де конфіг.
+- 2026-09-29 — Ключ FCM у `shared/fcm-service-account.json`: приклад `.env` називає його повним шляхом замість `/opt/modesp-cloud/backend/…`, новий абзац «Ключ FCM»; `deploy.sh init` переносить ключ, на який `FCM_SERVICE_ACCOUNT_PATH` вказує всередині checkout, і лишає посилання, `release` ставить таке саме в кожен новий реліз.
 - 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.

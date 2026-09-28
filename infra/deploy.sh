@@ -9,7 +9,7 @@
 #
 # Layout (after init):
 #   /opt/modesp-releases/releases/<version>/   extracted archives (build-release.sh)
-#   /opt/modesp-releases/shared/               backend.env, firmware/, backup.env, webui.env
+#   /opt/modesp-releases/shared/               backend.env, firmware/, backup.env, webui.env, FCM key
 #   /opt/modesp-releases/downloads/            fetched archives + checksums
 #   /opt/modesp-cloud -> releases/<version>    the symlink every unit, nginx and script uses
 #
@@ -25,6 +25,7 @@ BASE="${MODESP_RELEASES:-/opt/modesp-releases}"
 RELEASES="$BASE/releases"
 SHARED="$BASE/shared"
 DOWNLOADS="$BASE/downloads"
+FCM_KEY="$SHARED/fcm-service-account.json"
 APP_USER="${APP_USER:-modesp}"
 REPO="${MODESP_REPO:-Zapadenec1982/ModESP_Cloud}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/api/health}"
@@ -65,6 +66,18 @@ restart_backend() {
   systemctl restart modesp-backend
 }
 
+# FCM_SERVICE_ACCOUNT_PATH names a file anywhere. When it points inside the app
+# (relative paths start at backend/, the unit's WorkingDirectory — what
+# path.resolve() in fcm.js sees), the key lives in shared/ and every release
+# gets a link at that place; a path outside the app is left alone.
+fcm_in_release() {  # fcm_in_release ENV_FILE -> the key's path relative to the release, or nothing
+  local p; p="$(env_value FCM_SERVICE_ACCOUNT_PATH "$1")"
+  [ -n "$p" ] || return 0
+  [ "${p#/}" = "$p" ] && p="$APP_LINK/backend/$p"
+  p="$(realpath -sm "$p")"
+  case "$p" in "$APP_LINK"/*) echo "${p#"$APP_LINK"/}" ;; esac
+}
+
 link_shared() {  # link_shared RELEASE_DIR
   local dir="$1"
   ln -sfn "$SHARED/backend.env" "$dir/backend/.env"
@@ -78,6 +91,13 @@ link_shared() {  # link_shared RELEASE_DIR
   # Landing settings (demo links, contact e-mail) are edited on the server, so
   # they live in shared/ too — otherwise every release put the defaults back.
   [ -f "$SHARED/landing-config.js" ] && ln -sfn "$SHARED/landing-config.js" "$dir/landing/config.js"
+  local fcm; fcm="$(fcm_in_release "$SHARED/backend.env")"
+  if [ -n "$fcm" ] && [ -f "$FCM_KEY" ]; then
+    mkdir -p "$(dirname "$dir/$fcm")"
+    ln -sfn "$FCM_KEY" "$dir/$fcm"
+  elif [ -n "$fcm" ] && [ ! -e "$dir/$fcm" ]; then
+    log "WARNING: FCM_SERVICE_ACCOUNT_PATH points into the release ($fcm), but $FCM_KEY does not exist — this release starts without FCM"
+  fi
   return 0
 }
 
@@ -153,11 +173,19 @@ cmd_init() {
   [ -L "$APP_LINK" ] && die "$APP_LINK is already a symlink — init was done"
   [ -d "$APP_LINK" ] || die "no checkout at $APP_LINK"
   [ -f "$APP_LINK/backend/.env" ] || die "$APP_LINK/backend/.env not found"
+  # The FCM key moves too when FCM_SERVICE_ACCOUNT_PATH points inside the checkout.
+  local fcm fcm_line=""
+  fcm="$(fcm_in_release "$APP_LINK/backend/.env")"
+  { [ -n "$fcm" ] && [ -f "$APP_LINK/$fcm" ] && [ ! -L "$APP_LINK/$fcm" ]; } || fcm=""
+  if [ -n "$fcm" ]; then
+    [ ! -e "$FCM_KEY" ] || die "FCM key found twice: $APP_LINK/$fcm (FCM_SERVICE_ACCOUNT_PATH) and $FCM_KEY — remove one, or point FCM_SERVICE_ACCOUNT_PATH at $FCM_KEY"
+    fcm_line=$'\n'"  $fcm (FCM_SERVICE_ACCOUNT_PATH) -> $FCM_KEY"
+  fi
   if [ "$yes" != "1" ]; then
     cat <<MSG
 This converts $APP_LINK (a git checkout) into the release layout:
   $APP_LINK             -> $RELEASES/checkout-<stamp> (symlink)
-  backend/.env, backend/firmware, infra/backup.env, webui/.env, landing/config.js -> $SHARED/
+  backend/.env, backend/firmware, infra/backup.env, webui/.env, landing/config.js -> $SHARED/$fcm_line
 The backend is stopped for the move and started again (health-gated).
 Re-run with --yes to proceed.
 MSG
@@ -173,6 +201,11 @@ MSG
   mv "$APP_LINK" "$checkout"
 
   mv "$checkout/backend/.env" "$SHARED/backend.env"
+  # Before firmware/: the key may sit in a directory that moves as a whole.
+  if [ -n "$fcm" ]; then
+    mv "$checkout/$fcm" "$FCM_KEY"
+    chown "$APP_USER:$APP_USER" "$FCM_KEY"; chmod 600 "$FCM_KEY"
+  fi
   local fw; fw="$(env_value FIRMWARE_STORAGE_PATH "$SHARED/backend.env")"
   if [ -z "$fw" ] || [ "${fw#/}" = "$fw" ]; then
     if [ -d "$checkout/backend/firmware" ] && [ ! -L "$checkout/backend/firmware" ]; then
