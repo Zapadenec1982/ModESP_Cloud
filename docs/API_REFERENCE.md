@@ -808,6 +808,10 @@ Max range: 31 day.
 
 **Query params:** `active=true`, `from`, `to`, `limit`, `severity=critical,warning`
 
+Кожен рядок називає обладнання і точку поряд з MQTT-ідентифікатором: `device_name`, `mqtt_device_id`,
+`site_id`, `site_name` (`null`, якщо пристрій не призначено на точку) — інтерфейс показує «Точка → Обладнання»,
+а ідентифікатор лишає дрібним для техніка.
+
 ### `GET /alarms/stats`
 Статистика частоти аварій за період.
 
