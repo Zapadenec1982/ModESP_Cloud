@@ -120,6 +120,8 @@
       <div class="section-header"><h2><Icon name="help-circle" size={16} /> {$t('support.title')}</h2></div>
       <div class="body">
         <p class="intro">{$t('support.intro')}</p>
+        <!-- The learning route (audit item 8): the role guide and the first-run chain -->
+        <a class="start-link" href="#/start"><Icon name="compass" size={14} /> {$t('support.start_link')} →</a>
         {#if info && (info.email || info.telegram || info.docs_url)}
           <ul class="contacts">
             {#if info.email}<li><Icon name="send" size={14} /> <a href="mailto:{info.email}">{info.email}</a></li>{/if}
@@ -241,6 +243,8 @@
   .chip { margin-left: 0; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text-muted); }
   .body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
   .intro { margin: 0; font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.5; }
+  .start-link { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); font-weight: 500; color: var(--accent-blue); text-decoration: none; }
+  .start-link:hover { text-decoration: underline; }
   .contacts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
   .contacts li { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .contacts a { color: var(--accent-blue); text-decoration: none; }

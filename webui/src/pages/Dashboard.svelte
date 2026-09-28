@@ -3,13 +3,14 @@
   import { querystring } from 'svelte-spa-router'
   import { getDevices, deleteDevicesBulk, exportDevicesCsv, getHaccpPresets, setHaccpBulk, getAlarms, getWorkOrders, getSite } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { devices, isSuperAdmin, isAdmin, navigate } from '../lib/stores.js'
+  import { devices, isSuperAdmin, isAdmin, authUser, navigate } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import { tempState, haccpRangeLabel, isTempAlarm } from '../lib/haccp.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
   import AttentionList from '../components/dashboard/AttentionList.svelte'
   import OnboardingChecklist from '../components/dashboard/OnboardingChecklist.svelte'
+  import RoleStart from '../components/dashboard/RoleStart.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
   import DeviceCard from '../components/DeviceCard.svelte'
   import DeviceListRow from '../components/dashboard/DeviceListRow.svelte'
@@ -222,6 +223,12 @@
   $: alarmCount = $devices.filter(d => (d.alarms_open || 0) > 0).length
   $: hintCount = $devices.filter(d => (d.hints_open || 0) > 0).length
 
+  // The role's own start block (audit item 8): the technician's «Моя робота»
+  // goes before the attention list — their own orders are the first thing they
+  // came for; the admin's «Сервіс» and the superadmin's «Платформа» come after
+  // it, once the trouble of the day is on screen.
+  $: isTechnician = $authUser?.role === 'technician'
+
   // ── «Потребують уваги»: the alarms and the open orders behind its rows ──
   // Alarms carry the reason and the age. Open orders (new, assigned, in
   // progress) carry the assignee, which is what the «responsible» column shows;
@@ -412,9 +419,17 @@
     on:select={(e) => (filter = e.detail)}
   />
 
+  {#if !loading && !error && isTechnician}
+    <RoleStart devices={$devices} orders={openOrders} {now} />
+  {/if}
+
   {#if !loading && !error && totalCount > 0}
     <!-- The work of today: alarms, out-of-range, offline, hints, unassigned orders -->
     <AttentionList devices={$devices} alarms={activeAlarms} orders={openOrders} {now} />
+  {/if}
+
+  {#if !loading && !error && !isTechnician}
+    <RoleStart devices={$devices} orders={openOrders} {now} />
   {/if}
 
   {#if $isAdmin && !$isSuperAdmin}

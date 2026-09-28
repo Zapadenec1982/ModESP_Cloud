@@ -167,6 +167,11 @@
   <!-- Footer -->
   <div class="sidebar-footer">
     <ConnectionStatus compact={$sidebarCollapsed} />
+    <!-- Getting started (audit item 8): what this role sees and where to begin; the first-run chain for an admin -->
+    <a class="status-link" class:compact={$sidebarCollapsed} class:active={$location.startsWith('/start')} href="#/start" title={$t('nav.start')}>
+      <Icon name="compass" size={14} />
+      {#if !$sidebarCollapsed}<span class="truncate">{$t('nav.start')}</span>{/if}
+    </a>
     <!-- Support (plan epic 2.13): the form and the person's requests -->
     <a class="status-link" class:compact={$sidebarCollapsed} class:active={$location.startsWith('/support')} href="#/support" title={$t('nav.support')}
        on:click={rememberSupportOrigin}>
