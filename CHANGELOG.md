@@ -7,6 +7,35 @@
 
 ## [Unreleased]
 
+### Виправлено
+- **Бекап у релізній розкладці не містив ні секретів, ні прошивок** (виявлено на продакшені
+  2026-09-28). Після `deploy.sh init` шляхи, які архівує `backup-postgres.sh`, — `backend/.env`,
+  `webui/.env`, `infra/backup.env`, `backend/firmware` — стали символьними посиланнями на
+  `/opt/modesp-releases/shared/`, а GNU tar зберігає посилання, назване в командному рядку, як
+  посилання: у `files.tar.gz` лежало `opt/modesp-cloud/backend/.env -> /opt/modesp-releases/shared/backend.env`
+  і жодного байта самого файлу. Скрипт при цьому завершувався успішно, маркер `last-success`
+  оновлювався, `/api/health` казав `backup: ok` — а відновлення з такого архіву лишилося б без `.env`
+  з паролями й ключами і без прошивок.
+
+  Тепер скрипт сам додає `${MODESP_RELEASES:-/opt/modesp-releases}/shared`, коли каталог існує, — з
+  усім, що там лежить, включно з `landing-config.js`, — і кожен шлях архівує один раз (повторений
+  шлях tar зберіг би двічі). `manifest.txt` записує
+  розкладку — `layout=release` з `release_dir` і `shared_dir` або `layout=checkout`, — посилання в
+  переліку файлів позначені стрілкою `->`, а посилання, чия ціль не потрапила в архів, скрипт
+  називає в журналі. `tar --dereference` свідомо не ввімкнено: `/etc/letsencrypt/live/*` мають
+  повернутися посиланнями. `infra/backup.env.example` описує `MODESP_RELEASES`.
+
+  Runbook відновлення (`docs/runbooks/restore.md`) отримав окремий шлях для релізної розкладки:
+  той самий реліз з GitHub Releases у `release_dir`, `shared/` з архіву на своє місце і посилання,
+  як їх ставить `deploy.sh` (кроки 3б і 6б; `opt/modesp-cloud/…` з архіву пропускається — крізь
+  абсолютне посилання `/opt/modesp-cloud` tar 1.35 не пише, `Invalid cross-device link`), а також
+  перевірку, що секрети справді в архіві, і посилання `/var/www/modesp/landing`, якого бракувало
+  лендингу.
+
+  **На продакшені** рядок `BACKUP_EXTRA_PATHS=/opt/modesp-releases/shared` у `shared/backup.env` —
+  ручний обхід того ж дня — стає зайвим, але нешкідливим; прибрати його можна будь-коли. Архіви,
+  зроблені після `init` до цього обходу, секретів не містять.
+
 ## [1.2.0] — 2026-09-28
 
 ### Додано

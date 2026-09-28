@@ -691,6 +691,11 @@ sudo /opt/modesp-cloud/infra/deploy.sh init --yes    # зупиняє бекен
 (`ReadWritePaths` тепер включає `shared/`) і посилання nginx. Якщо `FIRMWARE_STORAGE_PATH`
 у `.env` абсолютний — каталог прошивок не чіпається.
 
+Бекап окремого кроку не потребує: `backup-postgres.sh` сам бачить `shared/`, архівує його цілком (у
+релізі ці шляхи — лише символьні посилання, а tar зберігає посилання без вмісту) і пише в
+`manifest.txt` `layout=release`. Відновлення такої розкладки — `docs/runbooks/restore.md`, кроки 3б
+і 6б.
+
 ### Реліз
 
 ```bash
@@ -930,10 +935,21 @@ systemctl list-timers 'modesp-*'
 
 | Член архіву | Вміст |
 |---|---|
-| `manifest.txt` | хост, коміт, розмір БД, версія `pg_dump`, перелік файлів, sha256 кожного члена |
+| `manifest.txt` | хост, розкладка (`layout`), реліз і коміт, розмір БД, версія `pg_dump`, перелік файлів (посилання — зі стрілкою `->`), sha256 кожного члена |
 | `globals.sql` | `pg_dumpall --globals-only`: ролі `modesp_cloud`, `modesp_mqtt_ro` з паролями |
 | `db.dump` | `pg_dump --format=custom --no-owner` бази `modesp_cloud` (стиснений, для `pg_restore`) |
-| `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto`, `/etc/letsencrypt`, конфіг nginx, юніти systemd, `infra/backup.env` |
+| `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto`, `/etc/letsencrypt`, конфіг nginx, юніти systemd, `infra/backup.env`; у релізній розкладці — ще весь `/opt/modesp-releases/shared` |
+
+**Релізна розкладка.** Після `deploy.sh init` `backend/.env`, `backend/firmware`, `infra/backup.env`,
+`webui/.env` і `landing/config.js` у релізі — символьні посилання на `/opt/modesp-releases/shared/`, а tar зберігає
+посилання з командного рядка як посилання, без вмісту. Тому скрипт, щойно бачить
+`${MODESP_RELEASES:-/opt/modesp-releases}/shared`, архівує його цілком, а в `manifest.txt` пише
+`layout=release`, `release_dir` і `shared_dir` (на git-checkout — `layout=checkout`). Розіменування
+(`tar --dereference`) свідомо не ввімкнено: `/etc/letsencrypt/live/*` мають повернутися
+посиланнями. Кожен шлях архівується один раз, тож рядок `BACKUP_EXTRA_PATHS=/opt/modesp-releases/shared`
+у `shared/backup.env` продакшену — ручний обхід від 2026-09-28 — тепер зайвий, але нешкідливий.
+Шлях-посилання, чия ціль не потрапила в архів, скрипт називає в журналі:
+`WARNING: … is a symlink to …, which is not archived`.
 
 Налаштування — `infra/backup.env` (шаблон `infra/backup.env.example`, лише root, `chmod 600`):
 
@@ -944,6 +960,8 @@ systemctl list-timers 'modesp-*'
 | `BACKUP_SSH_OPTS` | `-o` опції ssh/sftp: порт, ключ | — |
 | `BACKUP_RETENTION_DAYS` / `BACKUP_REMOTE_RETENTION_DAYS` | скільки днів зберігати локально / off-site | 14 / 30 |
 | `BACKUP_DB_HOST/USER/PASSWORD` | лише для БД на іншому хості; за замовчуванням `runuser -u postgres` через сокет | — |
+| `BACKUP_EXTRA_PATHS` | додаткові абсолютні шляхи для `files.tar.gz`, через пробіл; `shared/` релізної розкладки додається сам | — |
+| `MODESP_RELEASES` | корінь релізної розкладки, якщо `deploy.sh` працює не з `/opt/modesp-releases` | `/opt/modesp-releases` |
 
 ```bash
 # Перший запуск і перевірка
@@ -951,9 +969,11 @@ systemctl start modesp-backup.service
 journalctl -u modesp-backup -n 20 --no-pager
 cat /var/backups/modesp/last-success        # timestamp, archive, archive_bytes, db_size_bytes, offsite
 
-# Переконатися, що архів читається (без відновлення)
-tar -xOf /var/backups/modesp/modesp_backup_*.tar manifest.txt | head
-tar -xOf /var/backups/modesp/modesp_backup_*.tar db.dump | pg_restore --list | head
+# Переконатися, що архів читається (без відновлення; .tar.gpg спершу розшифрувати — runbook, крок 2)
+A=$(ls -1t /var/backups/modesp/modesp_backup_*.tar | head -n 1)   # найновіший
+tar -xOf "$A" manifest.txt | head
+tar -xOf "$A" db.dump | pg_restore --list | head
+tar -xOf "$A" files.tar.gz | tar -tzvf - | grep -E 'backend/?\.env'   # «-rw…» — файл є; лише «l…» — самі посилання
 
 # Off-site: перед першим запуском прийняти host key від root
 rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-storagebox.de:modesp/
@@ -985,5 +1005,6 @@ rsync -e "ssh -o Port=23" /var/backups/modesp/last-success u123456@u123456.your-
 - 2026-09-02 — Плани і стан організації: міграція 027 (`plan_limits`, `tenants.status` з тригером-дзеркалом `active`, `tenant_settings`); `infra/mosquitto/mosquitto.conf` — ACL не видає топіків активним пристроям призупинених організацій (перевстановити конфіг брокера через `backend/scripts/deploy-mqtt-auth.sh`); міграції 024–026 (запрошення, коди контролерів, налаштування сповіщень і підтвердження аварій).
 - 2026-09-02 — Моніторинг і рестарти: розділ «Моніторинг» переписано (зовнішній проб з двома keyword-моніторами, `modesp-alert@.service` + `alert-telegram.sh`, `/api/health` з `platform`/`checks` і `/api/health/details` для superadmin, journald drop-in); `modesp-backend.service` — `Wants=` замість `Requires=`, `OnFailure=`; хук certbot винесено в `infra/scripts/tls-deploy-hook.sh` з перевіркою сертифіката після reload; бекенд при зупинці скидає стан пристроїв у БД, а при старті знову зводить таймери дверних/pulldown-аварій.
 - 2026-09-28 — `landing/config.js` у `shared/landing-config.js`: `deploy.sh init` переносить, перший `release` після оновлення забирає чинну копію, далі — лише посилання; `deploy.sh status` показує, де конфіг.
+- 2026-09-28 — Бекап релізної розкладки: `backup-postgres.sh` архівує `shared/` цілком (посилання в релізі tar зберігав без вмісту), кожен шлях — один раз, `layout`/`release_dir`/`shared_dir` у `manifest.txt`; змінні `BACKUP_EXTRA_PATHS` і `MODESP_RELEASES` у таблиці; `restore.md` — гілки 3а/3б і 6а/6б.
 - 2026-09-02 — Бекапи і ретенція: `backup-postgres.sh` збирає один архів (дамп + ролі + конфіги + прошивки) з маніфестом і маркером `last-success`, `infra/backup.env`; три таймери systemd замість cron (`modesp-backup`, `modesp-telemetry-partition` на +6 місяців, `modesp-retention-cleanup`); міграція 023 (`SECURITY DEFINER` функції партицій, таймери працюють від `modesp`); `cleanup-aux.js`; оновлення через `migrate.js`; `setup.sh` ставить усі юніти, `ratelimit.conf` і домен `modesp.com.ua`; runbook `docs/runbooks/restore.md`.
 - 2026-08-23 — Phase 14 (гео): розділ «Ліцензування третіх сторін» перед кроками розгортання (посилання на docs/THIRD_PARTY_LICENSING.md); міграція 021 з окремим блоком GRANT-ів під `DB_USER` і перевірками після застосування; блок env-змінних гео-сервісів (Nominatim / Open-Meteo / OSRM / OpenRouteService) з таблицею наслідків; `webui/.env` для тайлів карти і попередження про потрійну синхронізацію CSP; cron-задача `cleanup-weather.js`.
