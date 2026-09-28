@@ -302,10 +302,21 @@ TOTP (RFC 6238, крок 30 с, вікно ±1) з будь-яким засто�
       "comment": "...",
       "manufactured_at": "2024-06-15",
       "firmware_version": "1.2.3",
+      "haccp_min": null,
+      "haccp_max": 6,
+      "haccp_tolerance": 2,
+      "haccp_product": "молочна продукція",
       "online": true,
       "last_seen": "2026-03-07T10:30:00Z",
-      "alarm_active": false,
-      "air_temp": 4.5,
+      "hints_open": 0,
+      "alarms_open": 1,
+      "alarm_codes": ["high_temp_alarm"],
+      "temp_alarm_since": "2026-03-07T09:50:00Z",
+      "alarm_active": true,
+      "air_temp": 9.5,
+      "door_open": false,
+      "compressor": true,
+      "defrost": false,
       "latitude": 50.4501,
       "longitude": 30.5234,
       "site_id": "uuid",
@@ -319,6 +330,24 @@ TOTP (RFC 6238, крок 30 с, вікно ±1) з будь-яким засто�
   ]
 }
 ```
+
+Поля стану пристрою для панелі:
+
+- `alarms_open` — відкриті аварії, записані платформою (ті самі рядки, що віддає `GET /alarms`);
+  `alarm_active` — зведений прапорець самого контролера, він піднімається щойно відчиняються двері,
+  ще до того, як затримка вирішить, чи це аварія. Усе, що UI називає «аварія», читає `alarms_open`.
+- `alarm_codes` — коди відкритих аварій, від найстарішої, кожен один раз (`high_temp_alarm`,
+  `door_alarm` …); порожній масив, коли аварій немає. Панель відрізняє за ним аварію температури
+  від аварії дверей без окремого запиту.
+- `temp_alarm_since` — момент, коли піднято найстарішу відкриту аварію температури
+  (`high_temp_alarm` / `low_temp_alarm`): звідси картка рахує «поза межею N хв». `null`, поки
+  температурної аварії немає (одна лише аварія дверей його не заповнює).
+- `haccp_min` / `haccp_max` / `haccp_tolerance` / `haccp_product` — критичні межі HACCP організації
+  (`PATCH /devices/:id`); панель показує межу на картці й порівнює з нею `air_temp` наживо.
+- `air_temp`, `door_open`, `compressor`, `defrost` — живий стан із `stateMap` (`equipment.air_temp`,
+  `equipment.door_open`, `equipment.compressor`, `defrost.active`). `null` — пристрій ще не публікував
+  ключ (старіша прошивка або немає живих даних); UI тоді ховає індикатор.
+- `hints_open` — відкриті рекомендації з обслуговування.
 
 `latitude` / `longitude` — **сирі** координати пристрою; COALESCE з координатами точки тут навмисне
 **не** застосовується. Ефективні координати для карти рахує `GET /api/map/devices`. Якби цей ендпоінт
