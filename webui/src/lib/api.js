@@ -972,6 +972,14 @@ export function updateMyNotificationPrefs(data) {
   });
 }
 
+/** POST /profile/notifications/test — a test message to one of my own channels ('telegram' | 'webpush' | 'email'). */
+export function testMyNotificationChannel(channel) {
+  return request('/profile/notifications/test', {
+    method: 'POST',
+    body: JSON.stringify({ channel }),
+  });
+}
+
 export function getDeviceAlarms(deviceId, { active, from, to, limit } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);

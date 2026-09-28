@@ -23,6 +23,8 @@ const { z }      = require('zod');
 const crypto     = require('crypto');
 const db         = require('../services/db');
 const authSvc    = require('../services/auth');
+const pushSvc    = require('../services/push');
+const telegramSvc = require('../services/telegram');
 const { passwordSchema } = require('../lib/password-policy');
 const { SUPPORTED_LOCALES, isValidTimezone } = require('../lib/locale');
 
@@ -356,6 +358,36 @@ const prefsSchema = z.object({
   message: 'quiet_from and quiet_to must be set together',
 });
 
+// ── Channel readiness (product audit item 4) ────────────────
+//
+// A ticked «Telegram» box was all the page showed, and it looked like a working
+// channel. What decides a delivery is three facts: the platform has the channel
+// at all, this person is reachable on it (chat linked, device subscribed,
+// address present), and the last attempt got through. The page shows those;
+// the box stays what it is — a preference.
+
+const USER_CHANNELS = ['telegram', 'webpush', 'email'];
+
+async function channelStates(userId, webpushDevices) {
+  const registered = pushSvc.channelHealth();
+  const [{ rows: me }, { rows: log }] = await Promise.all([
+    db.query('SELECT email, telegram_id FROM users WHERE id = $1', [userId]),
+    db.query(
+      `SELECT DISTINCT ON (channel) channel, status, error_message, created_at
+         FROM notification_log
+        WHERE user_id = $1 AND channel = ANY($2::text[])
+        ORDER BY channel, created_at DESC`,
+      [userId, USER_CHANNELS]),
+  ]);
+  const last = Object.fromEntries(log.map(r => [r.channel, { status: r.status, at: r.created_at, error: r.error_message }]));
+  const u = me[0] || {};
+  return {
+    telegram: { available: !!registered.telegram, bot_username: telegramSvc.health().bot_username, linked: u.telegram_id != null, last: last.telegram || null },
+    webpush:  { available: !!registered.webpush, devices: webpushDevices, last: last.webpush || null },
+    email:    { available: !!registered.email, address: u.email || null, last: last.email || null },
+  };
+}
+
 const PREF_DEFAULTS = {
   // quiet_tz null means «the time zone on my profile» (users.timezone). It used
   // to be NOT NULL DEFAULT 'Europe/Kyiv', so a person who set their profile to
@@ -379,7 +411,8 @@ router.get('/notifications', async (req, res) => {
     const pref = rows[0]
       ? { ...rows[0], quiet_from: rows[0].quiet_from?.trim() || null, quiet_to: rows[0].quiet_to?.trim() || null }
       : { ...PREF_DEFAULTS, updated_at: null };
-    res.json({ data: { ...pref, webpush_devices: subs[0].n } });
+    const channels = await channelStates(req.user.id, subs[0].n);
+    res.json({ data: { ...pref, webpush_devices: subs[0].n, channels } });
   } catch (err) {
     req.log?.error?.({ err }, 'Get notification prefs failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to load preferences', status: 500 });
@@ -424,6 +457,27 @@ router.put('/notifications', async (req, res) => {
   } catch (err) {
     req.log?.error?.({ err }, 'Update notification prefs failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to save preferences', status: 500 });
+  }
+});
+
+// POST /profile/notifications/test { channel } — a test message through the
+// same handler and to the same address an alarm would use. 409 with a reason
+// when the channel cannot be tried at all (not linked, no device, not on this
+// platform), so the page can say what to do instead of a bare «failed».
+router.post('/notifications/test', async (req, res) => {
+  const channel = req.body && req.body.channel;
+  if (!USER_CHANNELS.includes(channel)) {
+    return res.status(400).json({ error: 'validation_failed', message: `channel must be one of: ${USER_CHANNELS.join(', ')}`, status: 400 });
+  }
+  try {
+    const result = await pushSvc.testSendToUser(req.tenantId, req.user.id, channel);
+    if (result.status === 'not_ready') {
+      return res.status(409).json({ error: 'channel_not_ready', reason: result.reason, message: `Channel ${channel} is not ready: ${result.reason}`, status: 409 });
+    }
+    res.json({ data: result });
+  } catch (err) {
+    req.log?.error?.({ err }, 'Test notification failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to send the test', status: 500 });
   }
 });
 

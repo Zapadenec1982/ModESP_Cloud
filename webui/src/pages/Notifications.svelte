@@ -8,6 +8,9 @@
     getNotificationLog,
     getMyNotificationPrefs,
     updateMyNotificationPrefs,
+    testMyNotificationChannel,
+    generateMyTelegramLink,
+    unlinkMyTelegram,
     getProfile,
     updateProfile,
   } from '../lib/api.js'
@@ -45,6 +48,15 @@
   // How many devices actually hold a web push subscription (the mobile app
   // creates them; this WebUI has no service worker and cannot).
   let webpushDevices = 0
+  // Channel readiness (product audit item 4): three facts per channel — on the
+  // platform at all, this person reachable on it, last delivery — shown apart
+  // from the «send here» preference, which used to pass for readiness.
+  let channels = null
+  let testingChannel = null
+  let tgCode = null        // { link_code, expires_at } while linking
+  let tgBusy = false
+  // Admin: manual Chat ID / FCM entry is an integration path, folded away
+  let showAdvanced = false
 
   async function savePrefs() {
     savingPrefs = true
@@ -69,6 +81,7 @@
         quiet_tz: prefs.quiet_tz?.trim() || null,
       })
       webpushDevices = prefs.webpush_devices ?? webpushDevices
+      channels = prefs.channels || channels
       toast.success($t('notifications.saved'))
     } catch (e) {
       toast.error(e.message)
@@ -81,6 +94,7 @@
     try {
       prefs = await getMyNotificationPrefs()
       webpushDevices = prefs.webpush_devices || 0
+      channels = prefs.channels || null
       try {
         const p = await getProfile()
         profile = { locale: p.locale || '', timezone: p.timezone || '' }
@@ -153,6 +167,83 @@
     }
   }
 
+  // ── Channel cards ──
+
+  async function refreshChannels() {
+    try {
+      const fresh = await getMyNotificationPrefs()
+      channels = fresh.channels || channels
+      webpushDevices = fresh.webpush_devices ?? webpushDevices
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  async function testChannel(channel) {
+    testingChannel = channel
+    try {
+      const r = await testMyNotificationChannel(channel)
+      if (r.status === 'sent') toast.success($t('notifications.test_channel_sent'))
+      else toast.error($t('notifications.test_failed', r.error || ''))
+    } catch (e) {
+      // 409 carries why the channel cannot even be tried — that is the advice
+      const reason = e.status === 409 && e.body && e.body.reason
+      if (reason) toast.warning($t('notifications.not_ready_' + reason))
+      else toast.error(e.message)
+    } finally {
+      testingChannel = null
+      await refreshChannels()
+    }
+  }
+
+  async function linkTelegram() {
+    tgBusy = true
+    try {
+      tgCode = await generateMyTelegramLink()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      tgBusy = false
+    }
+  }
+
+  async function unlinkTelegram() {
+    try {
+      await unlinkMyTelegram()
+      tgCode = null
+      toast.success($t('notifications.tg_unlinked'))
+      await refreshChannels()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  function tgDeepLink(ch, code) {
+    return ch.bot_username ? `https://t.me/${ch.bot_username.replace(/^@/, '')}?start=${code.link_code}` : null
+  }
+
+  // The badge says what the channel *is*; `t` is passed in so the markup
+  // re-renders when the language changes.
+  function channelBadge(name, ch, t) {
+    if (!ch.available) return { variant: 'neutral', label: t('notifications.ch_unavailable') }
+    if (name === 'telegram') {
+      return ch.linked ? { variant: 'success', label: t('notifications.ch_connected') } : { variant: 'warning', label: t('notifications.ch_not_connected') }
+    }
+    if (name === 'webpush') {
+      return ch.devices > 0 ? { variant: 'success', label: t('notifications.ch_connected_devices', ch.devices) } : { variant: 'warning', label: t('notifications.ch_not_connected') }
+    }
+    return { variant: 'success', label: t('notifications.ch_connected') }
+  }
+
+  function lastLine(last, t) {
+    if (!last) return t('notifications.ch_never_tested')
+    return last.status === 'sent'
+      ? t('notifications.ch_last_ok', timeAgo(last.at))
+      : t('notifications.ch_last_failed', timeAgo(last.at), last.error || '')
+  }
+
+  const CHANNEL_CARDS = [['telegram', 'send', 'Telegram'], ['webpush', 'bell', 'Web Push'], ['email', 'mail', 'Email']]
+
   function statusVariant(status) {
     if (status === 'sent') return 'success'
     if (status === 'failed') return 'danger'
@@ -186,6 +277,63 @@
           <input type="checkbox" bind:checked={prefs.enabled} />
           <span>{$t('notifications.enabled')}</span>
         </label>
+
+        <!-- One card per channel. The badge says what the channel *is* (on the
+             platform, reachable, last delivery); the checkbox underneath is only
+             «send here». The two used to be one tick, and a tick looked like a
+             working channel. -->
+        {#if channels}
+          <p class="field-hint">{$t('notifications.channels_hint')}</p>
+          <div class="channel-cards">
+            {#each CHANNEL_CARDS as [name, icon, title] (name)}
+              {@const ch = channels[name]}
+              {@const badge = channelBadge(name, ch, $t)}
+              <div class="channel-card" class:is-off={!ch.available}>
+                <div class="channel-head">
+                  <Icon name={icon} size={16} />
+                  <span class="channel-name">{title}</span>
+                  <Badge variant={badge.variant} size="sm">{badge.label}</Badge>
+                </div>
+                <p class="channel-detail">
+                  {#if name === 'email'}{$t('notifications.email_to', ch.address || '—')}
+                  {:else if name === 'webpush'}{$t('notifications.webpush_how')}
+                  {:else if ch.linked}{$t('notifications.tg_linked_hint')}
+                  {:else}{$t('notifications.tg_not_linked_hint')}{/if}
+                </p>
+                <p class="channel-last" class:is-failed={ch.last && ch.last.status !== 'sent'}>{lastLine(ch.last, $t)}</p>
+                {#if ch.available}
+                  <div class="channel-actions">
+                    {#if name === 'telegram' && !ch.linked}
+                      <Button variant="primary" size="sm" icon="link" loading={tgBusy} on:click={linkTelegram}>{$t('notifications.connect_telegram')}</Button>
+                    {:else if name === 'webpush' && !(ch.devices > 0)}
+                      <a class="btn-link" href="/app/" target="_blank" rel="noopener">{$t('notifications.enable_on_phone')} →</a>
+                    {:else}
+                      <Button variant="secondary" size="sm" icon="send" loading={testingChannel === name} on:click={() => testChannel(name)}>{$t('notifications.check_delivery')}</Button>
+                    {/if}
+                    {#if name === 'telegram' && ch.linked}
+                      <Button variant="ghost" size="sm" on:click={unlinkTelegram}>{$t('notifications.disconnect')}</Button>
+                    {/if}
+                  </div>
+                  {#if name === 'telegram' && !ch.linked && tgCode}
+                    <div class="tg-link">
+                      {#if tgDeepLink(ch, tgCode)}
+                        <a class="btn-link" href={tgDeepLink(ch, tgCode)} target="_blank" rel="noopener">{$t('notifications.tg_open_bot')} →</a>
+                      {/if}
+                      <span>{$t('notifications.tg_send_code')}</span>
+                      <code class="tg-cmd">/start {tgCode.link_code}</code>
+                      <span class="field-hint">{$t('notifications.tg_code_expires')}</span>
+                      <div><Button variant="ghost" size="sm" icon="refresh" on:click={refreshChannels}>{$t('common.refresh')}</Button></div>
+                    </div>
+                  {/if}
+                {/if}
+                <label class="channel-pref">
+                  <input type="checkbox" bind:checked={prefs[name]} />
+                  <span>{$t('notifications.send_here')}</span>
+                </label>
+              </div>
+            {/each}
+          </div>
+        {/if}
         <div class="prefs-grid">
           <div class="form-field">
             <label class="field-label" for="pref-sev">{$t('notifications.min_severity')}</label>
@@ -194,24 +342,6 @@
               <option value="warning">{$t('alarm.warning')}</option>
               <option value="critical">{$t('alarm.critical')}</option>
             </select>
-          </div>
-          <div class="form-field">
-            <span class="field-label">{$t('notifications.channels')}</span>
-            <div class="prefs-channels">
-              <label><input type="checkbox" bind:checked={prefs.telegram} /> Telegram</label>
-              <label><input type="checkbox" bind:checked={prefs.webpush} /> Web Push</label>
-              <label><input type="checkbox" bind:checked={prefs.email} /> Email</label>
-            </div>
-            <!-- The switch says «send me web push»; the subscription itself is
-                 created by the mobile app, which owns the service worker. Ticked
-                 with nothing subscribed, it delivered nowhere and said nothing. -->
-            {#if prefs.webpush}
-              <p class="field-hint">
-                {webpushDevices > 0
-                  ? $t('notifications.webpush_devices').replace('{n}', webpushDevices)
-                  : $t('notifications.webpush_none')}
-              </p>
-            {/if}
           </div>
           <!-- One time zone: the profile's. Two fields called «time zone» sat
                one under the other, and the profile-wide one was labelled
@@ -253,6 +383,16 @@
     </section>
 
     {#if $isAdmin}
+    <!-- Manual addressees (Chat ID / FCM token) are an integration path, not how
+         a person connects a channel — folded away so the page leads with the
+         person's own channels. -->
+    <button type="button" class="advanced-toggle" on:click={() => showAdvanced = !showAdvanced} aria-expanded={showAdvanced}>
+      <Icon name={showAdvanced ? 'chevron-down' : 'chevron-right'} size={14} />
+      <span>{$t('notifications.advanced')}</span>
+      <Badge variant="neutral" size="sm">{subscribers.length}</Badge>
+    </button>
+    {#if showAdvanced}
+    <p class="field-hint advanced-hint">{$t('notifications.advanced_hint')}</p>
     <!-- Add Subscriber -->
     <section class="section-card">
       <div class="section-header">
@@ -332,6 +472,7 @@
         </div>
       {/if}
     </section>
+    {/if}
 
     <!-- Delivery Log -->
     <section class="section-card">
@@ -384,9 +525,59 @@
   .prefs-form { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
   .prefs-toggle { display: flex; align-items: center; gap: var(--space-2); font-weight: 500; }
   .prefs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); }
-  .prefs-channels { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-sm); }
-  .prefs-channels label { display: flex; align-items: center; gap: var(--space-1); }
   .prefs-actions { display: flex; justify-content: flex-end; }
+
+  /* Channel cards */
+  .channel-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-3); }
+  .channel-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+  }
+  .channel-card.is-off { opacity: 0.7; }
+  .channel-head { display: flex; align-items: center; gap: var(--space-2); }
+  .channel-name { font-weight: 600; flex: 1; }
+  .channel-detail, .channel-last { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
+  .channel-last.is-failed { color: var(--accent-red); }
+  .channel-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .channel-pref {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: auto;
+    padding-top: var(--space-2);
+    border-top: 1px dashed var(--border-muted);
+    font-size: var(--text-sm);
+  }
+  .btn-link { font-size: var(--text-sm); color: var(--accent-blue); text-decoration: none; }
+  .btn-link:hover { text-decoration: underline; }
+  .tg-link { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+  .tg-cmd {
+    font-family: var(--font-mono);
+    background: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    user-select: all;
+    align-self: flex-start;
+  }
+  .advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+  .advanced-hint { margin: 0; }
 
   .notif-page {
     display: flex;

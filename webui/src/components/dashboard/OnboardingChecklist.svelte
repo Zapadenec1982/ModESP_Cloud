@@ -11,7 +11,7 @@
   let data = null
   let hiding = false
 
-  const LINKS = { site: '#/sites', device: '#/pending', team: '#/users', telegram: '#/users', report: '#/sites' }
+  const LINKS = { site: '#/sites', device: '#/pending', team: '#/users', telegram: '#/notifications', report: '#/sites' }
   const ICONS = { site: 'building', device: 'cpu', team: 'users', telegram: 'send', report: 'clipboard' }
 
   onMount(load)
