@@ -284,4 +284,61 @@ describe('Service report for technicians', () => {
       expect(service.strings('en').title).toBe('Equipment Service Report');
     });
   });
+
+  it('names the file after the days the document prints, in the site time zone', async () => {
+    const res = await request(app)
+      .get(`/api/devices/${device.id}/telemetry/service.pdf?from=${from.toISOString()}&to=${to.toISOString()}&lang=uk`)
+      .set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
+    expect(res.status).toBe(200);
+    const day = (d) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Kyiv', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    const expected = `service_SRV001_${day(from)}_${day(new Date(to.getTime() - 1))}.pdf`;
+    expect(res.headers['content-disposition']).toBe(`attachment; filename="${expected}"; filename*=UTF-8''${encodeURIComponent(expected)}`);
+  });
+
+  it('the conclusion, the legend and the last-data field come from the period itself', async () => {
+    const S = service.strings('uk');
+    const { rows } = await db.query('SELECT * FROM devices WHERE id = $1', [device.id]);
+    const d = await service.__test.collectDevice({
+      query: (sql, p) => db.query(sql, p), device: rows[0], tenantId: tenant.id, from, to, bucketSec: 3600, source: 'raw', excursionMin: 30, samplingSec: 300,
+    });
+    // last data: the newest air sample of the period, not devices.last_seen
+    const { rows: last } = await db.query(`SELECT max(time) AS t FROM telemetry WHERE device_id = 'SRV001' AND channel = 'air' AND time < $1`, [to]);
+    expect(d.lastData).toBe(new Date(last[0].t).getTime());
+
+    const build = (dev) => JSON.stringify(service.__test.buildDocument({
+      kind: 'device', lang: 'uk', tz: 'Europe/Kyiv', tenant, site, devices: [dev], from, to, bucketKey: '1h', bucketSec: 3600, source: 'raw',
+      generatedBy: 'test', generatedAt: new Date().toISOString(), code: 'AAAABBBBCCCC', hash: 'x', verifyUrl: 'https://example.test/v', doorMin: 10,
+    }).docDefinition);
+    const withLimit = build(d);
+    expect(withLimit).toContain(S.conclusion);
+    expect(withLimit).toContain(S.c_peak.split(' — ')[0]);
+    expect(withLimit).toContain(S.legend_limit);
+    expect(withLimit).toContain(S.c_action_needed.split(':')[0]);      // an open hint and an excursion are still open
+    expect(withLimit).toContain(S.c_reason_hint);
+    expect(withLimit).toContain(S.summary_note.split(' — ')[0]);
+    expect(withLimit).toContain(`${S.last_data}:`);
+
+    const noLimit = build({ ...d, limits: { min: null, max: null, source: null }, excursions: [] });
+    expect(noLimit).toContain(S.c_excursions_no_limit);
+    expect(noLimit).toContain(S.nd_no_limit);
+    expect(noLimit).not.toContain(S.legend_limit);
+  });
+
+  it('conclusion: the warmest interval is read against defrost, and nothing open means no action', () => {
+    const S = service.strings('uk');
+    const at = (m) => from.getTime() + m * 60e3;
+    const buckets = [0, 60, 120].map((m, i) => ({ time: new Date(at(m)).toISOString(), air: { avg: [-2.6, 1.0, -1.9][i], min: -3, max: 2, samples: 60 } }));
+    const dd = { buckets, defrost: [[at(70), at(100)]], doors: [], offline: [], excursions: [], gaps: [], alarms: [], hints: [], work: { orders: [] } };
+    const text = JSON.stringify(service.__test.conclusionBlock({ S, d: dd, tz: 'Europe/Kyiv', bucketSec: 3600, hasLimits: false }));
+    expect(text).toContain('1.0 °C');
+    expect(text).toContain(S.c_peak_defrost);
+    expect(text).toContain(S.c_next.replace('{0}', '-1.9'));
+    expect(text).toContain(S.c_excursions_no_limit);
+    expect(text).toContain(S.c_events_none);
+    expect(text).toContain(S.c_action_none);
+    expect(text).toContain(S.c_auto);
+    // an alarm still active at the end of the period is the one thing that always asks for action
+    const open = JSON.stringify(service.__test.conclusionBlock({ S, d: { ...dd, alarms: [{ cleared_at: null }] }, tz: 'UTC', bucketSec: 3600, hasLimits: false }));
+    expect(open).toContain(S.c_action_needed.replace('{0}', S.c_reason_alarm));
+  });
 });

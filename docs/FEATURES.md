@@ -102,6 +102,12 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 - State visible in UI with grouped categories (Equipment, Thermostat, Defrost, Protection)
 - WebSocket push — UI updates instantly without polling
 
+### Dashboard — the work of today
+- **"Needs attention"** — a block under the counters: site · device · reason · duration · responsible, most urgent first: active alarms (critical first, then by age), temperature out of the HACCP range, equipment offline (longest first), open maintenance hints, new work orders with no assignee. Responsible is the work order's assignee when an order exists, otherwise "no assignee yet"; a row opens the device, the alarm list or the work order. Eight rows and "Show all"; when there is nothing to do, one calm line
+- **Counters are filters** — the "Online / Offline / Total / Alarms / Hints" tiles are buttons (keyboard too) that set the same filter as the pills below. "Offline" leaves out controllers from the pending queue — they were never set up — and shows them apart as "+N pending", so the counter and the list agree
+- **Three axes on a card** — connectivity (dot, status), temperature against the organisation's HACCP range (the range "−18…−15 °C (±3)" under the figure; "out of range for 40 min" from the moment of the temperature alarm, or "out of range" from the live reading; the figure turns red for temperature only, a door alarm keeps just the badge) and operating mode ("Compressor", "Defrost" — while the device is online). `GET /api/devices` returns `alarm_codes`, `temp_alarm_since`, `compressor` and `defrost` for it
+- **Order and groups** — trouble first (alarm → out of range → offline → hint → the rest), then by name; the grid is grouped by site, "No site" last. `#/?site=<uuid>` shows one site's equipment with a removable "Site: …" chip
+
 ### Device Reassignment
 - Superadmin moves device between tenants in one click
 - Automatic credential rotation, RBAC cleanup, and MQTT topic migration
@@ -162,7 +168,10 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Critical limits on the equipment** — `haccp_max`/`haccp_min`, the allowed deviation and "what is
   stored" on the device card (the HACCP block of the edit form); the excursion threshold in the
   organisation's and the site's settings; with no limits the log falls back to the controller's alarm
-  limits, and with neither it prints "not set"
+  limits, and with neither it prints "not set" and says the excursions cannot be assessed instead of
+  counting zero; the log speaks of air-temperature excursions, since the air is what the sensor measures;
+  an interval the period covers only partly is marked "from hh:mm" / "until hh:mm", the log is one table
+  per day, and the file is named after the local days the document prints
 - **Limits in bulk** — typical limits by what the equipment is for (frozen ≤ −18 ±3, ice cream, chilled
   0…6, meat 0…4, fish 0…2, dairy 2…6, vegetables 2…10, medicines 2…8 ±0; labels in four languages) as a
   starting point: a preset on the device card, the "HACCP limits" bulk action on the dashboard (by default
@@ -176,8 +185,12 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
   vector chart carrying the critical-limit line, how the equipment worked (compressor duty and starts, the
   longest run, defrost cycles and their length, the door, offline, gaps, HACCP excursions), every alarm
   with its name in the report's language and its work orders, cloud connectivity, maintenance hints, work
-  orders and service records, and an engineering log by interval; the same verification code, SHA-256 and
-  QR; a separate type in the report archive
+  orders and service records, and an engineering log by interval (one table per day); it opens with a
+  conclusion for the period drawn from the report's own facts — the warmest interval and what coincided
+  with it, the HACCP verdict or "cannot be assessed", the event counts, "action needed" only for what is
+  still open; "last data in the period" from the period itself, a note on raw measurements versus interval
+  averages, a legend that names only what is drawn; the same verification code, SHA-256 and QR — in the
+  header; a separate type in the report archive
 - Empty periods answer `404 no_data` instead of producing a blank document
 
 ### Scheduled Reports
@@ -186,9 +199,15 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Three types** — HACCP (the same document as the manual export), alarms (a summary by severity and
   equipment, time to acknowledgement, the log — a week with no alarms is a document too) and energy
   (kWh per device, compressor run time, cost at the tariff)
-- **The archive** — the "Reports" page shows everything generated for the organisation: a scheduled PDF can
-  be downloaded again (3 years) and every report carries a verification code; a technician and a viewer see
-  only their own sites
+- **The archive** — the "Reports" page shows everything generated for the organisation: a scheduled **or one-off**
+  PDF can be downloaded again (3 years) and every report carries a verification code; a technician and a viewer see
+  only their own sites. A one-off report from the site card, the device chart or "Generate now" is kept in the
+  archive right after generation — before, it registered only the code and hash, and the archive row said "PDF not kept"
+- **"Generate now"** — a card above the schedules on the Reports page: a site or one piece of equipment, the type
+  (the HACCP log for the inspector / the service report for the technician), the period as inclusive dates (default:
+  the last full day; quick picks "Yesterday", "Last 7 days", "Last month"), the language of the interface;
+  "Download" saves the file, "Open" shows the PDF in a new tab (when the browser refuses the window, the file is
+  downloaded under its server name). The archive refreshes after generation
 - **No duplicates** — a schedule remembers the last period it delivered; the "Send now" button produces the
   past period immediately
 
@@ -218,7 +237,8 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - Filter by severity, active/cleared, device, date range
 - Alarm statistics — count and average duration per alarm code
 - Severity pills in UI (All / Critical / Warning / Info) for quick triage
-- Per-device RBAC — users see alarms only for assigned devices
+- **Site and device filter** — a site select and a search by device name or id on the alarms page (`GET /alarms?site_id=&device_id=&q=`); the `#/alarms?site=` links from the sites table and the site page open one site's alarms, `?device=` one device's, with a chip that clears the filter
+- Per-device RBAC — users see alarms only for assigned devices; the filters never widen that
 
 ---
 
@@ -256,6 +276,9 @@ organisation actually does with a map.
 - Per-device coordinates remain an optional override on top of the site's — effective map position is the device's own coordinate first, the site's second
 - Existing `location` values are backfilled into sites during migration, so an upgraded deployment starts with a populated map
 - Site names are unique per tenant, compared case- and whitespace-insensitively
+- **The site page** (`#/sites/:id`) — an overview of the object rather than an address entry: the equipment with its state (online, air temperature, alarm flag; every row opens the device card), the site's active alarms with a link to the alarms page narrowed to the site, open work orders, contacts, coordinates with their source, a "Report" action (HACCP or service PDF for the whole site) and, for an admin, the public status links
+- **The sites table leads onward**: the name opens the site page, the alarm counter the site's alarms (`#/alarms?site=`), the equipment counter the dashboard narrowed to the site (`#/?site=`). Coordinates, geocoding source and precision moved from the table into the editor; only a "manual" / "geocoding failed" flag stays next to the address. Geocoding progress is one line of counters that unfolds into the sweep buttons
+- **A contact person per site** — name, phone, e-mail (migration 054): whom to call before a visit and whom a report names. Edited by the admin on the site card, shown on the site page and in the table (the name under the site's name); never on the public status page
 
 ### Server-Side Geocoding
 - Address → coordinates through a backend proxy (Nominatim). The browser never calls the geocoder directly: one identifying User-Agent, one 1 req/s pacer, one shared cache — exactly what the OSM usage policy requires
@@ -507,9 +530,10 @@ Responsive Svelte SPA with dark/light theme and full i18n.
 | **Dashboard** | Fleet summary (online/total/alarms), device grid with search and filters |
 | **Map** | Interactive OpenStreetMap fleet map — clustered site markers, filter bar, alarm heatmap, coverage isochrones, service-round planner, click-to-place coordinates, one-tap directions via Google / Apple / Waze / OSM |
 | **Geo Analytics** | Country → region → city → site drill-down, metric table, CSV export |
-| **Sites** | Trade point CRUD (`/sites`), address autocomplete, a geocoding-status panel with a manual sweep trigger, and public status link management (the raw token is shown exactly once). Weather and nearest technicians live on the device Location tab |
+| **Sites** | Trade point CRUD (`/sites`), address autocomplete, a compact geocoding-status line with a manual sweep trigger, site contacts, and public status link management (the raw token is shown exactly once). The name opens the **site page** (`/sites/:id`): equipment with its state, active alarms, open work orders, contacts, report. Weather and nearest technicians live on the device Location tab |
 | **Device Detail** | Live state, telemetry charts, alarm history, event log, service records, controls |
-| **Alarms** | Alarm table with severity filters, CSV export |
+| **Alarms** | Alarm table with severity, site and device filters (`?site=`, `?device=` from the hash), CSV export |
+| **Reports** | "Generate now" (a site or one piece of equipment, HACCP / service, period, download or open), scheduled reports (a site or the whole network, HACCP / alarms / energy, weekly or monthly, recipients, "send now") and the archive of generated PDFs with verification codes — scheduled and one-off, service reports included |
 | **Firmware** | Upload, library, deploy modal, rollout monitor |
 | **Notifications** | Subscriber management, test send, delivery log |
 | **Pending Devices** | Unassigned device queue, batch assignment with metadata |

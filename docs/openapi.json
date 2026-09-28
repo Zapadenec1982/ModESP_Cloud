@@ -299,6 +299,25 @@
             "type": "integer",
             "description": "Alarms the platform recorded for this device and has not cleared — the same rows GET /alarms returns. Anything a UI calls an alarm counts these."
           },
+          "alarm_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Codes of the open alarms counted in `alarms_open`, oldest first, each once (`high_temp_alarm`, `door_alarm` …). Empty when none.",
+            "example": [
+              "high_temp_alarm"
+            ]
+          },
+          "temp_alarm_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the oldest open temperature alarm (`high_temp_alarm` / `low_temp_alarm`) was raised: how long the product has been out of its range. null while no temperature alarm is open.",
+            "example": "2026-09-08T20:53:29.427Z"
+          },
           "alarm_active": {
             "type": "boolean",
             "description": "The controller's own aggregate alarm flag, live from the device. True the moment a door opens, before the nuisance delay decides whether that is an alarm at all, so it is a state readout and not a count."
@@ -316,6 +335,20 @@
               "boolean",
               "null"
             ]
+          },
+          "compressor": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Compressor running, live from the device (`equipment.compressor`). null when the device has not published the key."
+          },
+          "defrost": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Defrost cycle in progress, live from the device (`defrost.active`). null when the device has not published the key."
           }
         },
         "required": [
@@ -347,9 +380,13 @@
           "site_longitude",
           "hints_open",
           "alarms_open",
+          "alarm_codes",
+          "temp_alarm_since",
           "alarm_active",
           "air_temp",
-          "door_open"
+          "door_open",
+          "compressor",
+          "defrost"
         ]
       },
       "DeviceDetail": {
@@ -1026,6 +1063,30 @@
               "null"
             ]
           },
+          "haccp_excursion_min": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contact_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact_phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -1068,6 +1129,10 @@
           "osm_id",
           "timezone",
           "notes",
+          "haccp_excursion_min",
+          "contact_name",
+          "contact_phone",
+          "contact_email",
           "created_at",
           "updated_at",
           "device_count",
@@ -4663,6 +4728,39 @@
           },
           {
             "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Alarms of the devices standing on this site",
+              "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+            },
+            "required": false,
+            "name": "site_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "One device: its UUID or its controller id",
+              "example": "E00118"
+            },
+            "required": false,
+            "name": "device_id",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "description": "A fragment of the device name or controller id (case-insensitive)",
+              "example": "Вітрина"
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 200,
@@ -4700,6 +4798,16 @@
                   "required": [
                     "data"
                   ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`validation_failed`: malformed `site_id`, `device_id` or `q`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -5646,6 +5754,41 @@
                       "null"
                     ],
                     "maxLength": 4000
+                  },
+                  "haccp_excursion_min": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1440,
+                    "description": "HACCP excursion threshold of the site in minutes; `null` = the organisation's value"
+                  },
+                  "contact_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 120,
+                    "description": "The contact person at the site",
+                    "example": "Олена Коваль"
+                  },
+                  "contact_phone": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 40,
+                    "example": "+380 67 123 45 67"
+                  },
+                  "contact_email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 160,
+                    "description": "Checked for shape when not empty",
+                    "example": "store142@company.ua"
                   }
                 },
                 "required": [
@@ -5910,6 +6053,41 @@
                       "null"
                     ],
                     "maxLength": 4000
+                  },
+                  "haccp_excursion_min": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "maximum": 1440,
+                    "description": "HACCP excursion threshold of the site in minutes; `null` = the organisation's value"
+                  },
+                  "contact_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 120,
+                    "description": "The contact person at the site",
+                    "example": "Олена Коваль"
+                  },
+                  "contact_phone": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 40,
+                    "example": "+380 67 123 45 67"
+                  },
+                  "contact_email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 160,
+                    "description": "Checked for shape when not empty",
+                    "example": "store142@company.ua"
                   }
                 }
               }
@@ -6050,6 +6228,30 @@
                             "null"
                           ]
                         },
+                        "haccp_excursion_min": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "contact_name": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "contact_phone": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "contact_email": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "created_at": {
                           "type": "string",
                           "format": "date-time",
@@ -6083,6 +6285,10 @@
                         "osm_id",
                         "timezone",
                         "notes",
+                        "haccp_excursion_min",
+                        "contact_name",
+                        "contact_phone",
+                        "contact_email",
                         "created_at",
                         "updated_at"
                       ]
