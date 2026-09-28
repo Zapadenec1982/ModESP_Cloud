@@ -16,10 +16,16 @@
   --border-muted:   #152238;
   --border-accent:  #4a9eff;
 
-  /* ── Text ── */
+  /* ── Text ──
+     Muted text is body text too: 12 px labels, hints and page subtitles use
+     it, and #3d4f65 on #080c12 was 2.34:1 — unreadable on a phone in
+     daylight (audit item 6). #7688a2 is 5.4:1 on the page, 4.5:1 on the
+     brightest surface (--bg-tertiary); secondary moved up to keep the
+     three-tier hierarchy visible. --status-offline keeps the old dim value:
+     it colours a dot, never text. */
   --text-primary:   #e2eaf4;
-  --text-secondary: #7b8da4;
-  --text-muted:     #3d4f65;
+  --text-secondary: #94a6bd;
+  --text-muted:     #7688a2;
   --text-inverse:   #080c12;
 
   /* ── Accent colors — colder, more saturated ── */
@@ -110,7 +116,7 @@
 
   --text-primary:   #1a2332;
   --text-secondary: #4a5568;
-  --text-muted:     #94a3b8;
+  --text-muted:     #5b6b82;   /* was #94a3b8 = 2.4:1 on #f4f6f9; now 5.0:1, 4.6:1 on --bg-tertiary */
   --text-inverse:   #ffffff;
 
   --accent-blue:    #2563eb;
