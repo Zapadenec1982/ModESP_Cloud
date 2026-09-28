@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ModESP Cloud API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Integration surface of ModESP Cloud — the endpoints a CMMS, BI or ERP calls with an organisation API key.\n\n**Authentication.** `Authorization: Bearer modesp_…` (API key) or a person's access token. A key represents the whole organisation; its scope decides what it may change.\n\n**Errors.** Every non-2xx answer is `{ error, message, status }`. `402 plan_feature` means the organisation's plan lacks the feature; `423 organisation_closed` means the organisation is closed and read-only; `429 too_many_requests` is rate limiting.\n\n**Webhooks.** Outbound events are described under *Webhooks* at the bottom: a POST per subscribed event, signed with `X-ModESP-Signature: v1=HMAC-SHA256(secret, \"<X-ModESP-Timestamp>.<body>\")`."
   },
   "servers": [
