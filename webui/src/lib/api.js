@@ -1564,6 +1564,15 @@ export function updateSupportRequest(id, status) {
  * Resolves with the response headers so callers can surface report metadata
  * (`X-Report-Code`, `X-Report-Source`) that the server exposes on HACCP PDFs.
  */
+/** The file name a Content-Disposition header carries: the UTF-8 form first, else the plain one. */
+function fileNameFromDisposition(header, fallback = null) {
+  if (!header) return fallback;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8) { try { return decodeURIComponent(utf8[1].trim()); } catch { /* malformed: fall through to the plain name */ } }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : fallback;
+}
+
 async function downloadFile(path, filename, options = {}) {
   const headers = {};
   const token = activeToken();
@@ -1579,10 +1588,14 @@ async function downloadFile(path, filename, options = {}) {
     throw err;
   }
   const blob = await res.blob();
+  // The server names the file after the days the document prints, in the
+  // report's own time zone (Content-Disposition); the name passed in only
+  // covers a response without one, so the name cannot disagree with the PDF.
+  const served = fileNameFromDisposition(res.headers.get('content-disposition'));
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename;
+  a.download = served || filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1633,20 +1646,6 @@ export function exportSitePdf(siteId, from, to, bucket = '1h', lang) {
   const qs = new URLSearchParams(params).toString();
   const fname = `haccp_site_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
   return downloadFile(`/sites/${siteId}/export.pdf?${qs}`, fname);
-}
-
-/**
- * The file name the server put in Content-Disposition — the RFC 5987 UTF-8
- * form first (site names are usually Cyrillic), then the plain one.
- */
-function fileNameFromDisposition(header, fallback) {
-  const value = header || '';
-  const utf8 = value.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8) {
-    try { return decodeURIComponent(utf8[1].trim()); } catch { /* fall through */ }
-  }
-  const plain = value.match(/filename="?([^";]+)"?/i);
-  return plain ? plain[1].trim() : fallback;
 }
 
 /**

@@ -9,6 +9,7 @@ const haccp         = require('../services/haccp-report');
 const serviceReport = require('../services/service-report');
 const { checkDeviceAccess, filterDeviceAccess } = require('../middleware/device-access');
 const { isUuidFormat } = require('../lib/ids');
+const { transliterate } = require('../lib/slug');
 
 // Register bundled Roboto fonts (includes Cyrillic glyphs)
 
@@ -39,7 +40,7 @@ async function resolveDevice(id, tenantId, isSuperadmin) {
     params.push(tenantId);
   }
   const { rows } = await db.query(
-    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
+    `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, firmware_version, proto_version, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
      FROM devices WHERE ${where}`,
     params
   );
@@ -310,14 +311,26 @@ function parseChannels(query) {
   return query.channels ? query.channels.split(',').map(c => c.trim()).filter(Boolean) : ['air', 'evap', 'setpoint'];
 }
 
+/**
+ * The file is named after the days the document prints, in the report's own
+ * time zone (haccp.reportFileName): a rolling «last 24 h» generated at 01:46
+ * Kyiv time is `…_2026-09-27_2026-09-28.pdf`, the same dates as its «Period»
+ * line, not the UTC dates the client's ISO strings would give. The WebUI reads
+ * Content-Disposition, so it is exposed to a cross-origin dev client too.
+ */
+function safeSiteName(name) {
+  return String(name || 'site').replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'site';
+}
+
 function sendPdf(res, result, filename) {
+  const ascii = transliterate(filename).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
   res.setHeader('Content-Length', result.buffer.length);
   res.setHeader('X-Report-Code', haccp.fmtCode(result.code));
   res.setHeader('X-Report-Sha256', result.hash);
   res.setHeader('X-Report-Source', result.source);
-  res.setHeader('Access-Control-Expose-Headers', 'X-Report-Code, X-Report-Sha256, X-Report-Source');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Report-Code, X-Report-Sha256, X-Report-Source');
   res.end(result.buffer);
 }
 
@@ -380,7 +393,7 @@ deviceRouter.get('/:id/telemetry/export.pdf', requireFeature('reports'), checkDe
       action: 'export.haccp_pdf', entityId: device.mqtt_device_id,
       changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, lang },
     };
-    const filename = `haccp_${device.mqtt_device_id}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`;
+    const filename = haccp.reportFileName(`haccp_${device.mqtt_device_id}`, range.from, range.to, result.tz);
     await archiveOneOff(req, result, filename);
     sendPdf(res, result, filename);
   } catch (err) {
@@ -422,7 +435,7 @@ deviceRouter.get('/:id/telemetry/service.pdf', requireFeature('reports'), checkD
       action: 'export.service_pdf', entityId: device.mqtt_device_id,
       changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, lang },
     };
-    const filename = `service_${device.mqtt_device_id}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`;
+    const filename = haccp.reportFileName(`service_${device.mqtt_device_id}`, range.from, range.to, result.tz);
     await archiveOneOff(req, result, filename);
     sendPdf(res, result, filename);
   } catch (err) {
@@ -464,7 +477,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
       return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
     }
     const { rows: devices } = await db.query(
-      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, firmware_version, proto_version, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
          FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
       [site.id, site.tenant_id]
     );
@@ -485,7 +498,7 @@ siteRouter.get('/:id/export.pdf', requireFeature('reports'), async (req, res, ne
       action: 'export.haccp_site_pdf', entityId: site.id,
       changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, devices: devices.length, lang },
     };
-    const filename = `haccp_site_${site.name.replace(/[^\w-]+/g, '_')}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`;
+    const filename = haccp.reportFileName(`haccp_site_${safeSiteName(site.name)}`, range.from, range.to, result.tz);
     await archiveOneOff(req, result, filename);
     sendPdf(res, result, filename);
   } catch (err) {
@@ -527,7 +540,7 @@ siteRouter.get('/:id/service.pdf', requireFeature('reports'), async (req, res, n
       return res.status(400).json({ error: 'validation_failed', message: `Invalid bucket. Use: ${Object.keys(haccp.BUCKETS).join(', ')}`, status: 400 });
     }
     const { rows: devices } = await db.query(
-      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
+      `SELECT id, mqtt_device_id, tenant_id, name, location, serial_number, model, firmware_version, proto_version, haccp_min, haccp_max, haccp_tolerance, haccp_product, last_state
          FROM devices WHERE site_id = $1 AND tenant_id = $2 AND status = 'active' ORDER BY name, mqtt_device_id LIMIT 50`,
       [site.id, site.tenant_id]
     );
@@ -548,7 +561,7 @@ siteRouter.get('/:id/service.pdf', requireFeature('reports'), async (req, res, n
       action: 'export.service_site_pdf', entityId: site.id,
       changes: { code: result.code, sha256: result.hash, from: range.from, to: range.to, source: result.source, devices: devices.length, lang },
     };
-    const filename = `service_site_${site.name.replace(/[^\w-]+/g, '_')}_${shortDate(range.from)}_${shortDate(range.to)}.pdf`;
+    const filename = haccp.reportFileName(`service_site_${safeSiteName(site.name)}`, range.from, range.to, result.tz);
     await archiveOneOff(req, result, filename);
     sendPdf(res, result, filename);
   } catch (err) {

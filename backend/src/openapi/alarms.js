@@ -10,6 +10,8 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
     device_id: mqttId,
     device_name: z.string().nullable(),
     mqtt_device_id: mqttId,
+    site_id: uuid.nullable().openapi({ description: 'The site the device is assigned to, if any' }),
+    site_name: z.string().nullable().openapi({ example: 'Магазин №1' }),
     alarm_code: z.string().openapi({ example: 'high_temp_alarm' }),
     severity,
     active: z.boolean(),
@@ -66,7 +68,7 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
   registry.registerPath({
     method: 'get', path: '/devices/{id}/alarms', tags: ['Alarms'], summary: 'Alarm history of one device',
     request: { params: z.object({ id: z.string().openapi({ description: 'Device UUID or controller id' }) }), query: z.object({ active: z.enum(['true', 'false']).optional(), from: isoDate.optional(), to: isoDate.optional(), ...paging }) },
-    responses: withCommon({ 200: listOf(Alarm.omit({ device_id: true, device_name: true, mqtt_device_id: true, acknowledged_by_email: true }).extend({ acknowledged_by: uuid.nullable() }), 'Newest first'), 404: errorOf('`not_found`') }),
+    responses: withCommon({ 200: listOf(Alarm.omit({ device_id: true, device_name: true, mqtt_device_id: true, site_id: true, site_name: true, acknowledged_by_email: true }).extend({ acknowledged_by: uuid.nullable() }), 'Newest first'), 404: errorOf('`not_found`') }),
   });
   registry.registerPath({
     method: 'get', path: '/alarms/export.csv', tags: ['Alarms'], summary: 'Alarms as CSV', description: 'Up to 90 days and 50 000 rows. 10 exports per minute.',

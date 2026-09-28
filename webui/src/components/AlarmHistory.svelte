@@ -82,7 +82,7 @@
             {/if}
             <td>{alarmLabel(alarm.alarm_code)}</td>
             <td>
-              <span class="badge badge-{alarm.severity}">{alarm.severity}</span>
+              <span class="badge badge-{alarm.severity}">{$t('alarm.' + (alarm.severity || 'warning'))}</span>
             </td>
             <td>{duration(alarm.triggered_at, alarm.cleared_at) || '—'}</td>
             <td>

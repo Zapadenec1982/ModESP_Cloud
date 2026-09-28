@@ -402,6 +402,7 @@ describe('HACCP inspector report end to end', () => {
   let tenant, site, device, admin;
   const parse = (r, cb) => { const c = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); };
   const T = haccp.__test;
+  const S = haccp.strings('uk');
   const q = (sql, p) => db.query(sql, p);
   // 04.09 00:00 Kyiv → 06.09 00:00 Kyiv, like the acceptance run
   const from = new Date('2026-09-03T21:00:00Z');
@@ -543,5 +544,54 @@ describe('HACCP inspector report end to end', () => {
       .set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
     expect(res.status).toBe(200);
     expect(res.body.slice(0, 5).toString()).toBe('%PDF-');
+    // The file is named after the days the document prints, in the site's time
+    // zone, with the site's own name; the ASCII form is for clients without RFC 5987.
+    const disposition = res.headers['content-disposition'];
+    expect(decodeURIComponent(disposition.split("filename*=UTF-8''")[1])).toBe('haccp_site_Магазин_2_2026-09-04_2026-09-05.pdf');
+    expect(disposition).toMatch(/^attachment; filename="haccp_site_mahazyn_2_2026-09-04_2026-09-05\.pdf"; filename\*=UTF-8''/);
+  });
+
+  it('edge intervals: a period that starts or ends inside an interval marks that row «from hh:mm» / «until hh:mm»', () => {
+    // The rolling «last 24 h» generated at 01:46 Kyiv time: 25 hourly rows, the first and the last partial
+    const f = new Date('2026-09-26T22:46:00Z'), t = new Date('2026-09-27T22:46:00Z');
+    const h0 = Math.floor(f.getTime() / 3600e3) * 3600e3;
+    const buckets = Array.from({ length: 25 }, (_, h) => ({ time: new Date(h0 + h * 3600e3).toISOString(), air: { min: -3, max: -2, avg: -2.6, samples: 60 } }));
+    const days = T.buildRows({ d: { buckets, defrost: [], doors: [], excursions: [], gaps: [] }, from: f, to: t, bucketSec: 3600, tz: 'Europe/Kyiv', S, doorMin: 10 });
+    expect(days.map(x => x.day)).toEqual(['2026-09-27', '2026-09-28']);
+    const rows = days.flatMap(x => x.rows);
+    expect(rows).toHaveLength(25);
+    expect(rows[0]).toMatchObject({ clock: '01:00', partial: true, notes: ['з 01:46'] });
+    expect(rows[1]).toMatchObject({ clock: '02:00', partial: false, notes: [] });
+    expect(rows[24]).toMatchObject({ clock: '01:00', partial: true, notes: ['до 01:46'] });
+    // a `to` of 23:59:59 is the whole last hour for the reader, not a partial one
+    expect(T.edgeNotes({ t: Date.parse('2026-09-27T20:00:00Z'), stepMs: 3600e3, from: f, to: new Date('2026-09-27T20:59:59Z'), tz: 'Europe/Kyiv', S })).toEqual([]);
+  });
+
+  it('file names carry the days the document prints: the report time zone, the last day inclusive', () => {
+    const tz = 'Europe/Kyiv';
+    expect(T.periodDays(new Date('2026-09-26T22:46:00Z'), new Date('2026-09-27T22:46:00Z'), tz)).toEqual({ first: '2026-09-27', last: '2026-09-28' });
+    expect(T.reportFileName('haccp_AE0000000003', new Date('2026-08-31T21:00:00Z'), new Date('2026-09-30T21:00:00Z'), tz)).toBe('haccp_AE0000000003_2026-09-01_2026-09-30.pdf');
+    expect(T.reportFileName('x', new Date('2026-09-26T22:46:00Z'), new Date('2026-09-27T22:46:00Z'), 'UTC')).toBe('x_2026-09-26_2026-09-27.pdf');
+  });
+
+  it('without a critical limit the document says the assessment is impossible instead of «0 excursions»', () => {
+    const buckets = Array.from({ length: 4 }, (_, h) => ({ time: new Date(at(h * 60)).toISOString(), air: { min: -3, max: -2, avg: -2.6, samples: 12 } }));
+    const base = { device: { mqtt_device_id: 'X1', name: 'Вітрина', last_state: {} }, rows: buckets, buckets, summary: { min: '-3.00', max: '-2.00', avg: '-2.60', samples: 48 },
+                   stepSec: 300, hourly: false, tolerance: 0, excursionMin: 30, defrost: [], excursions: [], gaps: [], doors: [], workOrders: [], lastService: null };
+    const doc = (limits) => JSON.stringify(T.buildDocument({
+      kind: 'device', lang: 'uk', tz: 'Europe/Kyiv', tenant: { name: 'T', slug: 't' }, site: null, devices: [{ ...base, limits }],
+      from, to: new Date(at(240)), bucketKey: '1h', bucketSec: 3600, source: 'raw', generatedBy: 'test', generatedAt: to.toISOString(),
+      code: 'AAAABBBBCCCC', hash: 'x', verifyUrl: 'https://example.test/v', rawRetentionDays: 90, doorMin: 10,
+    }).docDefinition);
+    const none = doc({ min: null, max: null, source: null });
+    expect(none).toContain(S.stats_no_limits.split(' · ')[0]);
+    expect(none).toContain(S.excursions_no_limits);
+    expect(none).toContain(S.excursion_rule_no_limits.slice(0, 40));
+    expect(none).not.toContain(S.excursions_none);
+    expect(none).not.toContain(`${S.stats.split(':')[0]}: 0`);
+    const set = doc({ min: null, max: -18, source: 'org' });
+    expect(set).toContain(S.excursions_none);
+    expect(set).toContain(`${S.stats.split(':')[0]}: 0`);
+    expect(set).not.toContain(S.excursions_no_limits);
   });
 });

@@ -4,7 +4,7 @@
   import { getAlarms, exportAlarmsCsv, ackAlarm, getSites } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { navigate, canWrite, authUser } from '../lib/stores.js'
-  import { timeAgo, alarmLabel } from '../lib/format.js'
+  import { timeAgo, alarmLabel, formatDate, formatDuration } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -26,6 +26,14 @@
   let severityFilter = null  // null = all, 'critical', 'warning', 'info'
 
   const PAGE_SIZE = 50
+
+  // «Київ, магазин №102 → морозильна бонета»: the place and the equipment are
+  // what a person recognises; the MQTT id stays visible, small, for the technician.
+  const mqttId = (a) => a.device_id || a.mqtt_device_id
+  const deviceTitle = (a) => (a.device_name ? `${a.site_name ? a.site_name + ' → ' : ''}${a.device_name}` : (a.site_name ? `${a.site_name} → ${mqttId(a)}` : mqttId(a)))
+  const severityLabel = (a) => $t('alarm.' + (a.severity || 'warning'))
+  // How long the alarm lasted (history) or has lasted so far (active)
+  const lasted = (a) => formatDuration((new Date(a.cleared_at || Date.now()) - new Date(a.triggered_at || a.created_at)) / 1000)
 
   // Date range filter
   let dateFrom = ''
@@ -374,19 +382,19 @@
               >
                 <div class="alarm-severity">
                   <Badge variant={severityVariant(alarm.severity)} pulse={!alarm.acknowledged_at}>
-                    {(alarm.severity || 'warning').toUpperCase()}
+                    {severityLabel(alarm)}
                   </Badge>
                 </div>
                 <div class="alarm-info">
                   <span class="alarm-type">{alarmLabel(alarm.alarm_code)}</span>
-                  <span class="alarm-device font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                  <span class="alarm-where">{deviceTitle(alarm)}{#if alarm.device_name || alarm.site_name}<span class="alarm-device font-mono">{mqttId(alarm)}</span>{/if}</span>
                   {#if alarm.acknowledged_at}
                     <span class="ack-info">{$t('alarm.acked_by', alarm.acknowledged_by_email || '—')} · {timeAgo(alarm.acknowledged_at)}{alarm.ack_note ? ' — ' + alarm.ack_note : ''}</span>
                   {:else if alarm.escalated_at}
                     <span class="ack-info escalated">{$t('alarm.escalated')}</span>
                   {/if}
                 </div>
-                <div class="alarm-time">{timeAgo(alarm.triggered_at || alarm.created_at)}</div>
+                <div class="alarm-time" title={formatDate(alarm.triggered_at || alarm.created_at)}>{timeAgo(alarm.triggered_at || alarm.created_at)}<span class="alarm-lasted">{lasted(alarm)}</span></div>
                 <Icon name="chevron-right" size={16} />
               </button>
               {#if $canWrite && !alarm.acknowledged_at}
@@ -440,15 +448,15 @@
                 on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
                 aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
               >
-                <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                <span class="td" title={mqttId(alarm)}>{deviceTitle(alarm)}</span>
                 <span class="td">{alarmLabel(alarm.alarm_code)}</span>
                 <span class="td">
                   <Badge variant={severityVariant(alarm.severity)} small>
-                    {alarm.severity || 'warning'}
+                    {severityLabel(alarm)}
                   </Badge>
                 </span>
-                <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
-                <span class="td text-muted">{alarm.cleared_at ? timeAgo(alarm.cleared_at) : '—'}</span>
+                <span class="td text-muted" title={formatDate(alarm.triggered_at || alarm.created_at)}>{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
+                <span class="td text-muted" title={alarm.cleared_at ? formatDate(alarm.cleared_at) : ''}>{alarm.cleared_at ? `${timeAgo(alarm.cleared_at)} · ${lasted(alarm)}` : '—'}</span>
               </button>
               {#if alarm.work_order_id}
                 <button class="ack-btn wo-link" on:click={() => navigate(`/work-orders?id=${alarm.work_order_id}`)} title={$t('wo.status_' + alarm.work_order_status)}>
@@ -842,6 +850,16 @@
     font-size: var(--text-base);
   }
 
+  .alarm-where {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: baseline;
+    min-width: 0;
+  }
+
   .alarm-device {
     font-size: var(--text-xs);
     color: var(--text-muted);
@@ -851,6 +869,15 @@
     font-size: var(--text-sm);
     color: var(--text-muted);
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .alarm-lasted {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
   }
 
   /* History table */
