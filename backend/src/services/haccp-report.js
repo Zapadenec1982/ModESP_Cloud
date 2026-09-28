@@ -17,11 +17,15 @@
  * where the report can be verified.
  *
  * Three classes of events replace the old alarm list:
- *   product excursions — air past the limit (tolerance included) for longer
- *     than haccp_excursion_min (site → organisation → 30 min); defrost
+ *   air-temperature excursions — air past the limit (tolerance included) for
+ *     longer than haccp_excursion_min (site → organisation → 30 min); defrost
  *     intervals are excluded and marked in the log; each excursion lists
  *     start, end, extreme value and the corrective action / responsible
- *     person from a work order when there is one, blank otherwise;
+ *     person from a work order when there is one, blank otherwise. The air
+ *     is what the sensor measures, so the wording never claims a product
+ *     excursion; and without a critical limit there is nothing to measure
+ *     against, so the document says the assessment is impossible instead of
+ *     counting zero excursions;
  *   recording gaps — stretches without raw measurements longer than one
  *     measurement interval (a lost connection that is later back-filled from
  *     the device buffer leaves no gap, because the rows are there);
@@ -29,7 +33,16 @@
  *     this report at all.
  *
  * Verification: a code and the SHA-256 of the report data in the footer, a QR
- * code with the verification URL next to them.
+ * code with the verification URL next to them, and a sentence on what the
+ * hash covers and what the online check confirms.
+ *
+ * A period that does not start or end on an interval boundary covers its
+ * first and last interval only partly; those rows say «from 01:46» /
+ * «until 01:46», so the 25 rows of a rolling 24-hour window explain
+ * themselves. The log is one table per calendar day: the date and the column
+ * header repeat when a day continues on the next page, and a short trailing
+ * day moves to the next page whole instead of leaving one row under no date.
+ * File names carry the same local days the document prints (periodDays).
  *
  * Critical limits: devices.haccp_min/haccp_max (+ haccp_tolerance), else the
  * device's own protection.low_limit/high_limit, else "not set" — said out
@@ -63,11 +76,15 @@ const STRINGS = {
     limit: 'Критична межа', limit_max: 'не вище {0} °C', limit_min: 'не нижче {0} °C', limit_range: 'від {0} до {1} °C', tolerance: 'допустиме відхилення {0} °C',
     limit_none: 'не задано', limit_none_hint: 'оператор має задати межі в картці обладнання', limits_org: 'за програмою HACCP підприємства', limits_controller: 'за налаштуваннями приладу',
     excursion_rule: 'Відхиленням вважається температура повітря за межею довше ніж {0} хв; інтервали відтайки не враховуються.',
+    excursion_rule_no_limits: 'Критичну межу не задано, тому відхилення в цьому журналі не оцінювалися. Після її задання відхиленням вважатиметься температура повітря за межею довше ніж {0} хв; інтервали відтайки не враховуються.',
     summary: 'Підсумок: температура повітря в зоні продукту', min: 'Мін °C', max: 'Макс °C', avg: 'Сер. °C', samples: 'Вимірювань',
-    stats: 'Відхилень продукту: {0} · Розривів запису: {1}',
+    stats: 'Відхилень температури повітря: {0} · Розривів запису: {1}',
+    stats_no_limits: 'Відхилення температури повітря: оцінити неможливо — критичну межу не задано · Розривів запису: {0}',
     journal: 'Журнал контролю', col_time: 'Час', col_air: 'Повітря °C', col_limit: 'Межа', col_deviation: 'Відхилення', col_note: 'Примітка',
     yes: 'Так', no: 'Ні', nd: 'н/д', note_defrost: 'відтайка', note_door: 'двері > {0} хв', note_gap: 'розрив', day_deviations: 'відхилень: {0}',
-    excursions_title: 'Відхилення продукту', excursions_none: 'Відхилень за період не зафіксовано.',
+    note_from: 'з {0}', note_to: 'до {0}', partial_note: 'Інтервал, який період покриває лише частково, позначено в примітці («з …», «до …»); його значення обчислено за наявну частину.',
+    excursions_title: 'Відхилення температури повітря', excursions_none: 'Відхилень температури повітря за період не зафіксовано.',
+    excursions_no_limits: 'Оцінити неможливо: критичну межу не задано. Задайте межу в картці обладнання — відтоді журнал показуватиме відхилення за правилом вище.',
     col_start: 'Початок', col_end: 'Кінець', col_duration: 'Тривалість', col_peak: 'Крайнє значення', col_action: 'Коригувальна дія', col_responsible: 'Відповідальний',
     gaps_title: 'Розриви запису', gaps_none: 'Розривів запису за період не зафіксовано.', gap_row: 'дані відсутні з {0} по {1}', col_from: 'З', col_to: 'По',
     min_short: 'хв', h_short: 'год', d_short: 'дн',
@@ -75,7 +92,7 @@ const STRINGS = {
     responsible: 'Відповідальна особа', verified_by: 'Перевірив (відповідальний за HACCP)', full_name: 'ПІБ', position: 'Посада', signature: 'Підпис', date: 'Дата',
     sensors_note: 'Примітка про повірку: температура вимірюється датчиком приладу ModESP; періодичність повірки/калібрування визначає підприємство згідно з власною програмою HACCP. Остання сервісна відмітка щодо обладнання:',
     no_service: 'записів обслуговування за період зберігання немає',
-    verify: 'Перевірка автентичності', verify_text: 'Код перевірки та SHA-256 даних звіту зберігаються платформою. Перевірити:',
+    verify: 'Перевірка автентичності', verify_text: 'SHA-256 обчислено з даних звіту — періоду, обладнання, критичної межі, кожного рядка журналу, відхилень і розривів, — а не з файлу PDF. За кодом перевірки платформа показує, коли, ким і за який період сформовано звіт, і той самий SHA-256: збіг означає, що дані не змінювалися. Перевірити:',
     page: 'Сторінка', of: 'з', no_data: 'Дані за період відсутні',
   },
   en: {
@@ -90,11 +107,15 @@ const STRINGS = {
     limit: 'Critical limit', limit_max: 'not above {0} °C', limit_min: 'not below {0} °C', limit_range: 'from {0} to {1} °C', tolerance: 'allowed deviation {0} °C',
     limit_none: 'not set', limit_none_hint: 'the operator must set the limits on the equipment card', limits_org: "per the business's HACCP plan", limits_controller: "per the device's settings",
     excursion_rule: 'An excursion is the air temperature past the limit for longer than {0} min; defrost intervals are not counted.',
+    excursion_rule_no_limits: 'No critical limit is set, so excursions were not assessed in this log. Once it is set, an excursion is the air temperature past the limit for longer than {0} min; defrost intervals are not counted.',
     summary: 'Summary: air temperature in the product zone', min: 'Min °C', max: 'Max °C', avg: 'Avg °C', samples: 'Samples',
-    stats: 'Product excursions: {0} · Recording gaps: {1}',
+    stats: 'Air-temperature excursions: {0} · Recording gaps: {1}',
+    stats_no_limits: 'Air-temperature excursions: cannot be assessed — no critical limit is set · Recording gaps: {0}',
     journal: 'Control log', col_time: 'Time', col_air: 'Air °C', col_limit: 'Limit', col_deviation: 'Excursion', col_note: 'Note',
     yes: 'Yes', no: 'No', nd: 'n/a', note_defrost: 'defrost', note_door: 'door > {0} min', note_gap: 'gap', day_deviations: 'excursions: {0}',
-    excursions_title: 'Product excursions', excursions_none: 'No excursions recorded during the period.',
+    note_from: 'from {0}', note_to: 'until {0}', partial_note: 'An interval the period covers only partly is marked in the note («from …», «until …»); its value is computed from the covered part.',
+    excursions_title: 'Air-temperature excursions', excursions_none: 'No air-temperature excursions recorded during the period.',
+    excursions_no_limits: 'Cannot be assessed: no critical limit is set. Set the limit on the equipment card — from then on the log shows excursions by the rule above.',
     col_start: 'Start', col_end: 'End', col_duration: 'Duration', col_peak: 'Extreme value', col_action: 'Corrective action', col_responsible: 'Responsible',
     gaps_title: 'Recording gaps', gaps_none: 'No recording gaps during the period.', gap_row: 'no data from {0} to {1}', col_from: 'From', col_to: 'To',
     min_short: 'min', h_short: 'h', d_short: 'd',
@@ -102,7 +123,7 @@ const STRINGS = {
     responsible: 'Responsible person', verified_by: 'Verified by (HACCP team leader)', full_name: 'Full name', position: 'Position', signature: 'Signature', date: 'Date',
     sensors_note: 'Calibration note: the temperature is measured by the ModESP device sensor; the verification/calibration interval is set by the business in its HACCP plan. Last service record for this equipment:',
     no_service: 'no service records within the retention period',
-    verify: 'Authenticity check', verify_text: 'The verification code and the SHA-256 of the report data are stored by the platform. Verify at:',
+    verify: 'Authenticity check', verify_text: 'The SHA-256 is computed from the report data — the period, the equipment, the critical limit, every log row, the excursions and the gaps — not from the PDF file. By the verification code the platform shows when, by whom and for which period the report was generated, and the same SHA-256: a match means the data has not been altered. Verify at:',
     page: 'Page', of: 'of', no_data: 'No data for the period',
   },
   pl: {
@@ -117,11 +138,15 @@ const STRINGS = {
     limit: 'Limit krytyczny', limit_max: 'nie wyżej niż {0} °C', limit_min: 'nie niżej niż {0} °C', limit_range: 'od {0} do {1} °C', tolerance: 'dopuszczalne odchylenie {0} °C',
     limit_none: 'nie ustawiono', limit_none_hint: 'operator musi ustawić limity w karcie urządzenia', limits_org: 'wg planu HACCP przedsiębiorstwa', limits_controller: 'wg ustawień urządzenia',
     excursion_rule: 'Odchyleniem jest temperatura powietrza poza limitem dłużej niż {0} min; interwały odszraniania nie są liczone.',
+    excursion_rule_no_limits: 'Nie ustawiono limitu krytycznego, więc odchylenia w tym dzienniku nie były oceniane. Po jego ustawieniu odchyleniem będzie temperatura powietrza poza limitem dłużej niż {0} min; interwały odszraniania nie są liczone.',
     summary: 'Podsumowanie: temperatura powietrza w strefie produktu', min: 'Min °C', max: 'Maks °C', avg: 'Śr. °C', samples: 'Pomiary',
-    stats: 'Odchylenia produktu: {0} · Przerwy w zapisie: {1}',
+    stats: 'Odchylenia temperatury powietrza: {0} · Przerwy w zapisie: {1}',
+    stats_no_limits: 'Odchylenia temperatury powietrza: nie można ocenić — nie ustawiono limitu krytycznego · Przerwy w zapisie: {0}',
     journal: 'Dziennik kontroli', col_time: 'Czas', col_air: 'Powietrze °C', col_limit: 'Limit', col_deviation: 'Odchylenie', col_note: 'Uwaga',
     yes: 'Tak', no: 'Nie', nd: 'b/d', note_defrost: 'odszranianie', note_door: 'drzwi > {0} min', note_gap: 'przerwa', day_deviations: 'odchyleń: {0}',
-    excursions_title: 'Odchylenia produktu', excursions_none: 'W okresie nie odnotowano odchyleń.',
+    note_from: 'od {0}', note_to: 'do {0}', partial_note: 'Interwał, który okres obejmuje tylko częściowo, jest oznaczony w uwadze („od …”, „do …”); jego wartość obliczono z objętej części.',
+    excursions_title: 'Odchylenia temperatury powietrza', excursions_none: 'W okresie nie odnotowano odchyleń temperatury powietrza.',
+    excursions_no_limits: 'Nie można ocenić: nie ustawiono limitu krytycznego. Ustaw limit w karcie urządzenia — od tej chwili dziennik będzie pokazywał odchylenia według powyższej reguły.',
     col_start: 'Początek', col_end: 'Koniec', col_duration: 'Czas trwania', col_peak: 'Wartość skrajna', col_action: 'Działanie korygujące', col_responsible: 'Odpowiedzialny',
     gaps_title: 'Przerwy w zapisie', gaps_none: 'W okresie nie odnotowano przerw w zapisie.', gap_row: 'brak danych od {0} do {1}', col_from: 'Od', col_to: 'Do',
     min_short: 'min', h_short: 'h', d_short: 'dn',
@@ -129,7 +154,7 @@ const STRINGS = {
     responsible: 'Osoba odpowiedzialna', verified_by: 'Sprawdził (odpowiedzialny za HACCP)', full_name: 'Imię i nazwisko', position: 'Stanowisko', signature: 'Podpis', date: 'Data',
     sensors_note: 'Uwaga o wzorcowaniu: temperaturę mierzy czujnik urządzenia ModESP; częstotliwość sprawdzania/kalibracji ustala przedsiębiorstwo w swoim planie HACCP. Ostatni wpis serwisowy dla urządzenia:',
     no_service: 'brak wpisów serwisowych w okresie przechowywania',
-    verify: 'Weryfikacja autentyczności', verify_text: 'Kod weryfikacyjny i SHA-256 danych raportu są przechowywane przez platformę. Sprawdź:',
+    verify: 'Weryfikacja autentyczności', verify_text: 'SHA-256 obliczono z danych raportu — okresu, urządzenia, limitu krytycznego, każdego wiersza dziennika, odchyleń i przerw — a nie z pliku PDF. Po kodzie weryfikacyjnym platforma pokazuje, kiedy, przez kogo i za jaki okres wygenerowano raport, oraz ten sam SHA-256: zgodność oznacza, że dane nie zostały zmienione. Sprawdź:',
     page: 'Strona', of: 'z', no_data: 'Brak danych za okres',
   },
   de: {
@@ -144,11 +169,15 @@ const STRINGS = {
     limit: 'Kritischer Grenzwert', limit_max: 'nicht über {0} °C', limit_min: 'nicht unter {0} °C', limit_range: 'von {0} bis {1} °C', tolerance: 'zulässige Abweichung {0} °C',
     limit_none: 'nicht festgelegt', limit_none_hint: 'der Betreiber muss die Grenzwerte in der Anlagenkarte festlegen', limits_org: 'laut HACCP-Konzept des Betriebs', limits_controller: 'laut Geräteeinstellungen',
     excursion_rule: 'Eine Abweichung liegt vor, wenn die Lufttemperatur länger als {0} Min. außerhalb des Grenzwerts liegt; Abtauintervalle zählen nicht.',
+    excursion_rule_no_limits: 'Es ist kein kritischer Grenzwert festgelegt, daher wurden Abweichungen in diesem Protokoll nicht bewertet. Sobald er festgelegt ist, gilt als Abweichung eine Lufttemperatur länger als {0} Min. außerhalb des Grenzwerts; Abtauintervalle zählen nicht.',
     summary: 'Zusammenfassung: Lufttemperatur im Produktbereich', min: 'Min °C', max: 'Max °C', avg: 'Mittel °C', samples: 'Messungen',
-    stats: 'Produktabweichungen: {0} · Aufzeichnungslücken: {1}',
+    stats: 'Abweichungen der Lufttemperatur: {0} · Aufzeichnungslücken: {1}',
+    stats_no_limits: 'Abweichungen der Lufttemperatur: nicht bewertbar — kein kritischer Grenzwert festgelegt · Aufzeichnungslücken: {0}',
     journal: 'Kontrollprotokoll', col_time: 'Zeit', col_air: 'Luft °C', col_limit: 'Grenze', col_deviation: 'Abweichung', col_note: 'Bemerkung',
     yes: 'Ja', no: 'Nein', nd: 'k. A.', note_defrost: 'Abtauung', note_door: 'Tür > {0} Min.', note_gap: 'Lücke', day_deviations: 'Abweichungen: {0}',
-    excursions_title: 'Produktabweichungen', excursions_none: 'Im Zeitraum wurden keine Abweichungen festgestellt.',
+    note_from: 'ab {0}', note_to: 'bis {0}', partial_note: 'Ein Intervall, das der Zeitraum nur teilweise abdeckt, ist in der Bemerkung gekennzeichnet („ab …“, „bis …“); sein Wert ist aus dem abgedeckten Teil berechnet.',
+    excursions_title: 'Abweichungen der Lufttemperatur', excursions_none: 'Im Zeitraum wurden keine Abweichungen der Lufttemperatur festgestellt.',
+    excursions_no_limits: 'Nicht bewertbar: Es ist kein kritischer Grenzwert festgelegt. Legen Sie den Grenzwert in der Anlagenkarte fest — ab dann zeigt das Protokoll Abweichungen nach der obigen Regel.',
     col_start: 'Beginn', col_end: 'Ende', col_duration: 'Dauer', col_peak: 'Extremwert', col_action: 'Korrekturmaßnahme', col_responsible: 'Verantwortlich',
     gaps_title: 'Aufzeichnungslücken', gaps_none: 'Im Zeitraum wurden keine Aufzeichnungslücken festgestellt.', gap_row: 'keine Daten von {0} bis {1}', col_from: 'Von', col_to: 'Bis',
     min_short: 'Min.', h_short: 'Std.', d_short: 'Tg.',
@@ -156,7 +185,7 @@ const STRINGS = {
     responsible: 'Verantwortliche Person', verified_by: 'Geprüft von (HACCP-Verantwortlicher)', full_name: 'Name', position: 'Position', signature: 'Unterschrift', date: 'Datum',
     sensors_note: 'Hinweis zur Kalibrierung: Die Temperatur wird vom Sensor des ModESP-Geräts gemessen; das Prüf-/Kalibrierintervall legt der Betrieb in seinem HACCP-Konzept fest. Letzter Serviceeintrag für diese Anlage:',
     no_service: 'keine Serviceeinträge im Aufbewahrungszeitraum',
-    verify: 'Echtheitsprüfung', verify_text: 'Prüfcode und SHA-256 der Berichtsdaten werden von der Plattform gespeichert. Prüfen unter:',
+    verify: 'Echtheitsprüfung', verify_text: 'Der SHA-256 wird aus den Berichtsdaten berechnet — Zeitraum, Anlage, kritischer Grenzwert, jede Protokollzeile, Abweichungen und Lücken —, nicht aus der PDF-Datei. Über den Prüfcode zeigt die Plattform, wann, von wem und für welchen Zeitraum der Bericht erstellt wurde, sowie denselben SHA-256: Übereinstimmung bedeutet, dass die Daten unverändert sind. Prüfen unter:',
     page: 'Seite', of: 'von', no_data: 'Keine Daten für den Zeitraum',
   },
 };
@@ -238,6 +267,25 @@ function localParts(date, tz) {
     const iso = d.toISOString();
     return { day: iso.slice(0, 10), time: iso.slice(11, 16) };
   }
+}
+
+/**
+ * The first and the last calendar day a period touches, in the report's time
+ * zone — what a file name says. `to` is exclusive, so a period that ends at
+ * local midnight names the day before it («2026-09-01 … 2026-09-30», not
+ * «… 2026-10-01»); a rolling window that ends mid-day names that day. The
+ * document prints the same days, so the name and the content cannot disagree.
+ */
+function periodDays(from, to, tz) {
+  const first = localFmt(from, tz, false);
+  const last = localFmt(new Date(new Date(to).getTime() - 1), tz, false);
+  return { first, last };
+}
+
+/** `<prefix>_<first day>_<last day>.pdf`, the days in the report's time zone. */
+function reportFileName(prefix, from, to, tz) {
+  const { first, last } = periodDays(from, to, tz);
+  return `${prefix}_${first}_${last}.pdf`;
 }
 
 const num = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
@@ -362,6 +410,41 @@ function defrostIntervals(points, stepMs, hourly) {
 
 const overlaps = (a0, a1, intervals) => intervals.some(([b0, b1]) => b0 < a1 && b1 > a0);
 const inside = (t, intervals) => intervals.some(([b0, b1]) => t >= b0 && t < b1);
+
+/**
+ * Notes for an interval the period covers only partly: «from 01:46» on the
+ * first row, «until 01:46» on the last. A period that starts at 01:46 with
+ * hourly rows begins with the 01:00 row, and without this the 25 rows of a
+ * 24-hour window look like a mistake. A minute of slack absorbs a `to` of
+ * 23:59:59, which is the whole last hour for the reader.
+ */
+function edgeNotes({ t, stepMs, from, to, tz, S }) {
+  const notes = [];
+  const slack = 60e3;
+  if (from.getTime() - t > slack) notes.push(tpl(S.note_from, localParts(from, tz).time));
+  if (t + stepMs - to.getTime() > slack) notes.push(tpl(S.note_to, localParts(to, tz).time));
+  return notes;
+}
+
+/**
+ * One log table per calendar day. Both header rows (columns, then the date)
+ * repeat when a day continues on the next page, so a continuation never
+ * shows times under no date. A day short enough to fit on a page is kept
+ * whole: a rolling window's two rows after midnight move to the next page
+ * together with their date instead of leaving the last row alone.
+ */
+const UNBREAKABLE_MAX_ROWS = 30;
+function dayTable({ body, headerRows, widths, fontSize, rows }) {
+  return {
+    table: { headerRows, widths, body, dontBreakRows: true, keepWithHeaderRows: 1 },
+    layout: {
+      hLineWidth: (i, node) => (i === 0 || i === headerRows || i === node.table.body.length ? 0.8 : 0.3),
+      vLineWidth: () => 0, hLineColor: () => '#9ca3af', paddingTop: () => 1.5, paddingBottom: () => 1.5,
+    },
+    fontSize, margin: [0, 4, 0, 6],
+    ...(rows <= UNBREAKABLE_MAX_ROWS ? { unbreakable: true } : {}),
+  };
+}
 
 /**
  * Product excursions: the air temperature past the limit (tolerance included)
@@ -526,13 +609,14 @@ function buildRows({ d, from, to, bucketSec, tz, S, doorMin }) {
     const v = b && b[HACCP_CHANNEL] ? b[HACCP_CHANNEL].avg : null;
     const { day, time } = localParts(t, tz);
     const deviation = overlaps(t, t + stepMs, excursions);
-    const notes = [];
+    const edges = edgeNotes({ t, stepMs, from, to, tz, S });
+    const notes = [...edges];
     if (overlaps(t, t + stepMs, d.defrost)) notes.push(S.note_defrost);
     if (overlaps(t, t + stepMs, d.doors)) notes.push(tpl(S.note_door, doorMin));
     const gap = v === null || overlaps(t, t + stepMs, gaps);
     if (gap) notes.push(S.note_gap);
     if (!days.has(day)) days.set(day, { day, rows: [], deviations: 0 });
-    const row = { clock: time, value: v, deviation, gap, notes };
+    const row = { clock: time, value: v, deviation, gap, partial: edges.length > 0, notes };
     days.get(day).rows.push(row);
     if (deviation) days.get(day).deviations++;
   }
@@ -558,7 +642,7 @@ function deviceSection({ S, tz, d, bucketKey, bucketSec, from, to, single, doorM
       },
       layout: 'noBorders', fontSize: 8.5, margin: [0, 0, 0, 2],
     },
-    { text: tpl(S.excursion_rule, d.excursionMin), fontSize: 8, color: '#555555', margin: [0, 0, 0, 8] },
+    { text: tpl(hasLimits ? S.excursion_rule : S.excursion_rule_no_limits, d.excursionMin), fontSize: 8, color: hasLimits ? '#555555' : RED, margin: [0, 0, 0, 8] },
   ];
 
   const sm = d.summary;
@@ -574,19 +658,26 @@ function deviceSection({ S, tz, d, bucketKey, bucketSec, from, to, single, doorM
   };
   const exMin = d.excursions.reduce((a, e) => a + e.minutes, 0);
   const gapMin = d.gaps.reduce((a, g) => a + g.minutes, 0);
-  const statsLine = {
-    text: tpl(S.stats,
-      `${d.excursions.length}${exMin ? ' (' + fmtDuration(exMin, S) + ')' : ''}`,
-      `${d.gaps.length}${gapMin ? ' (' + fmtDuration(gapMin, S) + ')' : ''}`),
-    fontSize: 9, bold: d.excursions.length > 0, color: d.excursions.length ? RED : undefined, margin: [0, 0, 0, 10],
-  };
+  const gapsText = `${d.gaps.length}${gapMin ? ' (' + fmtDuration(gapMin, S) + ')' : ''}`;
+  // Without a limit there is nothing to count against: «0 excursions» would
+  // certify what was never measured. The line says the assessment is
+  // impossible and keeps the gaps, which are a fact of the data itself.
+  const statsLine = hasLimits
+    ? {
+        text: tpl(S.stats, `${d.excursions.length}${exMin ? ' (' + fmtDuration(exMin, S) + ')' : ''}`, gapsText),
+        fontSize: 9, bold: d.excursions.length > 0, color: d.excursions.length ? RED : undefined, margin: [0, 0, 0, 10],
+      }
+    : { text: tpl(S.stats_no_limits, gapsText), fontSize: 9, color: RED, margin: [0, 0, 0, 10] };
 
-  // ── the log ──
+  // ── the log: one table per calendar day ──
   const days = buildRows({ d, from, to, bucketSec, tz, S, doorMin });
+  const anyPartial = days.some(day => day.rows.some(r => r.partial));
   const cols = [S.col_time, S.col_air, S.col_limit, S.col_deviation, S.col_note];
-  const body = [cols.map(t => ({ text: t, bold: true, fontSize: 8 }))];
-  for (const day of days) {
-    body.push([{ text: `${localFmt(day.day + 'T12:00:00Z', 'UTC', false)}${day.deviations ? '   ' + tpl(S.day_deviations, day.deviations) : ''}`, colSpan: 5, bold: true, fillColor: DAY_BG, fontSize: 8.5 }, {}, {}, {}, {}]);
+  const logTables = days.map(day => {
+    const body = [
+      cols.map(t => ({ text: t, bold: true, fontSize: 8 })),
+      [{ text: `${localFmt(day.day + 'T12:00:00Z', 'UTC', false)}${day.deviations ? '   ' + tpl(S.day_deviations, day.deviations) : ''}`, colSpan: 5, bold: true, fillColor: DAY_BG, fontSize: 8.5 }, {}, {}, {}, {}],
+    ];
     for (const r of day.rows) {
       const fill = r.deviation ? RED_BG : (r.gap ? GREY_BG : undefined);
       const cell = (text, extra = {}) => ({ text, fillColor: fill, ...extra });
@@ -598,18 +689,14 @@ function deviceSection({ S, tz, d, bucketKey, bucketSec, from, to, single, doorM
         cell(r.notes.join(', '), { color: r.deviation ? undefined : GREY, italics: r.gap }),
       ]);
     }
-  }
-  const logTable = {
-    table: { headerRows: 1, widths: ['auto', 'auto', 'auto', 'auto', '*'], body, dontBreakRows: true },
-    layout: {
-      hLineWidth: (i, node) => (i === 0 || i === 1 || i === node.table.body.length ? 0.8 : 0.3),
-      vLineWidth: () => 0, hLineColor: () => '#9ca3af', paddingTop: () => 2, paddingBottom: () => 2,
-    },
-    fontSize: 8, margin: [0, 5, 0, 10],
-  };
+    return dayTable({ body, headerRows: 2, widths: ['auto', 'auto', 'auto', 'auto', '*'], fontSize: 8, rows: day.rows.length });
+  });
+  const partialNote = anyPartial ? [{ text: S.partial_note, fontSize: 7.5, color: '#555555', margin: [0, 2, 0, 0] }] : [];
 
-  // ── product excursions ──
-  const excursionsBlock = d.excursions.length
+  // ── air-temperature excursions ──
+  const excursionsBlock = !hasLimits
+    ? { text: S.excursions_no_limits, italics: true, color: RED, margin: [0, 5, 0, 10] }
+    : d.excursions.length
     ? {
         table: {
           headerRows: 1, widths: ['auto', 'auto', 'auto', 'auto', '*', '*'],
@@ -643,7 +730,7 @@ function deviceSection({ S, tz, d, bucketKey, bucketSec, from, to, single, doorM
   return [
     ...head,
     { text: S.summary, style: 'subHeader' }, summaryTable, statsLine,
-    { text: `${S.journal} (${S.every} ${bucketKey})`, style: 'subHeader' }, logTable,
+    { text: `${S.journal} (${S.every} ${bucketKey})`, style: 'subHeader' }, ...partialNote, ...logTables,
     { text: S.excursions_title, style: 'subHeader' }, excursionsBlock,
     { text: S.gaps_title, style: 'subHeader' }, gapsBlock,
     { text: `${S.sensors_note} ${service}`, fontSize: 7.5, color: '#555555', margin: [0, 0, 0, 14] },
@@ -724,6 +811,7 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
   return {
     docDefinition: {
       info: { title: `${title} — ${orgName}`, author: 'ModESP Cloud', subject: `${orgName} · ${localFmt(from, tz, false)} – ${localFmt(to, tz, false)}`, creator: 'ModESP Cloud', keywords: `HACCP, ${code}` },
+      ...documentOptions(lang),
       defaultStyle: { font: 'Roboto', fontSize: 9 },
       pageSize: 'A4', pageMargins: [36, 46, 36, 64],
       header: { text: `${orgName} — ${title}`, alignment: 'center', margin: [0, 16, 0, 0], fontSize: 8, bold: true, color: '#555555' },
@@ -752,6 +840,17 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
       },
     },
   };
+}
+
+/**
+ * PDF-level metadata a viewer and a screen reader read before the content:
+ * the document language (hyphenation, pronunciation) and the title in the
+ * window instead of the file name. Not `tagged`: pdfmake emits no structure
+ * elements, so the flag would only declare a tree that is empty, and a
+ * checker would call that out. Real tagging needs a different renderer.
+ */
+function documentOptions(lang) {
+  return { version: '1.7', language: lang, displayTitle: true };
 }
 
 async function render(docDefinition) {
@@ -811,11 +910,11 @@ async function generate({ query, kind, tenant, site, devices, from, to, bucketKe
     query, code, kind, tenantId: tenant.id, deviceId: kind === 'device' ? devices[0].mqtt_device_id : null,
     siteId: site ? site.id : null, from, to, bucketKey: plan.bucketKey, source: plan.source, lang, hash, generatedBy, scheduleId,
   });
-  return { buffer, code, hash, source: plan.source, bucketKey: plan.bucketKey, empty: false };
+  return { buffer, code, hash, source: plan.source, bucketKey: plan.bucketKey, empty: false, tz };
 }
 
 module.exports = {
-  generate, strings, pickLang, planSource, fmtCode, localFmt, canonicalData, sha256,
+  generate, strings, pickLang, planSource, fmtCode, localFmt, canonicalData, sha256, periodDays, reportFileName, documentOptions,
   // shared with services/period-reports.js (plan epic 2.7)
   render, registerExport, archivePdf, verifyUrlFor, newCode,
   BUCKETS, RAW_MAX_DAYS, HOURLY_MAX_DAYS, HOURLY_RETENTION_DAYS,
@@ -823,7 +922,7 @@ module.exports = {
   STRINGS,
   // shared with services/service-report.js
   helpers: { fetchSeries, summarize, fetchRaw, stepOf, defrostIntervals, detectExcursions, detectGaps, limitsFor, toleranceOf, limitSentence,
-             localParts, fmtDuration, tpl, num, fmt1, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS },
+             localParts, fmtDuration, fmtStep, tpl, num, fmt1, edgeNotes, dayTable, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS },
   __test: { limitsFor, toleranceOf, limitSentence, limitShort, stepOf, defrostIntervals, detectExcursions, detectGaps, actionFor,
-            buildRows, collectDevice, buildDocument, localParts, fmtDuration, tpl },
+            buildRows, collectDevice, buildDocument, localParts, fmtDuration, tpl, edgeNotes, periodDays, reportFileName },
 };

@@ -52,6 +52,8 @@
     // Any authenticated role: GET /api/sites narrows by RBAC, not by role. The
     // write controls inside the page are behind $isAdmin, matching the backend.
     '/sites':           wrap({ asyncComponent: () => import('./pages/Sites.svelte') }),
+    // One site: equipment, open alarms and orders, contacts (audit item 3)
+    '/sites/:id':       wrap({ asyncComponent: () => import('./pages/SiteDetail.svelte') }),
     '/alarms':          Alarms,
     // Any role: the list narrows to own and accessible orders server-side (plan epic 2.3)
     '/work-orders':     wrap({ asyncComponent: () => import('./pages/WorkOrders.svelte') }),
@@ -257,6 +259,7 @@
     const key = pageTitleKeys[path]
     const title = key ? $t(key)
       : path.startsWith('/device/') ? $t('pages.device')
+      : path.startsWith('/sites/') ? $t('pages.site_detail')
       : path.startsWith('/tenants/') ? $t('pages.tenant_card')
       : 'ModESP Cloud'
     document.title = `${title} — ModESP Cloud`

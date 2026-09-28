@@ -43,6 +43,23 @@ describe('Alarms', () => {
     expect(res.body.data.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('names the site and the device on every row, next to the MQTT id', async () => {
+    const { rows: [site] } = await db.query(
+      `INSERT INTO sites (tenant_id, name, city, country, timezone) VALUES ($1, 'Магазин №1', 'Київ', 'Україна', 'Europe/Kyiv') RETURNING id`,
+      [tenant.id]);
+    await db.query('UPDATE devices SET site_id = $1 WHERE id = $2', [site.id, device.id]);
+    try {
+      const res = await request(app).get('/api/alarms').set(authHeader(admin, tenant.id));
+      expect(res.status).toBe(200);
+      expect(res.body.data.length).toBeGreaterThanOrEqual(2);
+      for (const a of res.body.data) {
+        expect(a).toMatchObject({ device_name: 'Alarm Dev', mqtt_device_id: 'ALM001', site_id: site.id, site_name: 'Магазин №1' });
+      }
+    } finally {
+      await db.query('UPDATE devices SET site_id = NULL WHERE id = $1', [device.id]);
+    }
+  });
+
   it('can filter active alarms only', async () => {
     const res = await request(app)
       .get('/api/alarms?active=true')
