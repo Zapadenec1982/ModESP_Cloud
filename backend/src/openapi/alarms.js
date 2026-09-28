@@ -35,9 +35,12 @@ module.exports = function register({ z, registry, uuid, isoDate, mqttId, dataOf,
       active: z.enum(['true', 'false']).optional(),
       severity: z.string().optional().openapi({ description: 'Comma-separated: `critical,warning,info`', example: 'critical,warning' }),
       from: isoDate.optional().openapi({ description: 'On `triggered_at`' }), to: isoDate.optional(),
+      site_id: uuid.optional().openapi({ description: 'Alarms of the devices standing on this site' }),
+      device_id: z.string().max(64).optional().openapi({ description: 'One device: its UUID or its controller id', example: 'E00118' }),
+      q: z.string().max(64).optional().openapi({ description: 'A fragment of the device name or controller id (case-insensitive)', example: 'Вітрина' }),
       ...paging,
     }) },
-    responses: withCommon({ 200: listOf(Alarm, 'Alarms') }),
+    responses: withCommon({ 200: listOf(Alarm, 'Alarms'), 400: errorOf('`validation_failed`: malformed `site_id`, `device_id` or `q`') }),
   });
   registry.registerPath({
     method: 'get', path: '/alarms/stats', tags: ['Alarms'], summary: 'Alarm counts and mean duration per code',

@@ -100,6 +100,39 @@ describe('HACCP report (plan epic 1.9)', () => {
     expect((await request(app).get('/api/public/report/short')).status).toBe(404);
   });
 
+  it('a one-off PDF is kept in the archive and can be downloaded again by its code', async () => {
+    const parse = (r, cb) => { const c = []; r.on('data', d => c.push(d)); r.on('end', () => cb(null, Buffer.concat(c))); };
+    const { rows } = await db.query('SELECT file_name, bytes, pdf IS NOT NULL AS archived, schedule_id FROM report_exports WHERE code = $1', [code.replace(/-/g, '')]);
+    expect(rows[0]).toMatchObject({ file_name: expect.stringMatching(/^haccp_HAC001_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.pdf$/), archived: true, schedule_id: null });
+    expect(rows[0].bytes).toBeGreaterThan(1000);
+
+    const list = await request(app).get('/api/reports').set(authHeader(admin, tenant.id));
+    expect(list.status).toBe(200);
+    const mine = list.body.data.find(r => r.code === code);
+    expect(mine).toMatchObject({ archived: true, file_name: rows[0].file_name, schedule_id: null, device_id: 'HAC001', report_type: 'haccp' });
+
+    const dl = await request(app).get(`/api/reports/${code}/download`).set(authHeader(admin, tenant.id)).buffer(true).parse(parse);
+    expect(dl.status).toBe(200);
+    expect(dl.headers['content-type']).toMatch(/application\/pdf/);
+    expect(dl.body.slice(0, 5).toString()).toBe('%PDF-');
+    expect(dl.body.length).toBe(rows[0].bytes);
+    expect(dl.headers['x-report-code']).toBe(code);
+    expect(dl.headers['x-report-sha256']).toBe(sha);
+    expect(dl.headers['content-disposition']).toContain(rows[0].file_name);
+
+    // The technician's PDF from the site card lands in the same archive (asked
+    // for as the granted technician: the export limiter is 10/min per person)
+    const from = new Date(Date.now() - 3 * DAY).toISOString();
+    const to = new Date().toISOString();
+    const svc = await request(app).get(`/api/sites/${site.id}/service.pdf?from=${from}&to=${to}`).set(authHeader(techSite, tenant.id)).buffer(true).parse(parse);
+    expect(svc.status).toBe(200);
+    const svcDl = await request(app).get(`/api/reports/${svc.headers['x-report-code']}/download`).set(authHeader(techSite, tenant.id)).buffer(true).parse(parse);
+    expect(svcDl.status).toBe(200);
+    expect(svcDl.body.length).toBe(svc.body.length);
+    // …and stays behind the same site access: a viewer without a grant gets nothing
+    expect((await request(app).get(`/api/reports/${svc.headers['x-report-code']}/download`).set(authHeader(viewer, tenant.id))).status).toBe(404);
+  });
+
   it('renders the other languages and rejects a bad bucket', async () => {
     const from = new Date(Date.now() - 3 * DAY).toISOString();
     const to = new Date().toISOString();
