@@ -43,9 +43,15 @@ Complete tenant isolation at every layer — database, MQTT broker, API, and UI.
   trial straight away; `off` disables the form. With e-mail configured the administrator confirms the
   address from a link before the first sign-in. An expired trial is moved to `past_due` by the hourly
   watchdog — access and the fleet stay, a banner asks for a plan
-- **The "First steps" checklist** — on the administrator's dashboard: create a site → connect a controller
-  by its code → invite a technician → link Telegram → export the first HACCP report. The steps are read
-  from the data; progress and dismissal live in `tenant_settings.onboarding`
+- **The "First steps" checklist and the "Getting started" page** (audit item 8) — seven steps on the
+  administrator's dashboard, in the order the work happens: create a site → connect a controller by its
+  code → get the first reading → invite the team → name a responsible person → check a notification →
+  generate the first report. The steps are read from the data (first reading — the controller has sent its
+  state; responsible — a contact on a site, a technician with a site or device grant, or an order with an
+  assignee; notification — a real delivery only, an alarm or a test), the next one is highlighted; progress
+  and dismissal live in `tenant_settings.onboarding`, and the "Getting started" page (`#/start`) explains
+  every step, tells each role what it sees and where to begin, and brings a hidden card back
+  (`POST /onboarding/restore`)
 - **Closing an organisation** (epic 2.10) — the `closed` status keeps sign-in but read-only (a banner with
   the date; changes answer 423); after `CLOSED_RETENTION_DAYS` (30) the watchdog deletes telemetry, alarms,
   reports, firmware and sites, returns the controllers to the pending queue with their credentials, and
@@ -453,6 +459,15 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 | **Admin** | Own tenant | Full control: devices, users, firmware, notifications |
 | **Technician** | Assigned devices | View, send commands, deploy firmware, manage service records |
 | **Viewer** | Assigned devices | Read-only access (no commands, no editing) |
+
+### The start screen by role (audit item 8)
+One dashboard for everyone, but the first thing on it is what the role came for:
+- **Technician** — "My work": the orders assigned to them, overdue ones first, with the deadline, the site and the route; then "Needs attention" and the cards of the equipment they can see
+- **Admin** — "Needs attention" (alarms, out of range, offline, hints, unassigned orders), the "Service" block (unassigned · in progress · overdue · done in 30 days, assignees with their order counts; shown once the organisation uses work orders), the "First steps" checklist and the equipment by site
+- **Superadmin** — the "Platform" block: organisations (how many await approval), past-due and suspended ones, controllers in the queue, open support requests, links to users and firmware; then the fleet of every organisation
+- **Viewer** — "Needs attention" and the cards, with no action block: the empty dashboard says whom to ask for access
+
+The "Getting started" page (`#/start`, linked in the sidebar next to "Support" and from the support page) tells every role what it sees and where to begin; an administrator finds there the whole first-run path with every step explained, and brings a hidden card back to the dashboard.
 
 ### Command safety and tenant isolation
 - `POST /devices/:id/command` is admin/technician only (viewers are read-only even with device access); values are validated against `state_meta.json` (type, min/max, step); setpoint, protection limits, manual defrost and alarm reset require `confirm: true`, and the WebUI asks first

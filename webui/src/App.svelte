@@ -79,6 +79,8 @@
     '/audit-log':       wrap({ component: AuditLog, conditions: [isAdminCheck] }),
     // Support (plan epic 2.13): every role may write to support and see their requests
     '/support':         wrap({ asyncComponent: () => import('./pages/Support.svelte') }),
+    // Getting started (audit item 8): what the role sees, and the first-run chain for an admin
+    '/start':           wrap({ asyncComponent: () => import('./pages/GettingStarted.svelte') }),
   }
 
   // ── Public site status page (Part 2 §7.7) ──────────────
@@ -252,6 +254,7 @@
     '/integrations': 'pages.integrations',
     '/audit-log': 'pages.audit_log',
     '/support': 'pages.support',
+    '/start': 'pages.start',
   }
 
   function handleRouteLoaded(e) {
