@@ -45,7 +45,7 @@ const BATCH = 50;
 
 let logger  = null;
 let timer   = null;
-let running = false;
+let inflight = null;    // the promise of the pass under way, if any
 let rerun = false;      // work arrived while a pass was running: run once more when it ends
 let attached = false;
 
@@ -169,13 +169,35 @@ async function recordAttempt(delivery, hook, result, now) {
   }
 }
 
-/** Send every pending delivery whose time has come. Resolves the number attempted. */
-async function deliverDue({ now = new Date() } = {}) {
-  // One pass at a time; a delivery queued while a pass runs is not lost — the
-  // pass repeats once it is through (the timer alone would delay it by a whole
-  // WEBHOOK_INTERVAL_SEC, or forever in tests that disable the timer).
-  if (running) { rerun = true; return 0; }
-  running = true;
+/**
+ * Send every pending delivery whose time has come. Resolves the number attempted.
+ *
+ * One pass at a time. A background caller (the timer, queue()) that finds a
+ * pass under way only asks it to repeat: a delivery queued meanwhile is not
+ * lost, and the timer alone would delay it by a whole WEBHOOK_INTERVAL_SEC, or
+ * forever in tests that disable the timer. A caller with a clock of its own
+ * (a test walking the retry schedule with `now`) waits for that pass and then
+ * runs its own: the pass under way reads the real clock, so it cannot do that
+ * caller's work, and answering it with 0 dropped a step of the schedule
+ * whenever queue()'s own pass had not finished yet — integrations.test.js
+ * ended at four attempts instead of five on a slow runner.
+ */
+async function deliverDue({ now } = {}) {
+  if (inflight) {
+    rerun = true;
+    if (!(now instanceof Date)) return 0;
+    while (inflight) await inflight.catch(() => {});
+  }
+  inflight = runPass(now || new Date());
+  try {
+    return await inflight;
+  } finally {
+    inflight = null;
+  }
+}
+
+/** One pass over the due deliveries, starting at `now`; repeats while work keeps arriving. */
+async function runPass(now) {
   let total = 0;
   let at = now;
   try {
@@ -200,7 +222,6 @@ async function deliverDue({ now = new Date() } = {}) {
     } while (rerun);
     return total;
   } finally {
-    running = false;
     rerun = false;
   }
 }
