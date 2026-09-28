@@ -15,6 +15,9 @@
   $: compressorRuntime = state['thermostat.comp_on_time'] ?? state['thermostat.compressor_runtime']
   $: defrostActive = state['defrost.active']
   $: defrostPhase = state['defrost.phase'] ?? state['defrost.state']
+  // The phase arrives as a protocol word (drip, fad, valve_open…); the
+  // dictionary has the human one, the word itself is the fallback
+  $: defrostPhaseText = defrostPhase ? (($t('device.defrost_phase.' + defrostPhase) !== 'device.defrost_phase.' + defrostPhase) ? $t('device.defrost_phase.' + defrostPhase) : defrostPhase) : ''
   // Червоним підсвічуємо температуру лише за температурними прапорцями. Зведений
   // protection.alarm_active сюди не годиться: він піднімається і від відчинених
   // дверей, і від помилки датчика, коли з температурою все гаразд.
@@ -72,7 +75,7 @@
     </div>
     <div class="vital-data">
       <span class="vital-value" class:on={defrostActive}>
-        {defrostActive ? (defrostPhase || $t('common.active')) : $t('device.off')}
+        {defrostActive ? (defrostPhaseText || $t('common.active')) : $t('device.off')}
       </span>
       <span class="vital-label">{$t('device.defrost')}</span>
     </div>
