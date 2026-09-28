@@ -99,6 +99,16 @@ const SITE_COLUMNS = `s.id AS site_id,
               s.country AS site_country,
               s.latitude AS site_latitude, s.longitude AS site_longitude`;
 
+// Alarm codes that mean "the product is out of its temperature range". They are
+// the protection.* keys of the controller without the prefix (mqtt.js ALARM_KEYS).
+const TEMP_ALARM_CODES = ['high_temp_alarm', 'low_temp_alarm'];
+
+/** A live boolean state key: true/false when the device published it, else null. */
+function liveBool(live, key) {
+  if (!live || live[key] === null || live[key] === undefined) return null;
+  return !!live[key];
+}
+
 // ── GET /api/devices ──────────────────────────────────────
 // List devices. Superadmin sees ALL active devices cross-tenant.
 // Admin/tech/viewer see only their tenant (+ per-device RBAC for non-admin).
@@ -157,6 +167,11 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     // to devices on (mqtt_device_id, tenant_id): the id is unique platform-wide, but
     // rows keyed by it survive a move to another organisation, so without the tenant
     // leg the new owner would inherit the previous one's counters.
+    //
+    // The alarm aggregate also carries the open codes (so the dashboard can tell a
+    // door alarm from a temperature one without a second request) and the moment
+    // the oldest open temperature alarm was raised: «поза межею 40 хв» on a card
+    // is measured from it. Codes are ordered by triggered_at, oldest first.
     const hintsOpen = new Map();
     const alarmsOpen = new Map();
     if (rows.length > 0) {
@@ -167,18 +182,29 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
              JOIN devices d ON d.mqtt_device_id = h.device_id AND d.tenant_id = h.tenant_id
             WHERE h.closed_at IS NULL AND h.device_id = ANY($1) GROUP BY h.device_id`, [ids]),
         db.query(
-          `SELECT a.device_id, count(*)::int AS n FROM alarms a
+          `SELECT a.device_id, count(*)::int AS n,
+                  array_agg(a.alarm_code ORDER BY a.triggered_at, a.id) AS codes,
+                  min(a.triggered_at) FILTER (WHERE a.alarm_code = ANY($2)) AS temp_since
+             FROM alarms a
              JOIN devices d ON d.mqtt_device_id = a.device_id AND d.tenant_id = a.tenant_id
-            WHERE a.active = true AND a.device_id = ANY($1) GROUP BY a.device_id`, [ids]),
+            WHERE a.active = true AND a.device_id = ANY($1) GROUP BY a.device_id`,
+          [ids, TEMP_ALARM_CODES]),
       ]);
       for (const h of hintRows) hintsOpen.set(h.device_id, h.n);
-      for (const a of alarmRows) alarmsOpen.set(a.device_id, a.n);
+      for (const a of alarmRows) {
+        alarmsOpen.set(a.device_id, {
+          n: a.n,
+          codes: [...new Set(a.codes || [])],
+          temp_since: a.temp_since ? new Date(a.temp_since).toISOString() : null,
+        });
+      }
     }
 
     // Augment with live alarm_active from stateMap
     const devices = rows.map(row => {
       const live = mqttSvc.getDeviceState(row.mqtt_device_id);
       const meta = mqttSvc.getDeviceMeta(row.mqtt_device_id);
+      const open = alarmsOpen.get(row.mqtt_device_id);
       return {
         ...row,
         hints_open:   hintsOpen.get(row.mqtt_device_id) || 0,
@@ -187,7 +213,12 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
         // controller's own aggregate flag, true the moment a door opens, before the
         // nuisance delay decides whether that is an alarm at all. Anything the UI
         // labels "аварія" reads alarms_open; alarm_active is a live-state readout.
-        alarms_open:  alarmsOpen.get(row.mqtt_device_id) || 0,
+        alarms_open:  open ? open.n : 0,
+        alarm_codes:  open ? open.codes : [],
+        // Earliest triggered_at among the open high/low temperature alarms — the
+        // dashboard prints how long the product has been out of its range from it.
+        // null while no temperature alarm is open (a door alarm alone leaves it null).
+        temp_alarm_since: open ? open.temp_since : null,
         // Override online status with live data if available
         online:       meta ? meta.online : row.online,
         last_seen:    meta ? new Date(meta.lastSeen).toISOString() : row.last_seen,
@@ -195,6 +226,11 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
         air_temp:     live ? live['equipment.air_temp'] ?? null : null,
         // null = device never published the key (older firmware) — UI hides the indicator
         door_open:    live ? live['equipment.door_open'] ?? null : null,
+        // Operating mode, same null convention as door_open. The dashboard shows
+        // «Компресор» / «Відтайка» from these so an operator can tell a warm cabinet
+        // in defrost from a warm cabinet whose compressor never starts.
+        compressor:   liveBool(live, 'equipment.compressor'),
+        defrost:      liveBool(live, 'defrost.active'),
       };
     });
 

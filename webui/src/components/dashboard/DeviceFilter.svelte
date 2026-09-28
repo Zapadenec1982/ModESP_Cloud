@@ -5,16 +5,19 @@
   import Icon from '../ui/Icon.svelte'
 
   export let search = ''
-  export let filter = 'all'   // all | online | offline | alarm
+  export let filter = 'all'   // all | online | offline | alarm | hints
   export let view = 'grid'    // grid | list
 
   const dispatch = createEventDispatcher()
 
+  // One pill per fleet-bar counter, so a filter set from a tile up there has
+  // its pill lit down here and can be cleared from either place.
   $: filters = [
     { value: 'all',     label: $t('dashboard.filter_all') },
     { value: 'online',  label: $t('dashboard.filter_online') },
     { value: 'offline', label: $t('dashboard.filter_offline') },
     { value: 'alarm',   label: $t('dashboard.filter_alarm') },
+    { value: 'hints',   label: $t('dashboard.filter_hints') },
   ]
 
   function setFilter(f) {
@@ -36,8 +39,10 @@
   <div class="pills">
     {#each filters as f}
       <button
+        type="button"
         class="pill"
         class:active={filter === f.value}
+        aria-pressed={filter === f.value}
         on:click={() => setFilter(f.value)}
       >
         {f.label}

@@ -1,11 +1,14 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getDevices, deleteDevicesBulk, exportDevicesCsv, getHaccpPresets, setHaccpBulk } from '../lib/api.js'
+  import { querystring } from 'svelte-spa-router'
+  import { getDevices, deleteDevicesBulk, exportDevicesCsv, getHaccpPresets, setHaccpBulk, getAlarms, getWorkOrders, getSite } from '../lib/api.js'
   import { subscribe, unsubscribe, on } from '../lib/ws.js'
-  import { devices, isSuperAdmin, isAdmin } from '../lib/stores.js'
+  import { devices, isSuperAdmin, isAdmin, navigate } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
+  import { tempState, haccpRangeLabel, isTempAlarm } from '../lib/haccp.js'
   import FleetSummaryBar from '../components/dashboard/FleetSummaryBar.svelte'
+  import AttentionList from '../components/dashboard/AttentionList.svelte'
   import OnboardingChecklist from '../components/dashboard/OnboardingChecklist.svelte'
   import DeviceFilter from '../components/dashboard/DeviceFilter.svelte'
   import DeviceCard from '../components/DeviceCard.svelte'
@@ -82,12 +85,8 @@
     }
   }
 
-  /** "≤ −18 °C (±3)" / "0…6 °C (±2)" for a preset option label. */
-  function presetRange(p) {
-    const n = (v) => String(v).replace('-', '−')
-    const range = p.haccp_min == null ? `≤ ${n(p.haccp_max)}` : p.haccp_max == null ? `≥ ${n(p.haccp_min)}` : `${n(p.haccp_min)}…${n(p.haccp_max)}`
-    return `${range} °C${p.haccp_tolerance ? ` (±${p.haccp_tolerance})` : ''}`
-  }
+  /** "≤ −18 °C (±3)" / "0…6 °C (±2)" for a preset option label — the same text the cards print. */
+  const presetRange = haccpRangeLabel
   function onHaccpPreset() {
     const p = haccpPresets.find(x => x.key === haccpForm.preset)
     if (!p) return
@@ -121,50 +120,133 @@
   let subscribedIds = new Set()
   let wsUnsubs = []
 
-  // Derived filtered list
-  $: filtered = filterDevices($devices, search, filter)
+  // ── ?site=<uuid> — the sites table links here to one site's devices ──
+  $: siteParam = new URLSearchParams($querystring || '').get('site') || ''
+  // The chip needs the site's name. Any device of the site carries it; when none
+  // does (an empty site, or one the caller may not see) it is asked for once.
+  let siteLookup = { id: '', name: '' }
+  $: siteNameFromDevices = siteParam ? ($devices.find(d => d.site_id === siteParam)?.site_name || '') : ''
+  $: if (siteParam && !siteNameFromDevices && siteLookup.id !== siteParam) lookupSite(siteParam)
+  $: siteChipName = siteNameFromDevices || (siteLookup.id === siteParam && siteLookup.name) || siteParam.slice(0, 8)
 
-  // Group by location (skip grouping for superadmin — tenant badge on cards is enough)
-  $: groups = $isSuperAdmin ? null : groupByLocation(filtered)
+  async function lookupSite(id) {
+    siteLookup = { id, name: '' }
+    try {
+      const site = await getSite(id)
+      if (siteLookup.id === id) siteLookup = { id, name: site?.name || '' }
+    } catch { /* unknown or foreign site: the chip shows the id */ }
+  }
 
-  function filterDevices(list, q, f) {
+  function clearSite() { navigate('/') }
+
+  // Derived filtered list — the trouble first, then by name
+  $: filtered = sortForAttention(filterDevices($devices, search, filter, siteParam))
+
+  // Group by site (skip grouping for superadmin — the list is cross-tenant, and
+  // two organisations may well both have a «Склад №1»; the tenant badge on the
+  // cards is enough there)
+  $: groups = $isSuperAdmin ? null : groupBySite(filtered, $t)
+
+  function filterDevices(list, q, f, site) {
     let result = list
+    if (site) result = result.filter(d => d.site_id === site)
     if (q) {
       const lq = q.toLowerCase()
       result = result.filter(d =>
         (d.name || '').toLowerCase().includes(lq) ||
         (d.mqtt_device_id || '').toLowerCase().includes(lq) ||
         (d.location || '').toLowerCase().includes(lq) ||
+        (d.site_name || '').toLowerCase().includes(lq) ||
         (d.model || '').toLowerCase().includes(lq) ||
         (d.serial_number || '').toLowerCase().includes(lq) ||
         (d.tenant_name || '').toLowerCase().includes(lq)
       )
     }
     if (f === 'online')  result = result.filter(d => d.online)
+    // «Офлайн» leaves out pending controllers: never set up, so their silence is
+    // not an outage. The fleet bar counts them apart for the same reason, so the
+    // tile and the list it opens agree.
     if (f === 'offline') result = result.filter(d => !d.online && d.status !== 'pending')
     if (f === 'alarm')   result = result.filter(d => (d.alarms_open || 0) > 0)
+    if (f === 'hints')   result = result.filter(d => (d.hints_open || 0) > 0)
     return result
   }
 
-  function groupByLocation(list) {
+  // What the «Потребують уваги» block would say about a device, as a rank:
+  // alarm > out of the HACCP range > offline > open hint > nothing. The list is
+  // sorted by it first so the trouble floats to the top in every view.
+  function attentionRank(d) {
+    if ((d.alarms_open || 0) > 0) return 0
+    if (tempState(d) === 'out_of_range' || d.temp_alarm_since) return 1
+    if (!d.online && d.status !== 'pending') return 2
+    if ((d.hints_open || 0) > 0) return 3
+    return 4
+  }
+
+  // Within a rank the server's order: name, unnamed last, then controller id
+  function sortForAttention(list) {
+    return [...list].sort((a, b) => {
+      const r = attentionRank(a) - attentionRank(b)
+      if (r) return r
+      const an = a.name || '', bn = b.name || ''
+      if (an && !bn) return -1
+      if (!an && bn) return 1
+      return an.localeCompare(bn) || String(a.mqtt_device_id).localeCompare(String(b.mqtt_device_id))
+    })
+  }
+
+  // Group by site, «Без точки» last. Keyed by site_id, so two sites that happen
+  // to share a name stay apart; the free-text `location` is a line on the card.
+  function groupBySite(list, tr) {
     const map = new Map()
     for (const d of list) {
-      const group = d.location || $t('dashboard.unassigned')
-      if (!map.has(group)) map.set(group, [])
-      map.get(group).push(d)
+      const key = d.site_id || ''
+      if (!map.has(key)) map.set(key, { label: d.site_name || tr('dashboard.no_site'), devices: [] })
+      map.get(key).devices.push(d)
     }
-    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    return [...map.entries()]
+      .sort(([ka, a], [kb, b]) => ((ka === '') - (kb === '')) || a.label.localeCompare(b.label))
+      .map(([, g]) => [g.label, g.devices])
   }
 
   // Fleet stats derived from device list
   $: onlineCount = $devices.filter(d => d.online).length
   $: totalCount = $devices.length
+  // The same predicate as the «Офлайн» filter, so the tile and the list agree
+  $: offlineCount = $devices.filter(d => !d.online && d.status !== 'pending').length
+  $: pendingCount = $devices.filter(d => d.status === 'pending').length
   // Аварії = записи, які платформа відкрила і ще не закрила, тобто рівно те, що
   // показує сторінка «Аварії». Зведений прапорець контролера (alarm_active) сюди
   // не входить: він піднімається щойно відчиняються двері, до того як затримка
   // вирішить, чи це взагалі аварія.
   $: alarmCount = $devices.filter(d => (d.alarms_open || 0) > 0).length
   $: hintCount = $devices.filter(d => (d.hints_open || 0) > 0).length
+
+  // ── «Потребують уваги»: the alarms and the open orders behind its rows ──
+  // Alarms carry the reason and the age. Open orders (new, assigned, in
+  // progress) carry the assignee, which is what the «responsible» column shows;
+  // the new ones among them are the unassigned rows — one request, not two.
+  let activeAlarms = []
+  let openOrders = []
+  let attentionTimer = null
+  // One clock for every duration on the page, ticked with each poll
+  let now = Date.now()
+
+  async function loadAttention() {
+    const [a, o] = await Promise.allSettled([
+      getAlarms({ active: true, limit: 200 }),
+      getWorkOrders({ status: 'open', limit: 200 }),
+    ])
+    if (a.status === 'fulfilled') activeAlarms = a.value || []
+    if (o.status === 'fulfilled') openOrders = o.value || []
+    now = Date.now()
+  }
+
+  // WS events come in bursts (one per alarm key); one refresh a second is plenty
+  function scheduleAttention() {
+    if (attentionTimer) return
+    attentionTimer = setTimeout(() => { attentionTimer = null; loadAttention() }, 1000)
+  }
 
   async function load() {
     try {
@@ -177,6 +259,8 @@
     } finally {
       loading = false
     }
+    now = Date.now()
+    loadAttention()
   }
 
   function syncWsSubscriptions(deviceList) {
@@ -202,6 +286,10 @@
             ? !!changes['protection.alarm_active'] : d.alarm_active,
           door_open: changes['equipment.door_open'] !== undefined
             ? !!changes['equipment.door_open'] : d.door_open,
+          compressor: changes['equipment.compressor'] !== undefined
+            ? !!changes['equipment.compressor'] : d.compressor,
+          defrost: changes['defrost.active'] !== undefined
+            ? !!changes['defrost.active'] : d.defrost,
           last_seen: msg.time || d.last_seen,
         }
       }))
@@ -218,6 +306,10 @@
             ? !!s['protection.alarm_active'] : d.alarm_active,
           door_open: s['equipment.door_open'] != null
             ? !!s['equipment.door_open'] : d.door_open,
+          compressor: s['equipment.compressor'] != null
+            ? !!s['equipment.compressor'] : d.compressor,
+          defrost: s['defrost.active'] != null
+            ? !!s['defrost.active'] : d.defrost,
           online: msg.meta?.online ?? d.online,
         }
       }))
@@ -238,14 +330,27 @@
     }))
 
     // Подія alarm несе запис аварії, а не стан приладу. Точне число приходить із
-    // наступним опитуванням; тут досить тримати ознаку живою.
+    // наступним опитуванням; тут досить тримати ознаку живою — і перелік кодів,
+    // бо від нього залежить, чи «поза межею» на картці має тривалість.
     wsUnsubs.push(on('alarm', (msg) => {
-      devices.update(list => list.map(d =>
-        d.mqtt_device_id === msg.device_id
-          ? { ...d, alarms_open: msg.active ? Math.max(1, d.alarms_open || 0) : 0 }
-          : d
-      ))
+      devices.update(list => list.map(d => {
+        if (d.mqtt_device_id !== msg.device_id) return d
+        const codes = new Set(d.alarm_codes || [])
+        if (msg.active) codes.add(msg.alarm_code); else codes.delete(msg.alarm_code)
+        let tempSince = d.temp_alarm_since || null
+        if (isTempAlarm(msg.alarm_code)) tempSince = msg.active ? (tempSince || msg.time || new Date().toISOString()) : null
+        return {
+          ...d,
+          alarms_open: msg.active ? Math.max(codes.size, d.alarms_open || 0) : codes.size,
+          alarm_codes: [...codes],
+          temp_alarm_since: tempSince,
+        }
+      }))
+      scheduleAttention()
     }))
+
+    // A work order created, taken or closed changes the «responsible» column
+    wsUnsubs.push(on('work_order', () => scheduleAttention()))
 
     // Maintenance hint opened/closed (plan epic 2.4) — keep the per-card count live
     wsUnsubs.push(on('hint', (msg) => {
@@ -280,6 +385,7 @@
 
   onDestroy(() => {
     clearInterval(interval)
+    clearTimeout(attentionTimer)
     for (const id of subscribedIds) unsubscribe(id)
     subscribedIds.clear()
     for (const fn of wsUnsubs) fn()
@@ -297,10 +403,19 @@
 
   <FleetSummaryBar
     online={onlineCount}
+    offline={offlineCount}
     total={totalCount}
+    pending={pendingCount}
     alarms={alarmCount}
     hints={hintCount}
+    {filter}
+    on:select={(e) => (filter = e.detail)}
   />
+
+  {#if !loading && !error && totalCount > 0}
+    <!-- The work of today: alarms, out-of-range, offline, hints, unassigned orders -->
+    <AttentionList devices={$devices} alarms={activeAlarms} orders={openOrders} {now} />
+  {/if}
 
   {#if $isAdmin && !$isSuperAdmin}
     <!-- Getting-started checklist of the organisation (plan epic 2.1); dismissable -->
@@ -308,6 +423,18 @@
   {/if}
 
   <DeviceFilter bind:search bind:filter bind:view />
+
+  {#if siteParam}
+    <div class="site-chip-row">
+      <span class="site-chip">
+        <Icon name="map-pin" size={13} />
+        {$t('dashboard.site_chip', siteChipName)}
+        <button type="button" class="chip-remove" on:click={clearSite} aria-label={$t('dashboard.site_chip_remove')} title={$t('dashboard.site_chip_remove')}>
+          <Icon name="x" size={12} />
+        </button>
+      </span>
+    </div>
+  {/if}
 
   {#if selectedCount > 0}
     <div class="bulk-bar">
@@ -340,7 +467,7 @@
       message={error}
     />
   {:else if filtered.length === 0}
-    {#if search || filter !== 'all'}
+    {#if search || filter !== 'all' || siteParam}
       <EmptyState
         icon="search"
         title={$t('dashboard.no_match')}
@@ -360,7 +487,7 @@
         <span>{allFilteredSelected ? $t('dashboard.deselect_all') : $t('dashboard.select_all')}</span>
       </button>
       {#each filtered as device (device.id)}
-        <DeviceListRow {device} selectable selected={selected.has(device.id)} on:toggle={(e) => toggleSelect(e.detail)} />
+        <DeviceListRow {device} {now} selectable selected={selected.has(device.id)} on:toggle={(e) => toggleSelect(e.detail)} />
       {/each}
     </div>
   {:else if groups}
@@ -374,14 +501,14 @@
       {/if}
       <div class="grid">
         {#each devicesInGroup as device (device.id)}
-          <DeviceCard {device} />
+          <DeviceCard {device} {now} />
         {/each}
       </div>
     {/each}
   {:else}
     <div class="grid">
       {#each filtered as device (device.id)}
-        <DeviceCard {device} />
+        <DeviceCard {device} {now} />
       {/each}
     </div>
   {/if}
@@ -499,6 +626,36 @@
     border-radius: var(--radius-full);
     font-weight: 600;
   }
+
+  /* «Точка: …» — the removable chip of the ?site= filter */
+  .site-chip-row { display: flex; }
+
+  .site-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+    border-radius: var(--radius-full);
+    background: rgba(74, 158, 255, 0.12);
+    color: var(--accent-blue);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  .chip-remove {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-full);
+    color: var(--accent-blue);
+  }
+
+  .chip-remove:hover { background: rgba(74, 158, 255, 0.2); }
+  .chip-remove:focus-visible { outline: 2px solid var(--accent-blue); }
 
   .bulk-bar {
     display: flex;

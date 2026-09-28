@@ -56,7 +56,9 @@ const SITE_FIELDS = [
   'address_line', 'postal_code', 'latitude', 'longitude',
   'geo_source', 'geo_precision', 'geocoded_at',
   'geo_attempts', 'geo_last_attempt_at', 'geo_error',
-  'osm_type', 'osm_id', 'timezone', 'notes', 'haccp_excursion_min', 'created_at', 'updated_at',
+  'osm_type', 'osm_id', 'timezone', 'notes', 'haccp_excursion_min',
+  'contact_name', 'contact_phone', 'contact_email',
+  'created_at', 'updated_at',
 ];
 const SITE_COLUMNS   = SITE_FIELDS.map(c => `s.${c}`).join(', ');
 const SITE_RETURNING = SITE_FIELDS.join(', ');
@@ -68,7 +70,12 @@ const ADDRESS_FIELDS = ['country_code', 'country', 'region', 'city', 'address_li
 const MAX_LEN = {
   name: 256, country_code: 2, country: 64, region: 128, city: 128,
   address_line: 256, postal_code: 16, timezone: 64, geo_precision: 16, osm_type: 16,
+  contact_name: 120, contact_phone: 40, contact_email: 160,
 };
+
+// The contact person of the site (migration 054): who to call before a visit
+// and who a report names. Edited by the admin, read with the site row.
+const CONTACT_FIELDS = ['contact_name', 'contact_phone', 'contact_email'];
 
 // One in-flight bulk sweep PER TENANT (§ geocode-pending is idempotent). Keyed by
 // tenant id rather than a single process-wide boolean: one tenant's 50-site sweep
@@ -366,6 +373,13 @@ const addressSchema = {
   notes:        z.string().max(4000).nullable().optional(),
   // HACCP excursion threshold of this site (minutes); null = the organisation's value
   haccp_excursion_min: z.number().int().min(1).max(1440).nullable().optional(),
+  // Contact person (migration 054). The e-mail is checked for shape only when
+  // something is typed: an empty string means "clear it", not a bad address.
+  contact_name:  z.string().max(120).nullable().optional(),
+  contact_phone: z.string().max(40).nullable().optional(),
+  contact_email: z.string().max(160).nullable().optional()
+                   .refine(v => v === null || v === undefined || v.trim() === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()),
+                           { message: 'contact_email must be an e-mail address' }),
 };
 
 const createSiteSchema = z.object({
@@ -386,7 +400,7 @@ const updateSiteSchema = z.object({
 
 // The only columns PATCH may name. zod already strips unknown keys — this is the
 // second lock, because the SET list is built from the parsed keys.
-const PATCHABLE = new Set(['name', ...ADDRESS_FIELDS, 'latitude', 'longitude', 'timezone', 'notes', 'haccp_excursion_min']);
+const PATCHABLE = new Set(['name', ...ADDRESS_FIELDS, 'latitude', 'longitude', 'timezone', 'notes', 'haccp_excursion_min', ...CONTACT_FIELDS]);
 
 const createLinkSchema = z.object({
   label:           z.string().max(128).nullable().optional(),
@@ -678,6 +692,9 @@ router.post('/', maybeAuthorize('admin'), async (req, res, next) => {
       timezone:      trimOrNull(parsed.data.timezone, MAX_LEN.timezone),
       notes:         normalizeField('notes', parsed.data.notes),
       haccp_excursion_min: parsed.data.haccp_excursion_min ?? null,
+      contact_name:  normalizeField('contact_name', parsed.data.contact_name),
+      contact_phone: normalizeField('contact_phone', parsed.data.contact_phone),
+      contact_email: normalizeField('contact_email', parsed.data.contact_email),
       geo_source:    coords.latitude !== null ? 'manual' : 'none',
       geo_precision: null,
       geocoded_at:   null,
