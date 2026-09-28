@@ -15,8 +15,13 @@ const billing = require('../src/services/billing');
 
 const app = createTestApp();
 const H = (u, t) => authHeader(u, t.id);
-const NOW = new Date('2026-09-06T10:00:00Z');
-const AUG = billing.periodFromString('2026-08');
+// The API compares due dates with the database's now(), so these tests run on
+// the real clock: a pinned NOW would report every invoice as overdue once the
+// calendar passed its due date. The billed month is derived from NOW.
+const NOW = new Date();
+const dayStr = (d) => d.toISOString().slice(0, 10);
+const PERIOD = billing.previousPeriod(NOW);
+const PERIOD_YM = PERIOD.start.slice(0, 7);
 
 async function fillSnapshots(tenantId, period, { devices, sites }) {
   await db.query(
@@ -58,8 +63,8 @@ describe('billing', () => {
     // sellerReady); the guard itself is covered by its own test below.
     await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест', seller_iban = 'UA213223130000026007233566001' WHERE id = 1`);
 
-    // Everyone existed before August (the base fee is prorated by creation date)
-    await db.query(`UPDATE tenants SET created_at = '2026-06-01T00:00:00Z' WHERE slug LIKE 'bill-%'`);
+    // Everyone existed before the billed month (the base fee is prorated by creation date)
+    await db.query(`UPDATE tenants SET created_at = $1::date - 60 WHERE slug LIKE 'bill-%'`, [PERIOD.start]);
     await db.query(`UPDATE tenants SET legal_name = 'ТОВ Мережа Про', tax_id = '11112222', billing_email = 'money@bill-pro.test' WHERE id = $1`, [proT.id]);
 
     // Partner account: partner + two clients pay through one billing account
@@ -84,13 +89,14 @@ describe('billing', () => {
   });
 
   it('snapshotAll writes yesterday and today for every open organisation', async () => {
+    const today = dayStr(NOW), yesterday = dayStr(new Date(NOW.getTime() - 86_400_000));
     const r = await billing.snapshotAll({ now: NOW });
-    expect(r.days).toEqual(['2026-09-05', '2026-09-06']);
+    expect(r.days).toEqual([yesterday, today]);
     const { rows } = await db.query(
       `SELECT day::text AS day, active_devices, sites, users FROM usage_snapshots WHERE tenant_id = $1 ORDER BY day`, [proT.id]);
     expect(rows).toEqual([
-      { day: '2026-09-05', active_devices: 3, sites: 2, users: 2 },
-      { day: '2026-09-06', active_devices: 3, sites: 2, users: 2 },
+      { day: yesterday, active_devices: 3, sites: 2, users: 2 },
+      { day: today, active_devices: 3, sites: 2, users: 2 },
     ]);
     const { rows: sys } = await db.query('SELECT 1 FROM usage_snapshots WHERE tenant_id = $1', [db.SYSTEM_TENANT_ID]);
     expect(sys).toHaveLength(0);
@@ -109,29 +115,29 @@ describe('billing', () => {
     // it was written straight into the database
     expect(billing.__test.sellerReady({ seller_name: 'x', seller_iban: 'UA000000000000000000000000000' })).toBe(false);
 
-    const r = await billing.generateInvoices({ now: NOW, period: AUG, send: false });
+    const r = await billing.generateInvoices({ now: NOW, period: PERIOD, send: false });
     expect(r).toMatchObject({ created: [], skipped: 'seller_not_configured' });
     const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM invoices');
     expect(rows[0].n).toBe(0);
 
     // A name without an IBAN is still not payable
     await db.query(`UPDATE billing_settings SET seller_name = 'ФОП Тест' WHERE id = 1`);
-    expect((await billing.generateInvoices({ now: NOW, period: AUG, send: false })).skipped).toBe('seller_not_configured');
+    expect((await billing.generateInvoices({ now: NOW, period: PERIOD, send: false })).skipped).toBe('seller_not_configured');
 
     await db.query(`UPDATE billing_settings SET seller_iban = 'UA213223130000026007233566001' WHERE id = 1`);
   });
 
-  it('generateInvoices bills August from the snapshots: pro per controller + site, partner consolidated, free and enterprise skipped', async () => {
-    await fillSnapshots(proT.id, AUG, { devices: 3, sites: 2 });
-    await fillSnapshots(partnerT.id, AUG, { devices: 0, sites: 0 });
-    await fillSnapshots(client1.id, AUG, { devices: 2, sites: 1 });
-    await fillSnapshots(client2.id, AUG, { devices: 1, sites: 1 });
-    await fillSnapshots(freeT.id, AUG, { devices: 1, sites: 1 });
-    await fillSnapshots(entT.id, AUG, { devices: 5, sites: 2 });
+  it('generateInvoices bills last month from the snapshots: pro per controller + site, partner consolidated, free and enterprise skipped', async () => {
+    await fillSnapshots(proT.id, PERIOD, { devices: 3, sites: 2 });
+    await fillSnapshots(partnerT.id, PERIOD, { devices: 0, sites: 0 });
+    await fillSnapshots(client1.id, PERIOD, { devices: 2, sites: 1 });
+    await fillSnapshots(client2.id, PERIOD, { devices: 1, sites: 1 });
+    await fillSnapshots(freeT.id, PERIOD, { devices: 1, sites: 1 });
+    await fillSnapshots(entT.id, PERIOD, { devices: 5, sites: 2 });
     // period not over yet → nothing
-    expect((await billing.generateInvoices({ now: NOW, period: billing.periodFromString('2026-09') })).skipped).toBe('period_not_over');
+    expect((await billing.generateInvoices({ now: NOW, period: billing.currentPeriod(NOW) })).skipped).toBe('period_not_over');
 
-    const r = await billing.generateInvoices({ now: NOW, period: AUG, send: false });
+    const r = await billing.generateInvoices({ now: NOW, period: PERIOD, send: false });
     expect(r.created.map(i => i.tenant_id).sort()).toEqual([proT.id, partnerT.id].sort());
 
     proInvoice = r.created.find(i => i.tenant_id === proT.id);
@@ -151,7 +157,7 @@ describe('billing', () => {
     expect(partnerInvoice.buyer.legal_name).toBe('ТОВ Холод-Сервіс');
 
     // idempotent: a second run issues nothing
-    expect((await billing.generateInvoices({ now: NOW, period: AUG, send: false })).created).toHaveLength(0);
+    expect((await billing.generateInvoices({ now: NOW, period: PERIOD, send: false })).created).toHaveLength(0);
     const { rows } = await db.query('SELECT COUNT(*)::int AS n FROM invoices');
     expect(rows[0].n).toBe(2);
   });
@@ -164,6 +170,7 @@ describe('billing', () => {
     expect(billing.__test.tierPrice(plans.pro, 700)).toBe(60);
 
     // partner created on the 16th of a 31-day month: base × 16/31, 120 controllers at the tier price
+    const AUG = billing.periodFromString('2026-08');
     const payer = { id: 'p', name: 'P', plan: 'partner', created_at: '2026-08-16T12:00:00Z' };
     const members = [payer, { id: 'c', name: 'C' }];
     const lines = billing.__test.buildLines({ payer, members, usage: { c: { devices: 120, sites: 3 } }, plans, period: AUG });
@@ -301,7 +308,7 @@ describe('billing', () => {
     expect(all.body.data.map(i => i.tenant_slug)).toEqual(['bill-pro']);
     expect((await request(app).get('/api/billing/admin/invoices').set(H(proAdmin, proT))).status).toBe(403);
 
-    const run = await request(app).post('/api/billing/admin/run').set(H(superadmin, otherT)).send({ job: 'invoices', period: '2026-08', send: false });
+    const run = await request(app).post('/api/billing/admin/run').set(H(superadmin, otherT)).send({ job: 'invoices', period: PERIOD_YM, send: false });
     expect(run.status).toBe(200);
     expect(run.body.data.invoices.created).toEqual([]);     // already issued
     expect((await request(app).post('/api/billing/admin/run').set(H(superadmin, otherT)).send({ job: 'invoices', period: '13-2026' })).status).toBe(400);
