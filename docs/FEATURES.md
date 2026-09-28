@@ -193,9 +193,15 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Three types** — HACCP (the same document as the manual export), alarms (a summary by severity and
   equipment, time to acknowledgement, the log — a week with no alarms is a document too) and energy
   (kWh per device, compressor run time, cost at the tariff)
-- **The archive** — the "Reports" page shows everything generated for the organisation: a scheduled PDF can
-  be downloaded again (3 years) and every report carries a verification code; a technician and a viewer see
-  only their own sites
+- **The archive** — the "Reports" page shows everything generated for the organisation: a scheduled **or one-off**
+  PDF can be downloaded again (3 years) and every report carries a verification code; a technician and a viewer see
+  only their own sites. A one-off report from the site card, the device chart or "Generate now" is kept in the
+  archive right after generation — before, it registered only the code and hash, and the archive row said "PDF not kept"
+- **"Generate now"** — a card above the schedules on the Reports page: a site or one piece of equipment, the type
+  (the HACCP log for the inspector / the service report for the technician), the period as inclusive dates (default:
+  the last full day; quick picks "Yesterday", "Last 7 days", "Last month"), the language of the interface;
+  "Download" saves the file, "Open" shows the PDF in a new tab (when the browser refuses the window, the file is
+  downloaded under its server name). The archive refreshes after generation
 - **No duplicates** — a schedule remembers the last period it delivered; the "Send now" button produces the
   past period immediately
 
@@ -225,7 +231,8 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - Filter by severity, active/cleared, device, date range
 - Alarm statistics — count and average duration per alarm code
 - Severity pills in UI (All / Critical / Warning / Info) for quick triage
-- Per-device RBAC — users see alarms only for assigned devices
+- **Site and device filter** — a site select and a search by device name or id on the alarms page (`GET /alarms?site_id=&device_id=&q=`); the `#/alarms?site=` links from the sites table and the site page open one site's alarms, `?device=` one device's, with a chip that clears the filter
+- Per-device RBAC — users see alarms only for assigned devices; the filters never widen that
 
 ---
 
@@ -263,6 +270,9 @@ organisation actually does with a map.
 - Per-device coordinates remain an optional override on top of the site's — effective map position is the device's own coordinate first, the site's second
 - Existing `location` values are backfilled into sites during migration, so an upgraded deployment starts with a populated map
 - Site names are unique per tenant, compared case- and whitespace-insensitively
+- **The site page** (`#/sites/:id`) — an overview of the object rather than an address entry: the equipment with its state (online, air temperature, alarm flag; every row opens the device card), the site's active alarms with a link to the alarms page narrowed to the site, open work orders, contacts, coordinates with their source, a "Report" action (HACCP or service PDF for the whole site) and, for an admin, the public status links
+- **The sites table leads onward**: the name opens the site page, the alarm counter the site's alarms (`#/alarms?site=`), the equipment counter the dashboard narrowed to the site (`#/?site=`). Coordinates, geocoding source and precision moved from the table into the editor; only a "manual" / "geocoding failed" flag stays next to the address. Geocoding progress is one line of counters that unfolds into the sweep buttons
+- **A contact person per site** — name, phone, e-mail (migration 054): whom to call before a visit and whom a report names. Edited by the admin on the site card, shown on the site page and in the table (the name under the site's name); never on the public status page
 
 ### Server-Side Geocoding
 - Address → coordinates through a backend proxy (Nominatim). The browser never calls the geocoder directly: one identifying User-Agent, one 1 req/s pacer, one shared cache — exactly what the OSM usage policy requires
@@ -513,9 +523,10 @@ Responsive Svelte SPA with dark/light theme and full i18n.
 | **Dashboard** | Fleet summary (online/total/alarms), device grid with search and filters |
 | **Map** | Interactive OpenStreetMap fleet map — clustered site markers, filter bar, alarm heatmap, coverage isochrones, service-round planner, click-to-place coordinates, one-tap directions via Google / Apple / Waze / OSM |
 | **Geo Analytics** | Country → region → city → site drill-down, metric table, CSV export |
-| **Sites** | Trade point CRUD (`/sites`), address autocomplete, a geocoding-status panel with a manual sweep trigger, and public status link management (the raw token is shown exactly once). Weather and nearest technicians live on the device Location tab |
+| **Sites** | Trade point CRUD (`/sites`), address autocomplete, a compact geocoding-status line with a manual sweep trigger, site contacts, and public status link management (the raw token is shown exactly once). The name opens the **site page** (`/sites/:id`): equipment with its state, active alarms, open work orders, contacts, report. Weather and nearest technicians live on the device Location tab |
 | **Device Detail** | Live state, telemetry charts, alarm history, event log, service records, controls |
-| **Alarms** | Alarm table with severity filters, CSV export |
+| **Alarms** | Alarm table with severity, site and device filters (`?site=`, `?device=` from the hash), CSV export |
+| **Reports** | "Generate now" (a site or one piece of equipment, HACCP / service, period, download or open), scheduled reports (a site or the whole network, HACCP / alarms / energy, weekly or monthly, recipients, "send now") and the archive of generated PDFs with verification codes — scheduled and one-off, service reports included |
 | **Firmware** | Upload, library, deploy modal, rollout monitor |
 | **Notifications** | Subscriber management, test send, delivery log |
 | **Pending Devices** | Unassigned device queue, batch assignment with metadata |

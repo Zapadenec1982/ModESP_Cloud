@@ -12,6 +12,14 @@ const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const maybeAuthorize = (...roles) =>
   AUTH_ENABLED ? authorize(...roles) : (_req, _res, next) => next();
 
+// GET /alarms?q= — the longest device name or controller id worth searching for.
+const ALARM_SEARCH_MAX = 64;
+
+/** Escape LIKE wildcards so a search for "50%" is not a full-table match. */
+function likeEscape(value) {
+  return String(value).replace(/[\\%_]/g, m => `\\${m}`);
+}
+
 // Two routers, because this file serves two prefixes. Mounting one router at
 // both /api/alarms and /api/devices would give every path a twin under the
 // wrong prefix — GET /api/devices/stats answering with alarm counts, and a
@@ -28,6 +36,23 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     const active = req.query.active;
     const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 200);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    // Narrowing by place and by equipment (the site page and the ?site= link
+    // from the sites table). Validated up front: a malformed uuid compared
+    // against d.site_id would raise 22P02 → 500, and an unbounded ILIKE
+    // pattern is a full-table scan someone else pays for.
+    const siteId   = req.query.site_id;
+    const deviceId = req.query.device_id;
+    const q        = req.query.q;
+    if (siteId !== undefined && (typeof siteId !== 'string' || !isUuidFormat(siteId))) {
+      return res.status(400).json({ error: 'validation_failed', message: 'site_id must be a UUID', status: 400 });
+    }
+    if (deviceId !== undefined && (typeof deviceId !== 'string' || deviceId.trim() === '' || deviceId.length > 64)) {
+      return res.status(400).json({ error: 'validation_failed', message: 'device_id must be a device UUID or controller id', status: 400 });
+    }
+    if (q !== undefined && (typeof q !== 'string' || q.length > ALARM_SEARCH_MAX)) {
+      return res.status(400).json({ error: 'validation_failed', message: `q must be a string of at most ${ALARM_SEARCH_MAX} characters`, status: 400 });
+    }
 
     let sql, params, idx;
     if (isSuperadmin) {
@@ -99,6 +124,32 @@ router.get('/', filterDeviceAccess(), async (req, res, next) => {
     if (req.query.to) {
       sql += ` AND a.triggered_at < $${idx++}`;
       params.push(new Date(req.query.to));
+    }
+
+    // ?site_id= — alarms of the devices standing on one site. The join on `d`
+    // already carries the tenant predicate, so a site id from another tenant
+    // simply matches nothing.
+    if (siteId !== undefined) {
+      sql += ` AND d.site_id = $${idx++}`;
+      params.push(siteId);
+    }
+    // ?device_id= — a device UUID (the row id) or the controller id the alarm
+    // itself is keyed by.
+    if (deviceId !== undefined) {
+      const dev = deviceId.trim();
+      if (isUuidFormat(dev)) {
+        sql += ` AND d.id = $${idx++}`;
+        params.push(dev);
+      } else {
+        sql += ` AND a.device_id = $${idx++}`;
+        params.push(dev);
+      }
+    }
+    // ?q= — a fragment of the device name or of the controller id.
+    if (q !== undefined && q.trim() !== '') {
+      sql += ` AND (d.name ILIKE $${idx} OR a.device_id ILIKE $${idx})`;
+      idx++;
+      params.push(`%${likeEscape(q.trim())}%`);
     }
 
     sql += ` ORDER BY a.triggered_at DESC LIMIT $${idx++} OFFSET $${idx++}`;

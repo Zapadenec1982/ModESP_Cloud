@@ -926,7 +926,12 @@ export function getTelemetryStats(deviceId, { hours, from, to, channels, bucket 
 
 // ── Alarms ───────────────────────────────────────────────
 
-export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
+/**
+ * GET /alarms. `site_id` narrows to the devices of one site, `device_id` to one
+ * device (UUID or controller id), `q` to a fragment of the device name or
+ * controller id (≤ 64 characters, case-insensitive).
+ */
+export function getAlarms({ active, from, to, limit, offset, severity, site_id, device_id, q } = {}) {
   const params = new URLSearchParams();
   if (active !== undefined) params.set('active', active);
   if (from) params.set('from', from);
@@ -934,6 +939,9 @@ export function getAlarms({ active, from, to, limit, offset, severity } = {}) {
   if (limit) params.set('limit', limit);
   if (offset) params.set('offset', offset);
   if (severity) params.set('severity', severity);
+  if (site_id) params.set('site_id', site_id);
+  if (device_id) params.set('device_id', device_id);
+  if (q && q.trim()) params.set('q', q.trim().slice(0, 64));
   const qs = params.toString();
   return request(`/alarms${qs ? '?' + qs : ''}`);
 }
@@ -1557,12 +1565,12 @@ export function updateSupportRequest(id, status) {
  * (`X-Report-Code`, `X-Report-Source`) that the server exposes on HACCP PDFs.
  */
 /** The file name a Content-Disposition header carries: the UTF-8 form first, else the plain one. */
-function fileNameFromDisposition(header) {
-  if (!header) return null;
+function fileNameFromDisposition(header, fallback = null) {
+  if (!header) return fallback;
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
   if (utf8) { try { return decodeURIComponent(utf8[1].trim()); } catch { /* malformed: fall through to the plain name */ } }
   const plain = /filename="?([^";]+)"?/i.exec(header);
-  return plain ? plain[1].trim() : null;
+  return plain ? plain[1].trim() : fallback;
 }
 
 async function downloadFile(path, filename, options = {}) {
@@ -1638,6 +1646,48 @@ export function exportSitePdf(siteId, from, to, bucket = '1h', lang) {
   const qs = new URLSearchParams(params).toString();
   const fname = `haccp_site_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
   return downloadFile(`/sites/${siteId}/export.pdf?${qs}`, fname);
+}
+
+/**
+ * Fetch a one-off report as a Blob instead of saving it: the Reports page opens
+ * it in a new tab («Відкрити») and keeps the server's file name for a later
+ * save. Same headers and errors as downloadFile().
+ * @param {{ kind: 'device'|'site', id: string, type: 'haccp'|'service', from: string, to: string, bucket?: string, lang?: string }} opts
+ * @returns {Promise<{ blob: Blob, fileName: string, code: string|null, source: string|null, sha256: string|null }>}
+ */
+export async function fetchReportPdf({ kind, id, type = 'haccp', from, to, bucket = '1h', lang }, options = {}) {
+  const params = { from, to, bucket };
+  if (lang) params.lang = lang;
+  const qs = new URLSearchParams(params).toString();
+  const path = kind === 'site'
+    ? `/sites/${id}/${type === 'service' ? 'service.pdf' : 'export.pdf'}?${qs}`
+    : `/devices/${id}/telemetry/${type === 'service' ? 'service.pdf' : 'export.pdf'}?${qs}`;
+  const fallback = `${type === 'service' ? 'service' : 'haccp'}_${kind === 'site' ? 'site' : id}_${from.slice(0, 10)}_${to.slice(0, 10)}.pdf`;
+
+  if (!accessToken && hasSession() && !options._noRetry) {
+    await tryRefresh();
+  }
+  const headers = {};
+  const token = activeToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.message || `Export failed: ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    if (res.status === 402 && !options.quiet) notifyPlanLimit(body);
+    if (res.status === 423 && !options.quiet) notifyReadOnly();
+    throw err;
+  }
+  const blob = await res.blob();
+  return {
+    blob,
+    fileName: fileNameFromDisposition(res.headers.get('content-disposition'), fallback),
+    code: res.headers.get('x-report-code') || null,
+    source: res.headers.get('x-report-source') || null,
+    sha256: res.headers.get('x-report-sha256') || null,
+  };
 }
 
 export function exportAlarmsCsv(from, to, severity) {
