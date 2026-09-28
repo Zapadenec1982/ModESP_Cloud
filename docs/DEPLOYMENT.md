@@ -128,7 +128,7 @@ Ubuntu 24.04
 
 | Шлях | Що | Звідки |
 |---|---|---|
-| `/` | Лендінг: продукт, сегменти, ціни з `plan_limits`, калькулятор, форма пілота | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
+| `/` | Лендінг: продукт, «одна ніч однієї вітрини», учасники, HACCP, обладнання, ціни з `plan_limits`, пілот, FAQ; шрифти в `landing/fonts/` (CSP `font-src 'self'`) | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
 | `/partners.html` | Партнерська програма | `landing/` |
 | `/legal/offer`, `/legal/privacy`, `/legal/service`, `/legal/dpa`, `/legal/partner` | Юридичні документи | `landing/legal/*.html`, генерує `infra/scripts/build-legal.js` з `docs/legal/*.md` |
 | `/cloud/` | WebUI (Svelte SPA, hash-маршрути `#/…`) | `webui/dist` → `/var/www/modesp/webui`; `vite.config.js` `base: '/cloud/'` |
