@@ -777,6 +777,22 @@
             "description": "Controller id as printed on the device and used on the broker",
             "example": "E00118"
           },
+          "site_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The site the device is assigned to, if any",
+            "example": "af9b98f9-1aa5-414b-9dbc-095affa5dd7f"
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Магазин №1"
+          },
           "alarm_code": {
             "type": "string",
             "example": "high_temp_alarm"
@@ -867,6 +883,8 @@
           "device_id",
           "device_name",
           "mqtt_device_id",
+          "site_id",
+          "site_name",
           "alarm_code",
           "severity",
           "active",
