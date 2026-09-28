@@ -655,6 +655,11 @@ export function dismissOnboarding() {
   return request('/onboarding/dismiss', { method: 'POST' });
 }
 
+/** The card comes back on the dashboard (from the «Початок роботи» page). */
+export function restoreOnboarding() {
+  return request('/onboarding/restore', { method: 'POST' });
+}
+
 // ── Second factor and sessions (plan epic 2.9) ────────────
 
 /** GET /auth/mfa → { enabled, enabled_at, pending, backup_codes_left } */
@@ -969,6 +974,14 @@ export function updateMyNotificationPrefs(data) {
   return request('/profile/notifications', {
     method: 'PUT',
     body: JSON.stringify(data),
+  });
+}
+
+/** POST /profile/notifications/test — a test message to one of my own channels ('telegram' | 'webpush' | 'email'). */
+export function testMyNotificationChannel(channel) {
+  return request('/profile/notifications/test', {
+    method: 'POST',
+    body: JSON.stringify({ channel }),
   });
 }
 

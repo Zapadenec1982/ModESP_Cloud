@@ -1,6 +1,7 @@
 <script>
   import { createEventDispatcher } from 'svelte'
   import { categoryLabel } from '../../lib/meta.js'
+  import { t } from '../../lib/i18n.js'
   import Icon from '../ui/Icon.svelte'
   import ParameterControl from './ParameterControl.svelte'
 
@@ -9,10 +10,13 @@
   export let state = {}
   export let sendingKey = null
   export let readonly = false
+  export let showKeys = false
+  export let expanded = false
 
   const dispatch = createEventDispatcher()
 
-  let expanded = false
+  // How many of the group's parameters the controller has reported
+  $: received = params.filter(p => state[p.key] !== undefined).length
 
   function toggle() {
     expanded = !expanded
@@ -24,10 +28,10 @@
 </script>
 
 <div class="group">
-  <button class="group-header" on:click={toggle}>
+  <button class="group-header" on:click={toggle} aria-expanded={expanded}>
     <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} />
-    <span class="group-title">{categoryLabel(category)}</span>
-    <span class="group-count">{params.length}</span>
+    <span class="group-title">{categoryLabel(category, $t)}</span>
+    <span class="group-count" title={$t('device.param_received_hint')}>{$t('device.param_group_received', received, params.length)}</span>
   </button>
 
   {#if expanded}
@@ -38,6 +42,7 @@
           value={state[param.key]}
           sending={sendingKey === param.key}
           {readonly}
+          showKey={showKeys}
           on:send={handleSend}
         />
       {/each}
@@ -79,11 +84,12 @@
 
   .group-count {
     font-size: var(--text-xs);
-    color: var(--text-muted);
+    color: var(--text-secondary);
     font-weight: 400;
     background: var(--bg-surface);
-    padding: 1px 6px;
+    padding: 1px 8px;
     border-radius: var(--radius-full);
+    white-space: nowrap;
   }
 
   .group-body {

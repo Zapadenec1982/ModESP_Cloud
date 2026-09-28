@@ -39,7 +39,10 @@ const STRINGS = {
     not_haccp: 'Технічний документ для сервісу; для інспектора призначений журнал контролю температури (HACCP).',
     device: 'Обладнання', device_id: 'Ідентифікатор', serial: 'Серійний номер', model: 'Модель', firmware: 'Прошивка', last_data: 'Останні дані за період', product: 'Продукція',
     settings: 'Налаштування приладу (останній стан)', no_settings: 'стан приладу ще не отримано',
-    keys: { 'thermostat.setpoint': 'Уставка', 'thermostat.differential': 'Гістерезис', 'protection.high_limit': 'Межа тривоги, верхня', 'protection.low_limit': 'Межа тривоги, нижня', 'protection.high_alarm_delay': 'Затримка тривоги, верхня', 'protection.low_alarm_delay': 'Затримка тривоги, нижня', 'protection.door_delay': 'Затримка тривоги дверей', 'thermostat.min_off_time': 'Мін. пауза компресора', 'thermostat.min_on_time': 'Мін. робота компресора', 'thermostat.night_setback': 'Нічний зсув', 'defrost.interval': 'Інтервал відтайки', 'defrost.max_duration': 'Макс. тривалість відтайки', 'defrost.termination': 'Завершення відтайки', 'protection.max_starts_hour': 'Макс. пусків за годину', 'protection.max_continuous_run': 'Макс. безперервна робота', 'protection.pulldown_min_drop': 'Мін. падіння при охолодженні', 'protection.max_rise_rate': 'Макс. швидкість росту' },
+    keys: { 'thermostat.setpoint': 'Уставка', 'thermostat.differential': 'Диференціал', 'protection.high_limit': 'Верхня межа температури', 'protection.low_limit': 'Нижня межа температури', 'protection.high_alarm_delay': 'Затримка аварії високої температури', 'protection.low_alarm_delay': 'Затримка аварії низької температури', 'protection.door_delay': 'Затримка аварії дверей', 'thermostat.min_off_time': 'Мін. пауза компресора', 'thermostat.min_on_time': 'Мін. робота компресора', 'thermostat.night_setback': 'Нічний зсув уставки', 'defrost.interval': 'Інтервал відтайки', 'defrost.max_duration': 'Макс. тривалість відтайки', 'defrost.termination': 'Завершення відтайки', 'protection.max_starts_hour': 'Макс. пусків за годину', 'protection.max_continuous_run': 'Макс. безперервна робота', 'protection.pulldown_min_drop': 'Мін. зниження температури', 'protection.max_rise_rate': 'Макс. швидкість зростання' },
+    on_short: 'увімк.', off_short: 'вимк.',
+    units: { c: '°C', min: 'хв', h: 'год', s: 'с', per_h: 'разів/год', c_per_min: '°C/хв' },
+    options: { 'defrost.termination': { 0: 'За температурою', 1: 'За таймером', temp: 'За температурою', timer: 'За таймером' } },
     haccp_limit: 'Критична межа HACCP', excursion_rule: 'відхилення — довше ніж {0} хв за межею, відтайка не враховується',
     summary: 'Температури за період', channel: 'Канал', min: 'Мін °C', max: 'Макс °C', avg: 'Сер. °C', samples: 'Вимірювань',
     summary_note: 'Мін/макс/сер. — по всіх первинних вимірюваннях за період (кожні {0}); графік та інженерний журнал показують середнє за інтервал {1}, тому короткі піки на них згладжені.',
@@ -85,6 +88,9 @@ const STRINGS = {
     device: 'Equipment', device_id: 'Identifier', serial: 'Serial number', model: 'Model', firmware: 'Firmware', last_data: 'Last data in the period', product: 'Product',
     settings: 'Controller settings (last state)', no_settings: 'no state received from the device yet',
     keys: { 'thermostat.setpoint': 'Setpoint', 'thermostat.differential': 'Differential', 'protection.high_limit': 'Alarm limit, high', 'protection.low_limit': 'Alarm limit, low', 'protection.high_alarm_delay': 'Alarm delay, high', 'protection.low_alarm_delay': 'Alarm delay, low', 'protection.door_delay': 'Door alarm delay', 'thermostat.min_off_time': 'Min compressor off time', 'thermostat.min_on_time': 'Min compressor on time', 'thermostat.night_setback': 'Night setback', 'defrost.interval': 'Defrost interval', 'defrost.max_duration': 'Max defrost duration', 'defrost.termination': 'Defrost termination', 'protection.max_starts_hour': 'Max starts per hour', 'protection.max_continuous_run': 'Max continuous run', 'protection.pulldown_min_drop': 'Min pull-down drop', 'protection.max_rise_rate': 'Max rise rate' },
+    on_short: 'on', off_short: 'off',
+    units: { c: '°C', min: 'min', h: 'h', s: 's', per_h: '/h', c_per_min: '°C/min' },
+    options: { 'defrost.termination': { 0: 'By temperature', 1: 'By timer', temp: 'By temperature', timer: 'By timer' } },
     haccp_limit: 'HACCP critical limit', excursion_rule: 'excursion — longer than {0} min past the limit, defrost excluded',
     summary: 'Temperatures over the period', channel: 'Channel', min: 'Min °C', max: 'Max °C', avg: 'Avg °C', samples: 'Samples',
     summary_note: 'Min/max/avg are over all raw measurements of the period (every {0}); the chart and the engineering log show the {1} interval average, so short peaks are smoothed there.',
@@ -129,7 +135,10 @@ const STRINGS = {
     not_haccp: 'Dokument techniczny dla serwisu; dla inspektora przeznaczony jest dziennik kontroli temperatury (HACCP).',
     device: 'Urządzenie', device_id: 'Identyfikator', serial: 'Numer seryjny', model: 'Model', firmware: 'Firmware', last_data: 'Ostatnie dane w okresie', product: 'Produkt',
     settings: 'Ustawienia sterownika (ostatni stan)', no_settings: 'stan urządzenia nie został jeszcze odebrany',
-    keys: { 'thermostat.setpoint': 'Nastawa', 'thermostat.differential': 'Histereza', 'protection.high_limit': 'Limit alarmu, górny', 'protection.low_limit': 'Limit alarmu, dolny', 'protection.high_alarm_delay': 'Opóźnienie alarmu, górne', 'protection.low_alarm_delay': 'Opóźnienie alarmu, dolne', 'protection.door_delay': 'Opóźnienie alarmu drzwi', 'thermostat.min_off_time': 'Min. przerwa sprężarki', 'thermostat.min_on_time': 'Min. praca sprężarki', 'thermostat.night_setback': 'Nocne przesunięcie', 'defrost.interval': 'Interwał odszraniania', 'defrost.max_duration': 'Maks. czas odszraniania', 'defrost.termination': 'Zakończenie odszraniania', 'protection.max_starts_hour': 'Maks. startów na godzinę', 'protection.max_continuous_run': 'Maks. praca ciągła', 'protection.pulldown_min_drop': 'Min. spadek przy schładzaniu', 'protection.max_rise_rate': 'Maks. tempo wzrostu' },
+    keys: { 'thermostat.setpoint': 'Nastawa', 'thermostat.differential': 'Różnica (histereza)', 'protection.high_limit': 'Limit alarmu, górny', 'protection.low_limit': 'Limit alarmu, dolny', 'protection.high_alarm_delay': 'Opóźnienie alarmu, górne', 'protection.low_alarm_delay': 'Opóźnienie alarmu, dolne', 'protection.door_delay': 'Opóźnienie alarmu drzwi', 'thermostat.min_off_time': 'Min. przerwa sprężarki', 'thermostat.min_on_time': 'Min. praca sprężarki', 'thermostat.night_setback': 'Nocne przesunięcie', 'defrost.interval': 'Interwał odszraniania', 'defrost.max_duration': 'Maks. czas odszraniania', 'defrost.termination': 'Zakończenie odszraniania', 'protection.max_starts_hour': 'Maks. startów na godzinę', 'protection.max_continuous_run': 'Maks. praca ciągła', 'protection.pulldown_min_drop': 'Min. spadek przy schładzaniu', 'protection.max_rise_rate': 'Maks. tempo wzrostu' },
+    on_short: 'wł.', off_short: 'wył.',
+    units: { c: '°C', min: 'min', h: 'godz', s: 's', per_h: 'razy/godz', c_per_min: '°C/min' },
+    options: { 'defrost.termination': { 0: 'Wg temperatury', 1: 'Wg timera', temp: 'Wg temperatury', timer: 'Wg timera' } },
     haccp_limit: 'Limit krytyczny HACCP', excursion_rule: 'odchylenie — dłużej niż {0} min poza limitem, odszranianie wyłączone',
     summary: 'Temperatury w okresie', channel: 'Kanał', min: 'Min °C', max: 'Maks °C', avg: 'Śr. °C', samples: 'Pomiary',
     summary_note: 'Min/maks/śr. — ze wszystkich pomiarów surowych w okresie (co {0}); wykres i dziennik inżynierski pokazują średnią z interwału {1}, więc krótkie piki są na nich wygładzone.',
@@ -174,7 +183,10 @@ const STRINGS = {
     not_haccp: 'Technisches Dokument für den Service; der Prüfer erhält das HACCP-Temperaturkontrollprotokoll.',
     device: 'Anlage', device_id: 'Kennung', serial: 'Seriennummer', model: 'Modell', firmware: 'Firmware', last_data: 'Letzte Daten im Zeitraum', product: 'Produkt',
     settings: 'Reglereinstellungen (letzter Zustand)', no_settings: 'noch kein Zustand vom Gerät empfangen',
-    keys: { 'thermostat.setpoint': 'Sollwert', 'thermostat.differential': 'Hysterese', 'protection.high_limit': 'Alarmgrenze, oben', 'protection.low_limit': 'Alarmgrenze, unten', 'protection.high_alarm_delay': 'Alarmverzögerung, oben', 'protection.low_alarm_delay': 'Alarmverzögerung, unten', 'protection.door_delay': 'Türalarm-Verzögerung', 'thermostat.min_off_time': 'Min. Verdichterpause', 'thermostat.min_on_time': 'Min. Verdichterlaufzeit', 'thermostat.night_setback': 'Nachtabsenkung', 'defrost.interval': 'Abtauintervall', 'defrost.max_duration': 'Max. Abtaudauer', 'defrost.termination': 'Abtauende', 'protection.max_starts_hour': 'Max. Starts pro Stunde', 'protection.max_continuous_run': 'Max. Dauerlauf', 'protection.pulldown_min_drop': 'Min. Abkühlung beim Anlauf', 'protection.max_rise_rate': 'Max. Anstiegsrate' },
+    keys: { 'thermostat.setpoint': 'Sollwert', 'thermostat.differential': 'Differenz (Hysterese)', 'protection.high_limit': 'Alarmgrenze, oben', 'protection.low_limit': 'Alarmgrenze, unten', 'protection.high_alarm_delay': 'Alarmverzögerung, oben', 'protection.low_alarm_delay': 'Alarmverzögerung, unten', 'protection.door_delay': 'Türalarm-Verzögerung', 'thermostat.min_off_time': 'Min. Verdichterpause', 'thermostat.min_on_time': 'Min. Verdichterlaufzeit', 'thermostat.night_setback': 'Nachtabsenkung', 'defrost.interval': 'Abtauintervall', 'defrost.max_duration': 'Max. Abtaudauer', 'defrost.termination': 'Abtauende', 'protection.max_starts_hour': 'Max. Starts pro Stunde', 'protection.max_continuous_run': 'Max. Dauerlauf', 'protection.pulldown_min_drop': 'Min. Abkühlung beim Anlauf', 'protection.max_rise_rate': 'Max. Anstiegsrate' },
+    on_short: 'ein', off_short: 'aus',
+    units: { c: '°C', min: 'min', h: 'h', s: 's', per_h: 'mal/h', c_per_min: '°C/min' },
+    options: { 'defrost.termination': { 0: 'Nach Temperatur', 1: 'Nach Timer', temp: 'Nach Temperatur', timer: 'Nach Timer' } },
     haccp_limit: 'Kritischer HACCP-Grenzwert', excursion_rule: 'Abweichung — länger als {0} Min. außerhalb des Grenzwerts, Abtauung ausgenommen',
     summary: 'Temperaturen im Zeitraum', channel: 'Kanal', min: 'Min °C', max: 'Max °C', avg: 'Mittel °C', samples: 'Messungen',
     summary_note: 'Min/Max/Mittel gelten über alle Rohmessungen des Zeitraums (alle {0}); Diagramm und technisches Protokoll zeigen das Intervallmittel über {1}, kurze Spitzen sind dort daher geglättet.',
@@ -444,16 +456,44 @@ function chartSvg({ buckets, from, to, tz, limits, tolerance }) {
 
 const GREY = '#6b7280', RED = '#b91c1c', RED_BG = '#fde8e8', GREY_BG = '#f3f4f6', DAY_BG = '#e5e7eb';
 const overlaps = (a0, a1, intervals) => intervals.some(([b0, b1]) => b0 < a1 && b1 > a0);
-const fmtState = (v) => (typeof v === 'boolean' ? (v ? 'on' : 'off') : (v === null || v === undefined ? '—' : String(v)));
+/** on/off in the report's language; the named choice of a mode parameter; the number otherwise */
+function fmtState(S, key, v) {
+  if (typeof v === 'boolean') return v ? S.on_short : S.off_short;
+  if (v === null || v === undefined) return '—';
+  const named = S.options && S.options[key] && S.options[key][String(v)];
+  return named || String(v);
+}
 
-/** Unit of a controller parameter (mirrors paramUnit() in the WebUI). */
+/**
+ * Unit code of a controller parameter — the same table as PARAM_UNITS in the
+ * WebUI (webui/src/lib/meta.js), taken from the controller's module manifests
+ * rather than guessed from the key name: cond_fan_delay, valve_delay and
+ * min_compressor_run are seconds, max_rise_rate is °C per minute,
+ * max_starts_hour a count. S.units[code] is the text in the report's language.
+ */
+const PARAM_UNITS = {
+  'protection.high_limit': 'c', 'protection.low_limit': 'c', 'protection.pulldown_min_drop': 'c',
+  'protection.high_alarm_delay': 'min', 'protection.low_alarm_delay': 'min', 'protection.door_delay': 'min',
+  'protection.post_defrost_delay': 'min', 'protection.max_continuous_run': 'min', 'protection.pulldown_timeout': 'min',
+  'protection.rate_duration': 'min',
+  'protection.min_compressor_run': 's',
+  'protection.max_starts_hour': 'per_h',
+  'protection.max_rise_rate': 'c_per_min',
+  'protection.compressor_hours': 'h',
+  'thermostat.setpoint': 'c', 'thermostat.differential': 'c', 'thermostat.fan_stop_temp': 'c',
+  'thermostat.fan_stop_hyst': 'c', 'thermostat.night_setback': 'c',
+  'thermostat.min_off_time': 'min', 'thermostat.min_on_time': 'min', 'thermostat.startup_delay': 'min',
+  'thermostat.safety_run_on': 'min', 'thermostat.safety_run_off': 'min',
+  'thermostat.cond_fan_delay': 's',
+  'thermostat.night_start': 'h', 'thermostat.night_end': 'h',
+  'defrost.end_temp': 'c', 'defrost.demand_temp': 'c', 'defrost.fad_temp': 'c',
+  'defrost.interval': 'h',
+  'defrost.max_duration': 'min', 'defrost.drip_time': 'min', 'defrost.fan_delay': 'min',
+  'defrost.stabilize_time': 'min', 'defrost.equalize_time': 'min',
+  'defrost.valve_delay': 's',
+};
 function unitOf(key) {
-  if (/temp|setpoint|limit|differential|night_setback|end_temp|pulldown_min_drop|max_rise_rate/.test(key)) return '°C';
-  if (/duration|delay|drip_time|stabilize|equalize|rate_duration|min_off_time|min_on_time|min_compressor_run|max_continuous_run|pulldown_timeout/.test(key)) return 'min';
-  if (/interval.*sample|sample_interval/.test(key)) return 's';
-  if (/interval|hours|retention/.test(key)) return 'h';
-  if (/max_starts_hour/.test(key)) return '/h';
-  return '';
+  return PARAM_UNITS[key] || '';
 }
 
 /** [label, value with unit] for every known controller parameter present in last_state. */
@@ -462,8 +502,10 @@ function settingsRows(S, state) {
   for (const key of Object.keys(S.keys)) {
     if (!state || state[key] === undefined) continue;
     const v = state[key];
-    const unit = typeof v === 'number' ? unitOf(key) : '';
-    out.push([S.keys[key], `${fmtState(v)}${unit ? ' ' + unit : ''}`]);
+    const named = S.options && S.options[key];
+    const code = typeof v === 'number' && !named ? unitOf(key) : '';
+    const unit = code ? ((S.units && S.units[code]) || code) : '';
+    out.push([S.keys[key], `${fmtState(S, key, v)}${unit ? ' ' + unit : ''}`]);
   }
   return out;
 }

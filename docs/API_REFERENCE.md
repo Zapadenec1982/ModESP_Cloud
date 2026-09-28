@@ -2068,6 +2068,27 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
 застосунок** (ModESP_PWA на `/app`), бо service worker належить йому; WebUI на `/cloud` його не
 має і підписати не може. Нуль означає, що канал увімкнений, але доставляти нікуди.
 
+`channels` (лише у відповіді `GET`) — стан кожного каналу для того, хто запитує (продуктовий аудит, п. 4):
+```json
+{ "telegram": { "available": true, "bot_username": "modesp_bot", "linked": false, "last": null },
+  "webpush":  { "available": true, "devices": 1, "last": { "status": "sent", "at": "2026-09-28T07:00:00Z", "error": null } },
+  "email":    { "available": false, "address": "tech@example.com", "last": null } }
+```
+`available` — канал налаштований на платформі (бот, VAPID-ключі, поштовий провайдер); `linked` /
+`devices` / `address` — чи є куди доставляти саме цій людині; `last` — останній запис
+`notification_log` цієї людини на каналі (тест або справжня аварія), `null` — ще не було. Галочки
+`telegram` / `webpush` / `email` лишаються побажанням «надсилати сюди» і стану каналу не змінюють.
+
+### `POST /profile/notifications/test`
+Тестове повідомлення на власний канал тим самим шляхом і на ту саму адресу, що йде аварія:
+```json
+{ "channel": "telegram" }
+```
+`200` — `{ "status": "sent" }` або `{ "status": "failed", "error": "…" }` (для `webpush` ще `devices` і
+`sent` — скільком пристроям дійшло); спроба записується в `notification_log` з `user_id`, тож стає
+`last` у `GET`. `409 channel_not_ready` з `reason` — `not_linked`, `no_devices`, `no_address`,
+`channel_unavailable` — коли канал не можна навіть спробувати; `400` — невідомий канал.
+
 ---
 
 ## Публічна сторінка статусу точки
@@ -2649,13 +2670,17 @@ MOD 97-10; зберігається без пробілів, у верхньом
 
 ---
 
-## Онбординг (plan epic 2.1)
+## Онбординг (plan epic 2.1; ланцюжок першого запуску — аудит, п. 8)
 
-Чек-ліст «Перші кроки» на панелі адміністратора організації (роль `admin`). Кроки читаються з даних:
-`site` — є торгова точка; `device` — є активний контролер; `team` — друга людина в організації або
-відкрите запрошення; `telegram` — хтось із членів прив'язав Telegram або є Telegram-підписник; `report` —
-є запис у `report_exports`. Перший раз, коли крок побачено виконаним, його час записується в
-`tenant_settings.onboarding.steps`.
+Чек-ліст «Перші кроки» на панелі адміністратора організації (роль `admin`) і сторінка «Початок роботи».
+Сім кроків у порядку, в якому йде робота, читаються з даних: `site` — є торгова точка; `device` — є
+активний контролер; `data` — активний контролер має `last_seen` (надіслав перший стан); `team` — друга
+людина в організації або відкрите запрошення; `responsible` — на точці є контактна особа (`contact_name`
+або `contact_phone`), технік чи адмін (роль у `user_tenants`) має грант на точку або пристрій, або наряд
+має виконавця; `notify` — у `notification_log` є запис зі `status = 'sent'` (аварія або тест зі сторінки
+«Сповіщення»; прив'язаний, але не перевірений канал не рахується); `report` — є запис у
+`report_exports`. Перший раз, коли крок побачено виконаним, його час записується в
+`tenant_settings.onboarding.steps`; `next` — перший невиконаний крок.
 
 ### `GET /onboarding`
 **Response 200:**
@@ -2663,7 +2688,8 @@ MOD 97-10; зберігається без пробілів, у верхньом
 {
   "data": {
     "steps": [ { "key": "site", "done": true, "done_at": "…" }, { "key": "device", "done": false, "done_at": null }, "…" ],
-    "done_count": 2, "total": 5, "completed": false,
+    "next": "device",
+    "done_count": 2, "total": 7, "completed": false,
     "dismissed_at": null,
     "trial": { "status": "trial", "trial_expires_at": "…", "days_left": 9 }
   }
@@ -2672,6 +2698,10 @@ MOD 97-10; зберігається без пробілів, у верхньом
 
 ### `POST /onboarding/dismiss`
 Сховати картку (`tenant_settings.onboarding.dismissed_at`). Відповідь — як `GET`.
+
+### `POST /onboarding/restore`
+Повернути картку на панель (`dismissed_at = null`; прогрес не втрачається) — кнопка на сторінці
+«Початок роботи». Пишеться в `audit_log` (`onboarding.restore`). Відповідь — як `GET`.
 
 ---
 
@@ -3569,3 +3599,4 @@ Superadmin. `{ status: new|open|closed }`; `closed` ставить `closed_at`. 
 - 2026-09-09 — Сервісний звіт обладнання для техніка: `GET /devices/:id/telemetry/service.pdf` і `GET /sites/:id/service.pdf` (той самий доступ, параметри, заголовки, код перевірки і QR, що в HACCP-журналу; `report_type = 'service'` в архіві `GET /reports?type=service`; аудит `export.service_pdf`/`export.service_site_pdf`): налаштування приладу з `last_state`, усі температурні канали з графіком, статистика компресора/відтайки/дверей/офлайну/розривів/відхилень, тривоги з назвами мовою звіту, звʼязок із хмарою, рекомендації, наряди й сервісні записи, інженерний журнал.
 - 2026-09-09 — Масове задання критичних меж HACCP: `GET /devices/haccp-presets` (типові межі за призначенням: freezer, ice_cream, chilled, meat, fish, dairy, produce, pharma, підписи uk/en/pl/de), `PATCH /devices/haccp` (пресет і/або явні поля для списку пристроїв, `only_empty` за замовчуванням, аудит `device.haccp_bulk`), колонки `haccp_preset`/`haccp_min`/`haccp_max`/`haccp_tolerance`/`haccp_product` у CSV-імпорті й шаблоні; пресет у картці пристрою і масова дія «HACCP-межі» на панелі.
 - 2026-09-09 — Аудит цілісності, блок безпеки: `POST /users/:id/password-reset` тепер вимагає, щоб організація була **домашньою** для користувача (як у `PUT /users/:id`) — адмін організації, де людина лише учасник, отримує `404`; `/api/notifications` змонтовано з `authorize('admin')`; `DELETE /devices/:id/service-records/:recordId` привʼязано до пристрою; аудит фіксує будь-яке читання, яке обробник позначив `req.auditContext` — архів організації, CSV з обліковими даними імпорту і завантаження звіту з архіву (`report.download`).
+- 2026-09-28 — Перший запуск і ролі (аудит, п. 8): чек-ліст `GET /onboarding` має сім кроків (`data`, `responsible`, `notify` замість `telegram`) і поле `next`; `POST /onboarding/restore` повертає сховану картку.

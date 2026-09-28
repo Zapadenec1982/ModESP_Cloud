@@ -1,7 +1,12 @@
 <script>
+  // The controller's writable parameters (audit item 6): every row says what
+  // the parameter is called and what it does, what the controller last
+  // reported (or that it has not reported it yet), and offers the control to
+  // change it. The header explains the «received N of M» count — it was a
+  // bare «7/49» — and lets a technician switch the protocol keys on.
   import { onMount } from 'svelte'
   import { sendCommand, requestDeviceState, getDeviceCommands } from '../../lib/api.js'
-  import { loadMeta, groupByCategory } from '../../lib/meta.js'
+  import { loadMeta, groupByCategory, paramLabel } from '../../lib/meta.js'
   import { toast } from '../../lib/toast.js'
   import { t } from '../../lib/i18n.js'
   import { isAdmin } from '../../lib/stores.js'
@@ -19,6 +24,16 @@
   let sendingKey = null
   let requesting = false
 
+  // The protocol keys (thermostat.setpoint…) are secondary: off by default,
+  // remembered per browser once a technician switches them on
+  const KEYS_PREF = 'modesp_param_keys'
+  let showKeys = false
+  try { showKeys = localStorage.getItem(KEYS_PREF) === '1' } catch { /* private mode */ }
+  function toggleKeys() {
+    showKeys = !showKeys
+    try { localStorage.setItem(KEYS_PREF, showKeys ? '1' : '0') } catch { /* ignore */ }
+  }
+
   // Command history (admin) — the audit rows behind GET /devices/:id/commands
   let showHistory = false
   let history = []
@@ -26,7 +41,7 @@
 
   $: dangerousKeys = new Set(groups.flatMap(g => g.params.filter(p => p.dangerous).map(p => p.key)))
 
-  // Count how many parameters have a live value
+  // How many parameters the controller has reported, of all it can take
   $: paramKeys = groups.flatMap(g => g.params.map(p => p.key))
   $: liveCount = paramKeys.filter(k => state[k] !== undefined).length
   $: totalCount = paramKeys.length
@@ -49,10 +64,10 @@
     sendingKey = key
     try {
       await sendCommand(deviceId, key, value, { confirm: dangerous })
-      toast.success(`Sent ${key} = ${value}`)
+      toast.success($t('device.command_sent', paramLabel(key), value))
       if (showHistory) loadHistory()
     } catch (err) {
-      toast.error(`Failed: ${err.message}`)
+      toast.error($t('device.command_failed', err.message))
     } finally {
       sendingKey = null
     }
@@ -78,9 +93,9 @@
     requesting = true
     try {
       await requestDeviceState(deviceId)
-      toast.info('Requested full state from device')
+      toast.info($t('device.state_requested'))
     } catch (err) {
-      toast.error(`Request failed: ${err.message}`)
+      toast.error($t('device.state_request_failed', err.message))
     } finally {
       requesting = false
     }
@@ -99,28 +114,39 @@
   {:else}
     <div class="editor-header">
       <div class="editor-stats">
-        <span class="stat-label">{$t('device.param_count')}</span>
-        <span class="stat-value">{liveCount}<span class="stat-total">/{totalCount}</span></span>
+        <span class="stat-text">
+          {$t('device.param_received', liveCount, totalCount)}
+          <span class="stat-hint" title={$t('device.param_received_hint')} aria-label={$t('device.param_received_hint')}>
+            <Icon name="help-circle" size={14} />
+          </span>
+        </span>
+        <span class="stat-sub">{$t('device.param_received_hint')}</span>
       </div>
-      <button
-        class="request-btn"
-        on:click={handleRequestState}
-        disabled={requesting}
-        title="Request full state dump from device via MQTT"
-      >
-        {#if requesting}
-          <span class="spinner" />
-        {:else}
-          <Icon name="refresh" size={14} />
-        {/if}
-        <span>{$t('device.read_device')}</span>
-      </button>
-      {#if $isAdmin}
-        <button class="request-btn" on:click={toggleHistory} title={$t('device.command_history')}>
-          <Icon name="clock" size={14} />
-          <span>{$t('device.command_history')}</span>
+      <div class="editor-actions">
+        <button
+          class="request-btn"
+          on:click={handleRequestState}
+          disabled={requesting}
+          title={$t('device.read_device_hint')}
+        >
+          {#if requesting}
+            <span class="spinner" />
+          {:else}
+            <Icon name="refresh" size={14} />
+          {/if}
+          <span>{$t('device.read_device')}</span>
         </button>
-      {/if}
+        <button class="request-btn" class:pressed={showKeys} on:click={toggleKeys} title={$t('device.param_keys_hint')} aria-pressed={showKeys}>
+          <Icon name="hash" size={14} />
+          <span>{$t('device.param_keys_toggle')}</span>
+        </button>
+        {#if $isAdmin}
+          <button class="request-btn" on:click={toggleHistory} title={$t('device.command_history')} aria-pressed={showHistory}>
+            <Icon name="clock" size={14} />
+            <span>{$t('device.command_history')}</span>
+          </button>
+        {/if}
+      </div>
     </div>
 
     {#if showHistory}
@@ -133,7 +159,7 @@
           {#each history as c (c.id)}
             <div class="history-row" class:dangerous={c.dangerous}>
               <span class="history-time">{new Date(c.created_at).toLocaleString()}</span>
-              <span class="history-key">{c.key} = {c.value}</span>
+              <span class="history-key"><span class="history-label">{paramLabel(c.key, $t)}</span> <span class="font-mono">{c.key} = {c.value}</span></span>
               <span class="history-user">{c.user_email}</span>
               {#if c.status_code >= 400}<span class="history-status">HTTP {c.status_code}</span>{/if}
             </div>
@@ -143,13 +169,15 @@
     {/if}
 
     <div class="groups">
-      {#each groups as { cat, params }}
+      {#each groups as { cat, params }, i (cat)}
         <ParameterGroup
           category={cat}
           {params}
           {state}
           {sendingKey}
           {readonly}
+          {showKeys}
+          expanded={i === 0}
           on:send={handleSend}
         />
       {/each}
@@ -166,33 +194,48 @@
 
   .editor-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
+    gap: var(--space-3);
     padding: var(--space-2) 0;
+    flex-wrap: wrap;
   }
 
   .editor-stats {
     display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 280px;
   }
 
-  .stat-label {
+  .stat-text {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     font-size: var(--text-sm);
-    color: var(--text-muted);
-  }
-
-  .stat-value {
-    font-size: var(--text-base);
     font-weight: 600;
-    color: var(--accent-blue);
-    font-family: var(--font-mono);
+    color: var(--text-primary);
   }
 
-  .stat-total {
-    font-weight: 400;
+  .stat-hint {
+    display: inline-flex;
     color: var(--text-muted);
-    font-size: var(--text-sm);
+    cursor: help;
+  }
+
+  .stat-sub {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    line-height: 1.35;
+    max-width: 60ch;
+  }
+
+  .editor-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
   }
 
   .request-btn {
@@ -212,6 +255,11 @@
 
   .request-btn:hover:not(:disabled) {
     background: rgba(88, 166, 255, 0.15);
+    border-color: var(--accent-blue);
+  }
+
+  .request-btn.pressed {
+    background: rgba(88, 166, 255, 0.2);
     border-color: var(--accent-blue);
   }
 
@@ -263,7 +311,9 @@
   .history-row:last-child { border-bottom: none; }
   .history-row.dangerous .history-key { color: var(--accent-orange, #f59e0b); }
   .history-time { color: var(--text-muted); white-space: nowrap; }
-  .history-key { font-family: var(--font-mono, monospace); overflow: hidden; text-overflow: ellipsis; }
+  .history-key { overflow: hidden; text-overflow: ellipsis; }
+  .history-label { font-weight: 500; }
+  .history-key .font-mono { color: var(--text-muted); }
   .history-user { color: var(--text-muted); }
   .history-status { color: var(--accent-red); }
   .history-empty { padding: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); margin: 0; }

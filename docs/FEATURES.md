@@ -43,9 +43,15 @@ Complete tenant isolation at every layer — database, MQTT broker, API, and UI.
   trial straight away; `off` disables the form. With e-mail configured the administrator confirms the
   address from a link before the first sign-in. An expired trial is moved to `past_due` by the hourly
   watchdog — access and the fleet stay, a banner asks for a plan
-- **The "First steps" checklist** — on the administrator's dashboard: create a site → connect a controller
-  by its code → invite a technician → link Telegram → export the first HACCP report. The steps are read
-  from the data; progress and dismissal live in `tenant_settings.onboarding`
+- **The "First steps" checklist and the "Getting started" page** (audit item 8) — seven steps on the
+  administrator's dashboard, in the order the work happens: create a site → connect a controller by its
+  code → get the first reading → invite the team → name a responsible person → check a notification →
+  generate the first report. The steps are read from the data (first reading — the controller has sent its
+  state; responsible — a contact on a site, a technician with a site or device grant, or an order with an
+  assignee; notification — a real delivery only, an alarm or a test), the next one is highlighted; progress
+  and dismissal live in `tenant_settings.onboarding`, and the "Getting started" page (`#/start`) explains
+  every step, tells each role what it sees and where to begin, and brings a hidden card back
+  (`POST /onboarding/restore`)
 - **Closing an organisation** (epic 2.10) — the `closed` status keeps sign-in but read-only (a banner with
   the date; changes answer 423); after `CLOSED_RETENTION_DAYS` (30) the watchdog deletes telemetry, alarms,
   reports, firmware and sites, returns the controllers to the pending queue with their credentials, and
@@ -119,7 +125,7 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 
 Send commands to devices from the cloud — REST API or Web UI.
 
-- **Parameter editing** — change thermostat setpoint, defrost intervals, protection thresholds remotely
+- **Parameter editing** (audit item 6) — change thermostat setpoint, defrost intervals, protection thresholds remotely. Every parameter has a human name, a one-line explanation and its unit from the firmware manifests (seconds, minutes, hours, °C/min — not guessed from the key name); the mode parameters (defrost type, evaporator fan, night mode, display during defrost…) are chosen from named options, not typed as a number; a value the controller has not sent yet reads «—» with an explanation; the «Received from the controller N of 49» count says where the values come from; the protocol keys sit behind a «Technical keys» switch; parameters that change how the equipment runs are marked and ask for confirmation. The service PDF report uses the same names, units and mode names
 - **Validated commands** — only writable parameters accepted (defined in device metadata schema)
 - **Full state refresh** — request device to re-publish all 48 parameters on demand
 - **MQTT delivery** — commands published to device-specific MQTT topics with QoS guarantees
@@ -350,6 +356,7 @@ Operational events beyond alarms — equipment cycles, status changes, device co
 ### Correctness and acknowledgement (plan epic 1.6)
 - Recipients: organisation admins; technicians and viewers through per-device grants **or** site grants (the same rule the API uses); superadmins only when `receive_all_tenant_alerts` is set
 - Per-user preferences ("My notifications", every role): on/off, minimum severity, channels, quiet hours with time zone — critical alarms and escalations always get through
+- Channel cards on that page (product audit item 4): Telegram, Web Push and e-mail each show what the channel *is* — on the platform at all, reachable for this person (chat linked, device subscribed, address), last delivery — with «Connect Telegram» (own link code and a deep link to the bot), «Enable on this phone» and «Check delivery» (`POST /profile/notifications/test`, logged like a real delivery). The «send here» box stays a preference and no longer passes for readiness; manual Chat ID / FCM entry is an «Advanced» section for integrations
 - Acknowledge: `POST /alarms/:id/ack` with an optional note, button on the Alarms page, shown in device alarm history; an unacknowledged critical alarm is re-sent once to admins after `ALARM_ACK_ESCALATION_MIN` (15) minutes, tracked in the database so restarts neither lose nor duplicate it
 - Offline is an alarm: `device_offline` (warning) is raised two minutes after the offline detector fires and closed by the device's next message, so outages show up in alarm lists, HACCP history and acknowledgement flows
 - Every user-path delivery (Telegram, Web Push, email) is logged with user and alarm; admins see it via `GET /alarms/:id/deliveries`
@@ -452,6 +459,15 @@ JWT-based auth with 4-tier RBAC and per-device access control.
 | **Admin** | Own tenant | Full control: devices, users, firmware, notifications |
 | **Technician** | Assigned devices | View, send commands, deploy firmware, manage service records |
 | **Viewer** | Assigned devices | Read-only access (no commands, no editing) |
+
+### The start screen by role (audit item 8)
+One dashboard for everyone, but the first thing on it is what the role came for:
+- **Technician** — "My work": the orders assigned to them, overdue ones first, with the deadline, the site and the route; then "Needs attention" and the cards of the equipment they can see
+- **Admin** — "Needs attention" (alarms, out of range, offline, hints, unassigned orders), the "Service" block (unassigned · in progress · overdue · done in 30 days, assignees with their order counts; shown once the organisation uses work orders), the "First steps" checklist and the equipment by site
+- **Superadmin** — the "Platform" block: organisations (how many await approval), past-due and suspended ones, controllers in the queue, open support requests, links to users and firmware; then the fleet of every organisation
+- **Viewer** — "Needs attention" and the cards, with no action block: the empty dashboard says whom to ask for access
+
+The "Getting started" page (`#/start`, linked in the sidebar next to "Support" and from the support page) tells every role what it sees and where to begin; an administrator finds there the whole first-run path with every step explained, and brings a hidden card back to the dashboard.
 
 ### Command safety and tenant isolation
 - `POST /devices/:id/command` is admin/technician only (viewers are read-only even with device access); values are validated against `state_meta.json` (type, min/max, step); setpoint, protection limits, manual defrost and alarm reset require `confirm: true`, and the WebUI asks first

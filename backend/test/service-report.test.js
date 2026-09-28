@@ -277,9 +277,15 @@ describe('Service report for technicians', () => {
     it('settingsRows: known keys in dictionary order with units; unknown keys and missing state ignored', () => {
       expect(service.__test.settingsRows(S, null)).toEqual([]);
       expect(service.__test.settingsRows(S, { 'sensor.air': -18, 'thermostat.setpoint': -18, 'protection.door_delay': 5, 'defrost.interval': 6, 'thermostat.night_setback': true, 'defrost.termination': 'temp' }))
-        .toEqual([['Уставка', '-18 °C'], ['Затримка тривоги дверей', '5 min'], ['Нічний зсув', 'on'], ['Інтервал відтайки', '6 h'], ['Завершення відтайки', 'temp']]);
-      expect(service.__test.unitOf('protection.max_starts_hour')).toBe('/h');
-      expect(service.__test.unitOf('datalogger.sample_interval')).toBe('s');
+        .toEqual([['Уставка', '-18 °C'], ['Затримка аварії дверей', '5 хв'], ['Нічний зсув уставки', 'увімк.'], ['Інтервал відтайки', '6 год'], ['Завершення відтайки', 'За температурою']]);
+      // the mode arrives as a number from the controller: the word, no unit
+      expect(service.__test.settingsRows(S, { 'defrost.termination': 1, 'thermostat.cond_fan_delay': 30 })).toEqual([['Завершення відтайки', 'За таймером']]);
+      // units come from the controller manifests, not from the key name: seconds, a count, degrees per minute
+      expect(service.__test.unitOf('protection.max_starts_hour')).toBe('per_h');
+      expect(service.__test.unitOf('protection.min_compressor_run')).toBe('s');
+      expect(service.__test.unitOf('protection.max_rise_rate')).toBe('c_per_min');
+      expect(service.__test.unitOf('datalogger.sample_interval')).toBe('');
+      expect(service.strings('en').units.per_h).toBe('/h');
       expect(service.strings('xx').title).toBe(S.title);
       expect(service.strings('en').title).toBe('Equipment Service Report');
     });

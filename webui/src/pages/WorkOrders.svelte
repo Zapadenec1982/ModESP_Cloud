@@ -149,6 +149,9 @@
 
   onMount(async () => {
     const q = new URLSearchParams($querystring || '')
+    // «Моя робота» on the dashboard opens the list it counted
+    const wanted = q.get('tab')
+    if (['open', 'mine', 'closed'].includes(wanted)) tab = wanted
     await load()
     loadSide()
     const id = q.get('id')
