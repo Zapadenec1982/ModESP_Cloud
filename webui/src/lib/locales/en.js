@@ -43,7 +43,7 @@ export default {
     pending: 'Pending Devices',
     pending_sub: 'Unassigned devices waiting for organization assignment',
     notifications: 'Notifications',
-    notifications_sub: 'Manage push notification subscribers and delivery',
+    notifications_sub: 'Your channels, quiet hours and the delivery log',
     firmware: 'Firmware',
     firmware_sub: 'Upload, manage and deploy OTA firmware updates',
     tenants: 'Organizations',
@@ -1133,7 +1133,7 @@ export default {
   notifications: {
     add_subscriber: 'Add Subscriber',
     my_title: 'My notifications',
-    my_hint: 'Applies to alarm notifications for the devices you can see. Telegram is linked from the profile menu.',
+    my_hint: 'Applies to alarm notifications for the devices you can see.',
     enabled: 'Receive notifications',
     min_severity: 'Minimum severity',
     channels: 'Channels',

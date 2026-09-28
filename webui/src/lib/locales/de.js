@@ -43,7 +43,7 @@ export default {
     pending: 'Ausstehende Geräte',
     pending_sub: 'Nicht zugewiesene Geräte warten auf Organisationszuweisung',
     notifications: 'Benachrichtigungen',
-    notifications_sub: 'Push-Benachrichtigungsabonnenten und Zustellung verwalten',
+    notifications_sub: 'Ihre Kanäle, Ruhezeiten und das Zustellprotokoll',
     firmware: 'Firmware',
     firmware_sub: 'OTA-Firmware-Updates hochladen, verwalten und bereitstellen',
     tenants: 'Organisationen',
@@ -1133,7 +1133,7 @@ export default {
   notifications: {
     add_subscriber: 'Abonnent hinzufügen',
     my_title: 'Meine Benachrichtigungen',
-    my_hint: 'Gilt für Alarmbenachrichtigungen der Geräte, die Sie sehen dürfen. Telegram wird im Profilmenü verknüpft.',
+    my_hint: 'Gilt für Alarmbenachrichtigungen der Geräte, die Sie sehen dürfen.',
     enabled: 'Benachrichtigungen erhalten',
     min_severity: 'Mindestschwere',
     channels: 'Kanäle',

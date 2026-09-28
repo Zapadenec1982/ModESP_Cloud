@@ -43,7 +43,7 @@ export default {
     pending: 'Oczekujące urządzenia',
     pending_sub: 'Nieprzypisane urządzenia oczekujące na przypisanie do organizacji',
     notifications: 'Powiadomienia',
-    notifications_sub: 'Zarządzanie subskrybentami i dostarczaniem powiadomień push',
+    notifications_sub: 'Twoje kanały, ciche godziny i dziennik dostarczania',
     firmware: 'Firmware',
     firmware_sub: 'Przesyłanie, zarządzanie i wdrażanie aktualizacji OTA firmware',
     tenants: 'Organizacje',
@@ -1133,7 +1133,7 @@ export default {
   notifications: {
     add_subscriber: 'Dodaj subskrybenta',
     my_title: 'Moje powiadomienia',
-    my_hint: 'Dotyczy powiadomień o alarmach urządzeń, do których masz dostęp. Telegram łączy się w menu profilu.',
+    my_hint: 'Dotyczy powiadomień o alarmach urządzeń, do których masz dostęp.',
     enabled: 'Otrzymuj powiadomienia',
     min_severity: 'Minimalna ważność',
     channels: 'Kanały',
