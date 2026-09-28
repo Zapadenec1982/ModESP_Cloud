@@ -75,7 +75,19 @@ link_shared() {  # link_shared RELEASE_DIR
   fi
   [ -f "$SHARED/backup.env" ] && ln -sfn "$SHARED/backup.env" "$dir/infra/backup.env"
   [ -f "$SHARED/webui.env" ]  && ln -sfn "$SHARED/webui.env"  "$dir/webui/.env"
+  # Landing settings (demo links, contact e-mail) are edited on the server, so
+  # they live in shared/ too — otherwise every release put the defaults back.
+  [ -f "$SHARED/landing-config.js" ] && ln -sfn "$SHARED/landing-config.js" "$dir/landing/config.js"
   return 0
+}
+
+seed_landing_config() {  # seed_landing_config SOURCE_DIR — once: keep the copy edited on the server
+  [ -f "$SHARED/landing-config.js" ] && return 0
+  local src="$1/landing/config.js"
+  { [ -f "$src" ] && [ ! -L "$src" ]; } || return 0
+  cp -p "$src" "$SHARED/landing-config.js"
+  chmod 644 "$SHARED/landing-config.js"
+  log "landing/config.js kept as $SHARED/landing-config.js — edit it there from now on"
 }
 
 install_units() {  # install_units RELEASE_DIR
@@ -145,7 +157,7 @@ cmd_init() {
     cat <<MSG
 This converts $APP_LINK (a git checkout) into the release layout:
   $APP_LINK             -> $RELEASES/checkout-<stamp> (symlink)
-  backend/.env, backend/firmware, infra/backup.env, webui/.env -> $SHARED/
+  backend/.env, backend/firmware, infra/backup.env, webui/.env, landing/config.js -> $SHARED/
 The backend is stopped for the move and started again (health-gated).
 Re-run with --yes to proceed.
 MSG
@@ -170,6 +182,7 @@ MSG
   install -d -o "$APP_USER" -g "$APP_USER" "$SHARED/firmware"
   [ -f "$checkout/infra/backup.env" ] && [ ! -L "$checkout/infra/backup.env" ] && mv "$checkout/infra/backup.env" "$SHARED/backup.env"
   [ -f "$checkout/webui/.env" ] && [ ! -L "$checkout/webui/.env" ] && mv "$checkout/webui/.env" "$SHARED/webui.env"
+  seed_landing_config "$checkout"
   chown "$APP_USER:$APP_USER" "$SHARED/backend.env"; chmod 600 "$SHARED/backend.env"
   [ -f "$SHARED/backup.env" ] && chown root:root "$SHARED/backup.env" && chmod 600 "$SHARED/backup.env"
   chmod 755 "$BASE" "$RELEASES" "$SHARED"
@@ -217,6 +230,9 @@ cmd_release() {
 
   log "installing backend dependencies"
   (cd "$target/backend" && runuser -u "$APP_USER" -- npm ci --omit=dev --no-audit --no-fund)
+  # The running release holds the copy that was edited on the server; the new
+  # one only carries the defaults from the archive.
+  seed_landing_config "$APP_LINK"
   link_shared "$target"
 
   run_migrations "$target" "$migrate"
@@ -262,6 +278,7 @@ cmd_status() {
   echo "previous:  $(cat "$BASE/.previous" 2>/dev/null || echo '-')"
   echo "releases:"; ls -1dt "$RELEASES"/*/ 2>/dev/null | sed 's:/$::; s:^:  :' || echo "  (none)"
   echo "backend:   $(systemctl is-active modesp-backend 2>/dev/null || echo unknown)"
+  echo "landing:   $([ -f "$SHARED/landing-config.js" ] && echo "config in $SHARED/landing-config.js" || echo 'config.js inside the release — the next release resets it')"
   curl -sS --max-time 3 "$HEALTH_URL" 2>/dev/null || true; echo
 }
 
