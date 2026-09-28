@@ -806,7 +806,20 @@ Max range: 31 day.
 ### `GET /alarms` — всі аварії по тенанту
 Агрегований список аварій по всьому парку.
 
-**Query params:** `active=true`, `from`, `to`, `limit`, `severity=critical,warning`
+**Query params:** `active=true`, `from`, `to`, `limit`, `offset`, `severity=critical,warning`, а також звуження
+за місцем і обладнанням (сторінка точки, посилання `#/alarms?site=` з таблиці точок, пошук на сторінці аварій):
+- `site_id=uuid` — аварії обладнання, що стоїть на цій точці (`devices.site_id`); чужий `site_id` дає порожній
+  список, не-UUID — `400 validation_failed`
+- `device_id` — одна одиниця обладнання: UUID пристрою або ідентифікатор контролера (`a.device_id`)
+- `q` — фрагмент назви пристрою або ідентифікатора контролера, без урахування регістру, до 64 символів;
+  `%` і `_` екрануються, довший рядок — `400`
+
+Жоден із фільтрів не розширює видимість: технік і глядач отримують лише аварії своїх пристроїв
+(`user_devices ∪ user_sites`), як і без фільтрів.
+
+Кожен рядок називає обладнання і точку поряд з MQTT-ідентифікатором: `device_name`, `mqtt_device_id`,
+`site_id`, `site_name` (`null`, якщо пристрій не призначено на точку) — інтерфейс показує «Точка → Обладнання»,
+а ідентифікатор лишає дрібним для техніка.
 
 ### `GET /alarms/stats`
 Статистика частоти аварій за період.
@@ -1087,6 +1100,11 @@ CSV export алармів.
 **Помилки:** `400 validation_failed` (дати, bucket), `404 no_data` (за період немає даних —
 порожній «журнал» не формується), `402 plan_feature`.
 
+**Архів.** Сформований PDF лишається в `report_exports` (`pdf`, `file_name`, `bytes`) поруч із кодом і хешем —
+так само, як плановий, — тож `GET /reports` показує його з `archived: true`, а `GET /reports/:code/download`
+віддає той самий файл ще раз (доступ той самий, що й до точки/пристрою; `REPORT_ARCHIVE_DAYS` прибирає PDF так
+само, як у планових). Це стосується всіх чотирьох разових звітів: `export.pdf` і `service.pdf` пристрою й точки.
+
 ### `GET /sites/:id/export.pdf`
 Той самий журнал для всіх активних пристроїв точки (до 50) — один документ, розділ на
 пристрій. Admin бачить усі точки організації; technician/viewer — лише з грантом у
@@ -1186,11 +1204,13 @@ CSV export алармів.
               "file_name": "haccp_….pdf", "bytes": 48213, "archived": true } ],
   "meta": { "total": 1, "limit": 50, "offset": 0 } }
 ```
-`archived: true` — PDF збережено і його можна завантажити; разові експорти реєструють лише код і хеш.
+`archived: true` — PDF збережено і його можна завантажити. Разові експорти (`export.pdf` / `service.pdf`
+пристрою й точки) зберігаються так само, як планові, тож у архіві вони теж завантажуються повторно; `false`
+лишається для рядків, чий PDF уже прибрав `REPORT_ARCHIVE_DAYS`.
 `REPORT_ARCHIVE_DAYS` (типово 3 роки) — після цього PDF видаляється, код і SHA-256 лишаються для перевірки.
 
 #### `GET /reports/:code/download`
-PDF планового звіту з архіву (`Content-Type: application/pdf`, заголовки `X-Report-Code`, `X-Report-Sha256`,
+PDF планового або разового звіту з архіву (`Content-Type: application/pdf`, заголовки `X-Report-Code`, `X-Report-Sha256`,
 `X-Report-Source`, ім'я файла за RFC 5987). `404`, якщо звіту немає, він не з архіву або точка недоступна.
 
 
@@ -1289,6 +1309,10 @@ PDF планового звіту з архіву (`Content-Type: application/pd
       "geocoded_at": "2026-08-23T09:12:00Z",
       "timezone": "Europe/Kyiv",
       "notes": null,
+      "haccp_excursion_min": null,
+      "contact_name": "Олена Коваль",
+      "contact_phone": "+380 67 123 45 67",
+      "contact_email": "store142@company.ua",
       "device_count": 10,
       "online_count": 9,
       "alarm_count": 1,
@@ -1301,6 +1325,9 @@ PDF планового звіту з архіву (`Content-Type: application/pd
 
 `geo_source`: `none` (координат ще немає) · `geocoded` (від Nominatim) · `manual` (задано людиною) ·
 `failed` (3+ невдалі спроби; причина в `geo_error`).
+
+`contact_name` / `contact_phone` / `contact_email` (міграція 054) — контактна особа точки: кого кликати перед
+виїздом і кого називає звіт. Усі три `null`-able; на публічній сторінці статусу (`GET /public/site`) їх немає.
 
 ### `POST /sites`
 Створити точку.
@@ -1321,11 +1348,16 @@ PDF планового звіту з архіву (`Content-Type: application/pd
   "longitude": null,
   "timezone": null,
   "notes": null,
+  "contact_name": "Олена Коваль",
+  "contact_phone": "+380 67 123 45 67",
+  "contact_email": "store142@company.ua",
   "tenant_id": "uuid (тільки superadmin)"
 }
 ```
 
-Обов'язкове тільки `name`. Якщо координати не передані, а адреса є — виконується inline-геокодування
+Обов'язкове тільки `name`. Контактні поля необов'язкові: `contact_name` до 120 символів, `contact_phone` до 40,
+`contact_email` до 160 і перевіряється на форму адреси, коли не порожнє (порожній рядок = `null`; інакше
+`400 validation_failed`). Якщо координати не передані, а адреса є — виконується inline-геокодування
 (best effort, структурований запит до Nominatim). Виклик **не чекає** на геокодер довше 5 секунд:
 якщо черга зайнята, точка створюється з `geo_source: "none"`, а фонова задача дописує координати
 пізніше. Геокодер вимкнений або недоступний — точка все одно створюється.
@@ -1354,15 +1386,21 @@ PDF планового звіту з архіву (`Content-Type: application/pd
     "latitude": 49.844,
     "longitude": 24.0262,
     "timezone": "Europe/Kyiv",
+    "contact_name": "Олена Коваль",
+    "contact_phone": "+380 67 123 45 67",
+    "contact_email": "store142@company.ua",
     "device_count": 2,
     "online_count": 2,
     "alarm_count": 0,
     "devices": [
-      { "id": "uuid", "mqtt_device_id": "A4CF12", "name": "Камера №1", "online": true, "alarm_active": false }
+      { "id": "uuid", "mqtt_device_id": "A4CF12", "name": "Камера №1", "location": "Зал, ряд 3", "online": true, "alarm_active": false, "air_temp": -18.4 }
     ]
   }
 }
 ```
+
+Сторінка точки в інтерфейсі (`#/sites/:id`) збирається з цієї відповіді плюс `GET /alarms?active=true&site_id=`
+і `GET /work-orders?site_id=` (відкриті наряди).
 
 ### `PATCH /sites/:id`
 Оновити точку. Мінімум одне поле.
@@ -1382,7 +1420,10 @@ PDF планового звіту з архіву (`Content-Type: application/pd
   "latitude": 49.844,
   "longitude": 24.0262,
   "timezone": "Europe/Kyiv",
-  "notes": "Вхід з двору"
+  "notes": "Вхід з двору",
+  "contact_name": "Олена Коваль",
+  "contact_phone": "+380 67 123 45 67",
+  "contact_email": "store142@company.ua"
 }
 ```
 
@@ -2791,7 +2832,7 @@ Superadmin, plan epic 2.1. Організація, що зареєструвал
 ```
 
 `haccp_excursion_min` (1–1440, `null` — 30) — поріг витримки відхилення для HACCP-звіту: скільки хвилин
-температура повітря має бути за критичною межею, щоб звіт зарахував відхилення продукту; точка може
+температура повітря має бути за критичною межею, щоб звіт зарахував відхилення температури повітря; точка може
 перекрити його своїм `sites.haccp_excursion_min`.
 
 `raw_retention_days` (7–1100, `null` — за планом) змінює лише superadmin (інакше `403`); це

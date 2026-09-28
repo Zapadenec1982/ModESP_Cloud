@@ -1,9 +1,10 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { getAlarms, exportAlarmsCsv, ackAlarm } from '../lib/api.js'
+  import { querystring } from 'svelte-spa-router'
+  import { getAlarms, exportAlarmsCsv, ackAlarm, getSites } from '../lib/api.js'
   import { on } from '../lib/ws.js'
   import { navigate, canWrite, authUser } from '../lib/stores.js'
-  import { timeAgo, alarmLabel } from '../lib/format.js'
+  import { timeAgo, alarmLabel, formatDate, formatDuration } from '../lib/format.js'
   import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
@@ -26,6 +27,14 @@
 
   const PAGE_SIZE = 50
 
+  // «Київ, магазин №102 → морозильна бонета»: the place and the equipment are
+  // what a person recognises; the MQTT id stays visible, small, for the technician.
+  const mqttId = (a) => a.device_id || a.mqtt_device_id
+  const deviceTitle = (a) => (a.device_name ? `${a.site_name ? a.site_name + ' → ' : ''}${a.device_name}` : (a.site_name ? `${a.site_name} → ${mqttId(a)}` : mqttId(a)))
+  const severityLabel = (a) => $t('alarm.' + (a.severity || 'warning'))
+  // How long the alarm lasted (history) or has lasted so far (active)
+  const lasted = (a) => formatDuration((new Date(a.cleared_at || Date.now()) - new Date(a.triggered_at || a.created_at)) / 1000)
+
   // Date range filter
   let dateFrom = ''
   let dateTo = ''
@@ -41,13 +50,84 @@
     }
   }
 
+  // ── Site and device scope ──
+  // `#/alarms?site=<id>` (the sites table, the site page) and `?device=<id>`
+  // arrive through the hash; the site select and the device search box do the
+  // same by hand. The chips show what the hash pinned and take it off again.
+  const SEARCH_DEBOUNCE_MS = 300
+  let sites = []
+  let sitesLoaded = false    // the bound <select> mounts once its options exist
+  let siteFilter = ''        // site id, or ''
+  let deviceFilter = ''      // exact device (UUID or controller id) from ?device=
+  let deviceQuery = ''       // the search box as typed
+  let appliedQuery = ''      // what the last request used
+  let queryTimer = null
+  let lastQs = null
+
+  $: siteName = sites.find(s => s.id === siteFilter)?.name || ''
+
+  /** Scope params shared by every alarm request of this page. */
+  function scopeParams() {
+    const p = {}
+    if (siteFilter) p.site_id = siteFilter
+    if (deviceFilter) p.device_id = deviceFilter
+    else if (appliedQuery) p.q = appliedQuery
+    return p
+  }
+
+  async function loadSites() {
+    try {
+      const res = await getSites()
+      sites = Array.isArray(res) ? res : (res?.data ?? [])
+    } catch {
+      sites = []   // the select simply stays empty; the hash filter still applies
+    } finally {
+      sitesLoaded = true
+    }
+  }
+
+  function applyQuerystring(qs) {
+    if (qs === lastQs) return
+    lastQs = qs
+    const q = new URLSearchParams(qs || '')
+    const site = q.get('site') || ''
+    const device = q.get('device') || ''
+    const changed = site !== siteFilter || device !== deviceFilter
+    siteFilter = site
+    deviceFilter = device
+    if (changed && mounted) load()
+  }
+
+  let mounted = false
+  $: applyQuerystring($querystring)
+
+  function onDeviceQueryInput() {
+    clearTimeout(queryTimer)
+    queryTimer = setTimeout(() => {
+      const next = deviceQuery.trim().slice(0, 64)
+      if (next === appliedQuery) return
+      appliedQuery = next
+      load()
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  function clearSiteFilter() {
+    siteFilter = ''
+    load()
+  }
+
+  function clearDeviceFilter() {
+    deviceFilter = ''
+    load()
+  }
+
   async function load() {
     loading = true
     try {
-      const activeParams = { active: true }
+      const activeParams = { active: true, ...scopeParams() }
       if (severityFilter) activeParams.severity = severityFilter
 
-      const histParams = { limit: PAGE_SIZE }
+      const histParams = { limit: PAGE_SIZE, ...scopeParams() }
       if (severityFilter) histParams.severity = severityFilter
       if (appliedFrom) histParams.from = new Date(appliedFrom).toISOString()
       if (appliedTo) histParams.to = new Date(appliedTo).toISOString()
@@ -71,7 +151,7 @@
     if (loadingMore || !hasMore) return
     loadingMore = true
     try {
-      const params = { limit: PAGE_SIZE, offset: historyAlarms.length + activeAlarms.length }
+      const params = { limit: PAGE_SIZE, offset: historyAlarms.length + activeAlarms.length, ...scopeParams() }
       if (severityFilter) params.severity = severityFilter
       if (appliedFrom) params.from = new Date(appliedFrom).toISOString()
       if (appliedTo) params.to = new Date(appliedTo).toISOString()
@@ -167,7 +247,9 @@
   let pollInterval
 
   onMount(() => {
+    mounted = true
     load()
+    loadSites()
     wsUnsub = on('alarm', () => load())
     wsUnsubAck = on('alarm_ack', () => load())
     // Poll every 30s as fallback for missed WS events
@@ -178,6 +260,7 @@
     wsUnsub?.()
     wsUnsubAck?.()
     clearInterval(pollInterval)
+    clearTimeout(queryTimer)
   })
 </script>
 
@@ -204,6 +287,43 @@
       <Icon name="download" size={14} />
       {exportingCsv ? $t('export.exporting') : $t('export.export_csv')}
     </button>
+  </div>
+
+  <!-- Site and device scope -->
+  <div class="scope-row">
+    <label class="scope-field">
+      <span class="date-label">{$t('alarm.filter_site')}</span>
+      {#if sitesLoaded}
+        <!-- Mounted after the options exist, so a site pinned by the hash is selected on first paint. -->
+        <select bind:value={siteFilter} on:change={load}>
+          <option value="">{$t('alarm.all_sites')}</option>
+          {#each sites as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+        </select>
+      {:else}
+        <select disabled><option>{$t('alarm.all_sites')}</option></select>
+      {/if}
+    </label>
+    <label class="scope-field">
+      <span class="date-label">{$t('alarm.device_search')}</span>
+      <input type="search" bind:value={deviceQuery} on:input={onDeviceQueryInput} maxlength="64"
+        placeholder={$t('alarm.device_search_placeholder')} disabled={!!deviceFilter} />
+    </label>
+    {#if siteFilter || deviceFilter}
+      <div class="chips">
+        {#if siteFilter}
+          <button class="chip" on:click={clearSiteFilter} title={$t('alarm.clear_filter')}>
+            {$t('alarm.filter_site_chip', siteName || siteFilter.slice(0, 8))}
+            <Icon name="x" size={12} />
+          </button>
+        {/if}
+        {#if deviceFilter}
+          <button class="chip" on:click={clearDeviceFilter} title={$t('alarm.clear_filter')}>
+            {$t('alarm.filter_device_chip', deviceFilter)}
+            <Icon name="x" size={12} />
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- Date range filter -->
@@ -262,19 +382,19 @@
               >
                 <div class="alarm-severity">
                   <Badge variant={severityVariant(alarm.severity)} pulse={!alarm.acknowledged_at}>
-                    {(alarm.severity || 'warning').toUpperCase()}
+                    {severityLabel(alarm)}
                   </Badge>
                 </div>
                 <div class="alarm-info">
                   <span class="alarm-type">{alarmLabel(alarm.alarm_code)}</span>
-                  <span class="alarm-device font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                  <span class="alarm-where">{deviceTitle(alarm)}{#if alarm.device_name || alarm.site_name}<span class="alarm-device font-mono">{mqttId(alarm)}</span>{/if}</span>
                   {#if alarm.acknowledged_at}
                     <span class="ack-info">{$t('alarm.acked_by', alarm.acknowledged_by_email || '—')} · {timeAgo(alarm.acknowledged_at)}{alarm.ack_note ? ' — ' + alarm.ack_note : ''}</span>
                   {:else if alarm.escalated_at}
                     <span class="ack-info escalated">{$t('alarm.escalated')}</span>
                   {/if}
                 </div>
-                <div class="alarm-time">{timeAgo(alarm.triggered_at || alarm.created_at)}</div>
+                <div class="alarm-time" title={formatDate(alarm.triggered_at || alarm.created_at)}>{timeAgo(alarm.triggered_at || alarm.created_at)}<span class="alarm-lasted">{lasted(alarm)}</span></div>
                 <Icon name="chevron-right" size={16} />
               </button>
               {#if $canWrite && !alarm.acknowledged_at}
@@ -328,15 +448,15 @@
                 on:click={() => navigate(`/device/${alarm.device_id || alarm.mqtt_device_id}`)}
                 aria-label="View device {alarm.device_id || alarm.mqtt_device_id} — {alarmLabel(alarm.alarm_code)}"
               >
-                <span class="td font-mono">{alarm.device_id || alarm.mqtt_device_id}</span>
+                <span class="td" title={mqttId(alarm)}>{deviceTitle(alarm)}</span>
                 <span class="td">{alarmLabel(alarm.alarm_code)}</span>
                 <span class="td">
                   <Badge variant={severityVariant(alarm.severity)} small>
-                    {alarm.severity || 'warning'}
+                    {severityLabel(alarm)}
                   </Badge>
                 </span>
-                <span class="td text-muted">{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
-                <span class="td text-muted">{alarm.cleared_at ? timeAgo(alarm.cleared_at) : '—'}</span>
+                <span class="td text-muted" title={formatDate(alarm.triggered_at || alarm.created_at)}>{timeAgo(alarm.triggered_at || alarm.created_at)}</span>
+                <span class="td text-muted" title={alarm.cleared_at ? formatDate(alarm.cleared_at) : ''}>{alarm.cleared_at ? `${timeAgo(alarm.cleared_at)} · ${lasted(alarm)}` : '—'}</span>
               </button>
               {#if alarm.work_order_id}
                 <button class="ack-btn wo-link" on:click={() => navigate(`/work-orders?id=${alarm.work_order_id}`)} title={$t('wo.status_' + alarm.work_order_status)}>
@@ -458,6 +578,69 @@
   .severity-pills .pill-info.active {
     background: var(--accent-blue, #3b82f6);
     border-color: var(--accent-blue, #3b82f6);
+  }
+
+  /* Site and device scope */
+  .scope-row {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .scope-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 180px;
+  }
+
+  .scope-field select,
+  .scope-field input {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: var(--text-xs);
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .scope-field select:focus,
+  .scope-field input:focus {
+    border-color: var(--accent-blue);
+  }
+
+  .scope-field input:disabled {
+    opacity: 0.5;
+  }
+
+  .chips {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex-wrap: wrap;
+    padding-bottom: 2px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0.3rem 0.6rem;
+    border: 1px solid rgba(74, 158, 255, 0.4);
+    border-radius: var(--radius-full);
+    background: rgba(74, 158, 255, 0.12);
+    color: var(--accent-blue);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .chip:hover {
+    border-color: var(--accent-blue);
   }
 
   /* Date range row */
@@ -667,6 +850,16 @@
     font-size: var(--text-base);
   }
 
+  .alarm-where {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: baseline;
+    min-width: 0;
+  }
+
   .alarm-device {
     font-size: var(--text-xs);
     color: var(--text-muted);
@@ -676,6 +869,15 @@
     font-size: var(--text-sm);
     color: var(--text-muted);
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .alarm-lasted {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
   }
 
   /* History table */
@@ -774,6 +976,10 @@
     }
     .date-field input {
       width: 100%;
+    }
+    .scope-field {
+      flex: 1;
+      min-width: 0;
     }
   }
 </style>

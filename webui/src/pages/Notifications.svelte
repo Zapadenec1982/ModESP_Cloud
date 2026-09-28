@@ -213,19 +213,11 @@
               </p>
             {/if}
           </div>
-          <div class="form-field">
-            <label class="field-label" for="pref-qf">{$t('notifications.quiet_from')}</label>
-            <input id="pref-qf" type="time" class="input" bind:value={prefs.quiet_from} />
-          </div>
-          <div class="form-field">
-            <label class="field-label" for="pref-qt">{$t('notifications.quiet_to')}</label>
-            <input id="pref-qt" type="time" class="input" bind:value={prefs.quiet_to} />
-          </div>
-          <div class="form-field">
-            <label class="field-label" for="pref-tz">{$t('notifications.quiet_tz')}</label>
-            <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz}
-                   placeholder={$t('notifications.quiet_tz_profile')} />
-          </div>
+          <!-- One time zone: the profile's. Two fields called «time zone» sat
+               one under the other, and the profile-wide one was labelled
+               «of notifications»; migration 051 made the quiet-hours zone
+               follow the profile, so it is shown after the quiet hours as
+               the override it is. -->
           {#if profile}
             <div class="form-field">
               <label class="field-label" for="pref-locale">{$t('notifications.pref_locale')}</label>
@@ -239,6 +231,19 @@
               <input id="pref-user-tz" type="text" class="input" bind:value={profile.timezone} placeholder={$t('notifications.pref_locale_org')} />
             </div>
           {/if}
+          <div class="form-field">
+            <label class="field-label" for="pref-qf">{$t('notifications.quiet_from')}</label>
+            <input id="pref-qf" type="time" class="input" bind:value={prefs.quiet_from} />
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="pref-qt">{$t('notifications.quiet_to')}</label>
+            <input id="pref-qt" type="time" class="input" bind:value={prefs.quiet_to} />
+          </div>
+          <div class="form-field">
+            <label class="field-label" for="pref-tz">{$t('notifications.quiet_tz')}</label>
+            <input id="pref-tz" type="text" class="input" bind:value={prefs.quiet_tz}
+                   placeholder={$t('notifications.quiet_tz_profile')} />
+          </div>
         </div>
         <p class="field-hint">{$t('notifications.quiet_hint')} {$t('notifications.pref_timezone_hint')}</p>
         <div class="prefs-actions">

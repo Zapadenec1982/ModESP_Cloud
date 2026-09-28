@@ -8,6 +8,12 @@
    * readout, and — the part that matters most — the public status link of
    * Part 2 §7.7 can never be minted, which leaves PublicSite.svelte unreachable.
    *
+   * The table is a directory: name, address, counters. Everything about one
+   * site — its equipment, open alarms and orders, contacts — lives on the site
+   * page (`#/sites/:id`), which the name links to; the counters link to the
+   * dashboard and the alarms page narrowed to the site. Coordinates and their
+   * provenance moved from the table into the editor.
+   *
    * Read is open to every authenticated role: `GET /api/sites` narrows by RBAC
    * (a technician sees only sites where they can see a device, or hold a
    * user_sites grant) rather than by role. Every mutation below is admin-only
@@ -17,22 +23,22 @@
    * editor modal, so opening the list costs nothing.
    */
   import { onMount } from 'svelte'
+  import { querystring } from 'svelte-spa-router'
   import {
     getSites, createSite, updateSite, deleteSite, geocodeSite,
     getGeocodeStatus, geocodePendingSites,
-    getSitePublicLinks, createSitePublicLink, revokeSitePublicLink,
-    exportSitePdf,
-    exportSiteServicePdf,
   } from '../lib/api.js'
   import { isAdmin, canWrite } from '../lib/stores.js'
-  import { t, locale } from '../lib/i18n.js'
+  import { t } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
-  import { emptyAddress, formatCoords, precisionKey } from '../lib/geo.js'
+  import { emptyAddress, formatCoords, precisionKey, geoSourceKey } from '../lib/geo.js'
   import PageHeader from '../components/layout/PageHeader.svelte'
   import SearchInput from '../components/ui/SearchInput.svelte'
   import Icon from '../components/ui/Icon.svelte'
   import Skeleton from '../components/ui/Skeleton.svelte'
   import EmptyState from '../components/ui/EmptyState.svelte'
+  import SiteReportModal from '../components/SiteReportModal.svelte'
+  import SitePublicLinks from '../components/SitePublicLinks.svelte'
 
   const SEARCH_DEBOUNCE_MS = 300
 
@@ -45,11 +51,12 @@
   let geoStatus = null      // { pending, geocoded, failed }
   let geoMeta = {}          // { geocoder_enabled, bulk_enabled, sweep_in_progress }
   let sweeping = false
+  let geoExpanded = false   // the compact line grows into the actions on demand
 
   // Editor modal
   let showEditor = false
   let editing = null        // the site row being edited, or null for "create"
-  let form = { name: '', notes: '', haccp_excursion_min: '' }
+  let form = blankForm()
   let address = emptyAddress()
   let saving = false
 
@@ -57,14 +64,13 @@
   let deleting = null
   let deleteBusy = false
 
-  // Public links panel
+  // Report dialog and public links panel (both shared with the site page)
+  let reportSite = null
   let linksSite = null
-  let links = []
-  let linksLoading = false
-  let linkLabel = ''
-  let linkDays = 90
-  let linkBusy = false
-  let mintedToken = null    // shown exactly once, never recoverable afterwards
+
+  function blankForm() {
+    return { name: '', notes: '', haccp_excursion_min: '', contact_name: '', contact_phone: '', contact_email: '' }
+  }
 
   // ── Loading ────────────────────────────────────────────
 
@@ -106,14 +112,21 @@
 
   function openCreate() {
     editing = null
-    form = { name: '', notes: '', haccp_excursion_min: '' }
+    form = blankForm()
     address = emptyAddress()
     showEditor = true
   }
 
   function openEdit(site) {
     editing = site
-    form = { name: site.name || '', notes: site.notes || '', haccp_excursion_min: site.haccp_excursion_min ?? '' }
+    form = {
+      name: site.name || '',
+      notes: site.notes || '',
+      haccp_excursion_min: site.haccp_excursion_min ?? '',
+      contact_name: site.contact_name || '',
+      contact_phone: site.contact_phone || '',
+      contact_email: site.contact_email || '',
+    }
     address = {
       country_code: site.country_code || '',
       country:      site.country || '',
@@ -179,6 +192,9 @@
       longitude:    lon,
       notes:        orNull(form.notes, 4000),
       haccp_excursion_min: form.haccp_excursion_min === '' || form.haccp_excursion_min === null ? null : Number(form.haccp_excursion_min),
+      contact_name:  orNull(form.contact_name, 120),
+      contact_phone: orNull(form.contact_phone, 40),
+      contact_email: orNull(form.contact_email, 160),
     }
 
     saving = true
@@ -255,127 +271,6 @@
     }
   }
 
-  // ── HACCP report (one PDF for every device of the site) ──
-
-  let reportSite = null
-  let reportFrom = ''
-  let reportTo = ''
-  let reportBusy = false
-  let reportType = 'haccp'   // haccp | service
-
-  function isoDay(d) { return d.toISOString().slice(0, 10) }
-
-  function openReport(site) {
-    reportSite = site
-    reportTo = isoDay(new Date())
-    reportFrom = isoDay(new Date(Date.now() - 30 * 86400 * 1000))
-  }
-
-  async function runReport() {
-    if (!reportSite || !reportFrom || !reportTo) return
-    reportBusy = true
-    try {
-      const from = new Date(reportFrom + 'T00:00:00').toISOString()
-      const to = new Date(reportTo + 'T23:59:59').toISOString()
-      const meta = reportType === 'service'
-        ? await exportSiteServicePdf(reportSite.id, from, to, '1h', $locale)
-        : await exportSitePdf(reportSite.id, from, to, '1h', $locale)
-      if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000)
-      else toast.success($t('export.export_success'))
-      if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000)
-      reportSite = null
-    } catch (e) {
-      if (e.status === 404) toast.warning($t('export.no_data'))
-      else if (e.status !== 402) toast.error(e.message || $t('export.export_error'))
-    } finally {
-      reportBusy = false
-    }
-  }
-
-  // ── Public links ───────────────────────────────────────
-
-  async function openLinks(site) {
-    linksSite = site
-    mintedToken = null
-    linkLabel = ''
-    linkDays = 90
-    linksLoading = true
-    try {
-      links = await getSitePublicLinks(site.id)
-    } catch (e) {
-      toast.error(e.message)
-      links = []
-    } finally {
-      linksLoading = false
-    }
-  }
-
-  function closeLinks() {
-    linksSite = null
-    links = []
-    mintedToken = null
-  }
-
-  function onLinksKey(e) {
-    if (e.key === 'Escape') closeLinks()
-  }
-
-  function onLinksBackdrop(e) {
-    if (e.target === e.currentTarget) closeLinks()
-  }
-
-  /**
-   * The shareable address. The token lives in the HASH FRAGMENT, which browsers
-   * never send to a server — so it appears in no access log and in no Referer.
-   * App.svelte reads it from there and passes it in the X-Site-Token header.
-   */
-  function publicUrl(token) {
-    const { origin, pathname } = window.location
-    return `${origin}${pathname}#/public/site/${encodeURIComponent(token)}`
-  }
-
-  async function mintLink() {
-    if (!linksSite) return
-    linkBusy = true
-    try {
-      const created = await createSitePublicLink(linksSite.id, {
-        label: linkLabel.trim() || undefined,
-        expires_in_days: Number(linkDays) || undefined,
-      })
-      // The raw token is in this response and nowhere else, ever again.
-      mintedToken = created.token || null
-      links = [created, ...links]
-      linkLabel = ''
-      toast.success($t('site.public_link_created'))
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      linkBusy = false
-    }
-  }
-
-  async function revokeLink(link) {
-    if (!linksSite) return
-    if (!window.confirm($t('site.public_link_revoke_confirm'))) return
-    try {
-      await revokeSitePublicLink(linksSite.id, link.id)
-      toast.success($t('site.public_link_revoked'))
-      links = links.map(l => (l.id === link.id ? { ...l, active: false, revoked_at: new Date().toISOString() } : l))
-    } catch (e) {
-      toast.error(e.message)
-    }
-  }
-
-  async function copyUrl(token) {
-    try {
-      await navigator.clipboard.writeText(publicUrl(token))
-      toast.success($t('site.public_link_copied'))
-    } catch {
-      // Clipboard access can be denied outright; the value is on screen anyway.
-      toast.warning($t('site.public_link_token_once'))
-    }
-  }
-
   // ── Rendering helpers ──────────────────────────────────
 
   function addressLine(site) {
@@ -384,15 +279,21 @@
       .join(', ')
   }
 
-  function formatDate(value) {
-    if (!value) return '—'
-    const d = new Date(value)
-    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
+  /** The one-line hint behind the small flag next to an address. */
+  function geoFlagTitle(site) {
+    if (site.geo_source === 'failed') return $t('site.geo_error_hint', site.geo_error || $t('site.geocode_failed'))
+    if (site.geo_source === 'manual') return $t('site.geo_source_manual')
+    return ''
   }
 
-  onMount(() => {
-    load()
-    loadGeoStatus()
+  onMount(async () => {
+    await Promise.all([load(), loadGeoStatus()])
+    // `#/sites?edit=<id>` — the site page's "edit" link lands straight in the editor.
+    const wanted = new URLSearchParams($querystring || '').get('edit')
+    if (wanted && $isAdmin) {
+      const site = sites.find(s => s.id === wanted)
+      if (site) openEdit(site)
+    }
   })
 </script>
 
@@ -415,30 +316,33 @@
   </div>
 
   {#if $isAdmin && geoStatus}
-    <div class="geo-panel">
-      <div class="geo-title">
+    <!-- One line by default; the sweep controls unfold on demand. -->
+    <div class="geo-line" class:expanded={geoExpanded}>
+      <div class="geo-summary">
         <Icon name="globe" size={14} />
-        <span>{$t('site.geocode_status')}</span>
+        <span>{$t('site.geocode_summary', geoStatus.pending, geoStatus.geocoded, geoStatus.failed)}</span>
+        {#if geoStatus.failed > 0}<span class="geo-dot bad" title={$t('site.geocode_failed_count')}></span>{/if}
+        <button class="geo-toggle" on:click={() => (geoExpanded = !geoExpanded)} aria-expanded={geoExpanded}>
+          {geoExpanded ? $t('site.geocode_collapse') : $t('site.geocode_expand')}
+          <Icon name={geoExpanded ? 'chevron-down' : 'chevron-right'} size={12} />
+        </button>
       </div>
-      <div class="geo-counters font-mono">
-        <span>{$t('site.geocode_pending')}: {geoStatus.pending}</span>
-        <span class="ok">{$t('site.geocode_done')}: {geoStatus.geocoded}</span>
-        <span class="bad">{$t('site.geocode_failed_count')}: {geoStatus.failed}</span>
-      </div>
-      <div class="geo-actions">
-        {#if geoMeta.sweep_in_progress}
-          <span class="geo-note">{$t('site.geocode_sweep_running')}</span>
-        {:else if !geoMeta.bulk_enabled}
-          <span class="geo-note">{$t('site.geocode_bulk_disabled')}</span>
-        {:else}
-          <button class="tbl-btn" on:click={() => runSweep(false)} disabled={sweeping || geoStatus.pending === 0}>
-            {$t('site.geocode_run')}
-          </button>
-          <button class="tbl-btn" on:click={() => runSweep(true)} disabled={sweeping || geoStatus.failed === 0}>
-            {$t('site.geocode_retry_failed')}
-          </button>
-        {/if}
-      </div>
+      {#if geoExpanded}
+        <div class="geo-actions">
+          {#if geoMeta.sweep_in_progress}
+            <span class="geo-note">{$t('site.geocode_sweep_running')}</span>
+          {:else if !geoMeta.bulk_enabled}
+            <span class="geo-note">{$t('site.geocode_bulk_disabled')}</span>
+          {:else}
+            <button class="tbl-btn" on:click={() => runSweep(false)} disabled={sweeping || geoStatus.pending === 0}>
+              {$t('site.geocode_run')}
+            </button>
+            <button class="tbl-btn" on:click={() => runSweep(true)} disabled={sweeping || geoStatus.failed === 0}>
+              {$t('site.geocode_retry_failed')}
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -460,36 +364,53 @@
             <th class="num">{$t('site.device_count')}</th>
             <th class="num">{$t('site.online_count')}</th>
             <th class="num">{$t('site.alarm_count')}</th>
-            <th>{$t('site.geo_source')}</th>
             {#if $canWrite}<th class="actions-col"></th>{/if}
           </tr>
         </thead>
         <tbody>
           {#each sites as site (site.id)}
             <tr>
-              <td class="name-cell">{site.name}</td>
-              <td class="addr-cell">
-                {#if addressLine(site)}
-                  <span>{addressLine(site)}</span>
-                {:else}
-                  <span class="muted">{$t('site.no_address')}</span>
-                {/if}
-                {#if site.latitude !== null && site.longitude !== null}
-                  <span class="coords font-mono">{formatCoords(site.latitude, site.longitude)}</span>
+              <td class="name-cell">
+                <a class="name-link" href="#/sites/{site.id}" title={$t('site.open_site')}>{site.name}</a>
+                {#if site.contact_name}
+                  <span class="contact-line truncate" title={[site.contact_name, site.contact_phone].filter(Boolean).join(' · ')}>
+                    <Icon name="user" size={11} /> {site.contact_name}
+                  </span>
                 {/if}
               </td>
-              <td class="num font-mono">{site.device_count}</td>
+              <td class="addr-cell">
+                <span class="addr-text">
+                  {#if addressLine(site)}
+                    {addressLine(site)}
+                  {:else}
+                    <span class="muted">{$t('site.no_address')}</span>
+                  {/if}
+                  {#if site.geo_source === 'failed' || site.geo_source === 'manual'}
+                    <!-- Coordinates left the table; only what needs attention keeps a flag. -->
+                    <span class="geo-flag" class:bad={site.geo_source === 'failed'} title={geoFlagTitle(site)}>
+                      <Icon name={site.geo_source === 'failed' ? 'alert-triangle' : 'map-pin'} size={12} />
+                    </span>
+                  {/if}
+                </span>
+              </td>
+              <td class="num font-mono">
+                {#if site.device_count > 0}
+                  <a class="count-link" href="#/?site={site.id}" title={$t('site.show_on_dashboard')}>{site.device_count}</a>
+                {:else}
+                  <span class="muted">0</span>
+                {/if}
+              </td>
               <td class="num font-mono ok">{site.online_count}</td>
-              <td class="num font-mono" class:bad={site.alarm_count > 0}>{site.alarm_count}</td>
-              <td>
-                <span class="geo-badge geo-{site.geo_source}">{$t(`site.geo_source_${site.geo_source}`)}</span>
-                {#if site.geo_precision}
-                  <span class="muted">{$t(precisionKey(site.geo_precision))}</span>
+              <td class="num font-mono">
+                {#if site.alarm_count > 0}
+                  <a class="count-link bad" href="#/alarms?site={site.id}" title={$t('site.show_alarms')}>{site.alarm_count}</a>
+                {:else}
+                  <span class="muted">0</span>
                 {/if}
               </td>
               {#if $canWrite}
                 <td class="actions-col">
-                  <button class="tbl-btn" on:click={() => openReport(site)} title={$t('export.haccp_report')}
+                  <button class="tbl-btn" on:click={() => (reportSite = site)} title={$t('export.haccp_report')}
                     aria-label="{$t('export.haccp_report')} {site.name}" disabled={site.device_count === 0}>
                     <Icon name="download" size={14} />
                   </button>
@@ -502,7 +423,7 @@
                     aria-label="{$t('site.geocode')} {site.name}" disabled={!geoMeta.geocoder_enabled}>
                     <Icon name="globe" size={14} />
                   </button>
-                  <button class="tbl-btn" on:click={() => openLinks(site)} title={$t('site.public_links')}
+                  <button class="tbl-btn" on:click={() => (linksSite = site)} title={$t('site.public_links')}
                     aria-label="{$t('site.public_links')} {site.name}">
                     <Icon name="link" size={14} />
                   </button>
@@ -549,6 +470,45 @@
         {:catch}
           <p class="hint">{$t('map.load_failed')}</p>
         {/await}
+
+        {#if editing}
+          <!-- Where the stored position came from — what the table used to show. -->
+          <div class="geo-details">
+            <span class="geo-details-title">{$t('site.geo_details')}</span>
+            <span class="geo-badge geo-{editing.geo_source}">{$t(geoSourceKey(editing.geo_source))}</span>
+            {#if editing.geo_precision}
+              <span class="muted">{$t('site.precision')}: {$t(precisionKey(editing.geo_precision))}</span>
+            {/if}
+            {#if editing.latitude !== null && editing.longitude !== null}
+              <span class="muted font-mono">{formatCoords(editing.latitude, editing.longitude)}</span>
+            {:else}
+              <span class="muted">{$t('site.coords_none')}</span>
+            {/if}
+            {#if editing.geo_source === 'failed' && editing.geo_error}
+              <span class="bad">{$t('site.geo_error_hint', editing.geo_error)}</span>
+            {/if}
+          </div>
+        {/if}
+
+        <fieldset class="contacts">
+          <legend>{$t('site.contacts')}</legend>
+          <div class="form-row">
+            <div class="form-group grow">
+              <label for="site-contact-name">{$t('site.contact_name')}</label>
+              <input id="site-contact-name" type="text" maxlength="120" bind:value={form.contact_name}
+                placeholder={$t('site.contact_name_placeholder')} />
+            </div>
+            <div class="form-group grow">
+              <label for="site-contact-phone">{$t('site.contact_phone')}</label>
+              <input id="site-contact-phone" type="tel" maxlength="40" bind:value={form.contact_phone} />
+            </div>
+            <div class="form-group grow">
+              <label for="site-contact-email">{$t('site.contact_email')}</label>
+              <input id="site-contact-email" type="email" maxlength="160" bind:value={form.contact_email} />
+            </div>
+          </div>
+          <p class="hint">{$t('site.contact_hint')}</p>
+        </fieldset>
 
         <div class="form-group">
           <label for="site-notes">{$t('site.notes')}</label>
@@ -607,143 +567,33 @@
   </div>
 {/if}
 
-<!-- ── HACCP site report ─────────────────────────────────── -->
+<!-- ── HACCP / service report for the whole site ─────────── -->
 {#if reportSite}
-  <div class="modal-backdrop" role="presentation"
-    on:click={(e) => { if (e.target === e.currentTarget && !reportBusy) reportSite = null }}
-    on:keydown={(e) => { if (e.key === 'Escape' && !reportBusy) reportSite = null }}>
-    <div class="modal" role="dialog" aria-modal="true" aria-label={$t('export.haccp_report')}>
-      <div class="modal-header">
-        <h2>{$t('export.haccp_report')} — {reportSite.name}</h2>
-        <button class="modal-close" on:click={() => (reportSite = null)} aria-label={$t('common.close')} disabled={reportBusy}>
-          <Icon name="x" size={18} />
-        </button>
-      </div>
-      <div class="modal-body">
-        <p class="hint">{$t('export.site_report_hint', reportSite.device_count)}</p>
-        <div class="form-group">
-          <label for="report-type">{$t('export.report_type')}</label>
-          <select id="report-type" bind:value={reportType} disabled={reportBusy}>
-            <option value="haccp">{$t('export.type_haccp')}</option>
-            <option value="service">{$t('export.type_service')}</option>
-          </select>
-          <p class="hint">{reportType === 'service' ? $t('export.service_hint') : $t('export.verify_hint')}</p>
-        </div>
-        <div class="form-row">
-          <div class="form-group grow">
-            <label for="report-from">{$t('export.period_from')}</label>
-            <input id="report-from" type="date" bind:value={reportFrom} max={reportTo} disabled={reportBusy} />
-          </div>
-          <div class="form-group grow">
-            <label for="report-to">{$t('export.period_to')}</label>
-            <input id="report-to" type="date" bind:value={reportTo} min={reportFrom} disabled={reportBusy} />
-          </div>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" on:click={() => (reportSite = null)} disabled={reportBusy}>
-          {$t('common.cancel')}
-        </button>
-        <button class="btn btn-primary" on:click={runReport} disabled={reportBusy || !reportFrom || !reportTo}>
-          {reportBusy ? $t('export.exporting') : (reportType === 'service' ? $t('export.service_pdf') : $t('export.export_pdf'))}
-        </button>
-      </div>
-    </div>
-  </div>
+  <SiteReportModal site={reportSite} on:close={() => (reportSite = null)} />
 {/if}
 
 <!-- ── Public links panel ────────────────────────────────── -->
 {#if linksSite}
-  <div class="modal-backdrop" role="presentation" on:click={onLinksBackdrop} on:keydown={onLinksKey}>
+  <div class="modal-backdrop" role="presentation"
+    on:click={(e) => { if (e.target === e.currentTarget) linksSite = null }}
+    on:keydown={(e) => { if (e.key === 'Escape') linksSite = null }}>
     <div class="modal modal-wide" role="dialog" aria-modal="true" aria-label={$t('site.public_links')}>
       <div class="modal-header">
         <div>
           <h2>{$t('site.public_links')}</h2>
           <span class="modal-subtitle">{linksSite.name}</span>
         </div>
-        <button class="modal-close" on:click={closeLinks} aria-label={$t('common.close')}>
+        <button class="modal-close" on:click={() => (linksSite = null)} aria-label={$t('common.close')}>
           <Icon name="x" size={18} />
         </button>
       </div>
 
       <div class="modal-body">
-        {#if mintedToken}
-          <!-- The ONLY moment this value exists outside the browser's memory:
-               the server stores sha256(token) and nothing else. -->
-          <div class="token-box">
-            <p class="token-warn">
-              <Icon name="alert-triangle" size={14} />
-              {$t('site.public_link_token_once')}
-            </p>
-            <div class="token-row">
-              <input class="token-input font-mono" type="text" readonly value={publicUrl(mintedToken)} />
-              <button class="tbl-btn" on:click={() => copyUrl(mintedToken)}>
-                {$t('site.public_link_copy')}
-              </button>
-            </div>
-          </div>
-        {/if}
-
-        <div class="mint-row">
-          <div class="form-group grow">
-            <label for="link-label">{$t('site.public_link_label')}</label>
-            <input id="link-label" type="text" maxlength="128" bind:value={linkLabel}
-              placeholder={$t('site.public_link_label_placeholder')} />
-          </div>
-          <div class="form-group">
-            <label for="link-days">{$t('site.public_link_expires_in')}</label>
-            <!-- 1..365: the same bound createLinkSchema enforces server-side, so
-                 the form cannot produce a 400 the user has no way to read. -->
-            <input id="link-days" type="number" min="1" max="365" bind:value={linkDays} />
-          </div>
-          <button class="btn btn-primary" on:click={mintLink} disabled={linkBusy}>
-            {$t('site.public_link_new')}
-          </button>
-        </div>
-
-        {#if linksLoading}
-          <Skeleton height="120px" />
-        {:else if links.length === 0}
-          <p class="hint">{$t('site.public_link_none')}</p>
-        {:else}
-          <table class="links-table">
-            <thead>
-              <tr>
-                <th>{$t('site.public_link_label')}</th>
-                <th>{$t('site.public_link_expires')}</th>
-                <th class="num">{$t('site.public_link_views')}</th>
-                <th>{$t('site.public_link_last_viewed')}</th>
-                <th class="actions-col"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each links as link (link.id)}
-                <tr>
-                  <td>{link.label || '—'}</td>
-                  <td>
-                    {formatDate(link.expires_at)}
-                    <span class="link-state" class:active={link.active}>
-                      {link.active ? $t('site.public_link_active') : $t('site.public_link_expired')}
-                    </span>
-                  </td>
-                  <td class="num font-mono">{link.view_count ?? 0}</td>
-                  <td>{formatDate(link.last_viewed)}</td>
-                  <td class="actions-col">
-                    {#if link.active}
-                      <button class="tbl-btn danger" on:click={() => revokeLink(link)}>
-                        {$t('site.public_link_revoke')}
-                      </button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
+        <SitePublicLinks site={linksSite} />
       </div>
 
       <div class="modal-actions">
-        <button class="btn btn-ghost" on:click={closeLinks}>{$t('common.close')}</button>
+        <button class="btn btn-ghost" on:click={() => (linksSite = null)}>{$t('common.close')}</button>
       </div>
     </div>
   </div>
@@ -782,39 +632,54 @@
 
   /* ── Geocode progress ──────────────────────────────── */
 
-  .geo-panel {
+  .geo-line {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-4);
-    padding: var(--space-3) var(--space-4);
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     margin-bottom: var(--space-4);
     background: var(--bg-secondary);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
   }
 
-  .geo-title {
+  .geo-summary {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: var(--space-2);
-    color: var(--text-secondary);
-    font-size: var(--text-sm);
-    font-weight: 500;
   }
 
-  .geo-counters {
-    display: flex;
-    gap: var(--space-4);
-    font-size: var(--text-sm);
-    color: var(--text-secondary);
+  .geo-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-red);
+  }
+
+  .geo-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    padding: 2px var(--space-2);
+    background: transparent;
+    border: none;
+    color: var(--accent-blue);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+    cursor: pointer;
   }
 
   .geo-actions {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: var(--space-2);
-    margin-left: auto;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-muted);
   }
 
   .geo-note {
@@ -830,15 +695,13 @@
     border-radius: var(--radius-md);
   }
 
-  .sites-table,
-  .links-table {
+  .sites-table {
     width: 100%;
     border-collapse: collapse;
     font-size: var(--text-sm);
   }
 
-  .sites-table th,
-  .links-table th {
+  .sites-table th {
     padding: var(--space-2) var(--space-3);
     text-align: left;
     color: var(--text-secondary);
@@ -850,8 +713,7 @@
     white-space: nowrap;
   }
 
-  .sites-table td,
-  .links-table td {
+  .sites-table td {
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-primary);
@@ -883,16 +745,62 @@
     white-space: nowrap;
   }
 
-  .addr-cell {
+  .name-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--border-default);
+  }
+
+  .name-link:hover {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+  }
+
+  .contact-line {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    align-items: center;
+    gap: 4px;
+    max-width: 240px;
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-weight: 400;
+  }
+
+  .addr-cell {
     min-width: 220px;
   }
 
-  .coords {
+  .addr-text {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .geo-flag {
+    display: inline-flex;
+    align-items: center;
     color: var(--text-muted);
-    font-size: var(--text-xs);
+    cursor: help;
+  }
+
+  .geo-flag.bad {
+    color: var(--accent-red);
+  }
+
+  .count-link {
+    color: var(--accent-blue);
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+  }
+
+  .count-link:hover {
+    border-bottom-color: currentColor;
+  }
+
+  .count-link.bad {
+    color: var(--accent-red);
+    font-weight: 600;
   }
 
   .geo-badge {
@@ -914,6 +822,23 @@
   .geo-badge.geo-failed {
     border-color: var(--accent-red);
     color: var(--accent-red);
+  }
+
+  .geo-details {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+  }
+
+  .geo-details-title {
+    color: var(--text-secondary);
+    font-weight: 500;
   }
 
   .actions-col {
@@ -1041,10 +966,12 @@
   .form-row {
     display: flex;
     gap: var(--space-3);
+    flex-wrap: wrap;
   }
 
   .form-group.grow {
     flex: 1;
+    min-width: 160px;
   }
 
   .form-group label {
@@ -1072,6 +999,24 @@
     border-color: var(--accent-blue);
   }
 
+  .contacts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+  }
+
+  .contacts legend {
+    padding: 0 var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+
   .hint {
     font-size: var(--text-xs);
     color: var(--text-muted);
@@ -1079,60 +1024,6 @@
 
   .hint-warn {
     color: var(--accent-yellow);
-  }
-
-  /* ── Public links ──────────────────────────────────── */
-
-  .mint-row {
-    display: flex;
-    align-items: flex-end;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-  }
-
-  .token-box {
-    padding: var(--space-3);
-    background: rgba(251, 191, 36, 0.1);
-    border: 1px solid rgba(251, 191, 36, 0.3);
-    border-radius: var(--radius-md);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .token-warn {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--accent-yellow);
-    font-size: var(--text-xs);
-  }
-
-  .token-row {
-    display: flex;
-    gap: var(--space-2);
-  }
-
-  .token-input {
-    flex: 1;
-    min-width: 0;
-    padding: var(--space-2);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-size: var(--text-xs);
-  }
-
-  .link-state {
-    display: inline-block;
-    margin-left: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-  }
-
-  .link-state.active {
-    color: var(--accent-green);
   }
 
   .btn {
@@ -1186,7 +1077,7 @@
       padding: var(--space-3);
     }
 
-    .geo-actions {
+    .geo-toggle {
       margin-left: 0;
     }
   }

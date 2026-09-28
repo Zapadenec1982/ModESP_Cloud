@@ -10,7 +10,9 @@ ARCHITECTURE_INTERNAL.md
 AGENTS.md
 
 # Dependencies
+# both forms: a symlinked node_modules in a git worktree is not a directory to git
 node_modules/
+node_modules
 
 # Environment
 .env

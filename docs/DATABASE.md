@@ -284,6 +284,10 @@ CREATE TABLE sites (
   osm_id        BIGINT,
   timezone      VARCHAR(64),                -- IANA, напр. 'Europe/Kyiv'
   notes         TEXT,
+  haccp_excursion_min INT,                  -- поріг витримки відхилення HACCP, CHECK 1..1440 (міграція 047)
+  contact_name  VARCHAR(120),               -- контактна особа точки (міграція 054)
+  contact_phone VARCHAR(40),
+  contact_email VARCHAR(160),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (tenant_id, id)   -- ціль композитного FK для дочірніх таблиць
@@ -323,6 +327,11 @@ CREATE INDEX idx_sites_geocode_pending ON sites (tenant_id) WHERE geo_source = '
 пише `geo_last_attempt_at` і `geo_error` — а `latitude`, `longitude`, `geo_source`, `geo_precision`,
 `geocoded_at` лишаються як були. Виправлення друкарської помилки в адресі під час недоступності
 Nominatim не має стирати точку з карти.
+
+**Контактна особа (`contact_*`, міграція 054).** Кого кликати перед виїздом і кого називає звіт. Три
+`NULL`-able колонки без індексів — читаються разом із рядком точки, ніколи не шукаються. Пише їх адміністратор
+через `POST`/`PATCH /api/sites`; `GET /api/public/site` їх не вибирає — телефон керуючої не належить на екрані
+в підсобці.
 
 > **`updated_at` не має тригера.** У `backend/src/db/` немає функції `set_updated_at()`, і ця міграція
 > її не додає. Тому **кожен** `UPDATE sites ...` у коді зобов'язаний дописати `updated_at = NOW()` до
@@ -920,13 +929,15 @@ ALTER TABLE report_exports
   ADD COLUMN schedule_id UUID REFERENCES report_schedules(id) ON DELETE SET NULL,
   ADD COLUMN file_name   VARCHAR(160),
   ADD COLUMN bytes       INT,
-  ADD COLUMN pdf         BYTEA;                                     -- лише планові звіти
+  ADD COLUMN pdf         BYTEA;                                     -- планові й разові звіти
 ```
 
 > `services/report-scheduler.js` раз на годину (`REPORT_SCHEDULE_INTERVAL_MIN`) бере розклади з
 > `next_run_at <= now()` у відкритих організаціях, ріже період у часовому поясі точки (цілий минулий
 > місяць або тиждень пн–нд), формує PDF на кожну точку (`haccp-report.js`, `period-reports.js`), кладе
-> його в `report_exports.pdf` і надсилає лист. Разові експорти PDF не зберігають — лише код і хеш.
+> його в `report_exports.pdf` і надсилає лист. Разові експорти (`export.pdf` / `service.pdf` пристрою й
+> точки) від «Сформувати зараз», картки точки чи графіка пристрою кладуться в ту саму колонку одразу після
+> генерації, тож архів віддає їх повторно.
 > `REPORT_ARCHIVE_DAYS` (типово 1095) обнуляє `pdf` старих рядків; метадані лишаються, тож
 > `GET /api/public/report/:code` працює далі. `report_exports` для організації видаляється в
 > `tenant-delete.js`; `report_schedules` каскадом від `tenants`.

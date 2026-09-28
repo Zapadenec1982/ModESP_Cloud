@@ -1,6 +1,6 @@
 <script>
   import { location } from 'svelte-spa-router'
-  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen, currentTenant, availableTenants, hasMultipleTenants, isPartner } from '../../lib/stores.js'
+  import { authEnabled, authUser, sidebarCollapsed, sidebarOpen, currentTenant, availableTenants, hasMultipleTenants, isPartner, canWrite } from '../../lib/stores.js'
   import { logout, switchTenant } from '../../lib/api.js'
   import { disconnect } from '../../lib/ws.js'
   import { t } from '../../lib/i18n.js'
@@ -40,7 +40,8 @@
     // Reports (plan epic 2.7): the archive narrows by site access; the schedules inside are admin-only
     { path: '/reports',       icon: 'file-text', label: $t('nav.reports') },
     { path: '/pending',       icon: 'link',     label: $t('nav.pending'),  badge: () => pendingCount, admin: true },
-    { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware') },
+    // The route guard bounces a viewer back to the dashboard; the item is not shown to them in the first place
+    { path: '/firmware',      icon: 'upload',   label: $t('nav.firmware'), write: true },
     { section: $t('nav.sections.admin'), admin: true },
     // Partner plan (plan epic 2.5): the organisations this one runs
     ...($isPartner ? [{ path: '/partner', icon: 'layers', label: $t('nav.partner'), admin: true }] : []),
@@ -143,7 +144,7 @@
             <div class="section-divider" />
           {/if}
         {/if}
-      {:else if (!item.admin || isAdmin) && (!item.superadmin || isSuperAdmin)}
+      {:else if (!item.admin || isAdmin) && (!item.superadmin || isSuperAdmin) && (!item.write || $canWrite)}
         <button
           class="nav-item"
           class:active={isActive(item.path, $location)}

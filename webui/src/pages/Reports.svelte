@@ -3,12 +3,13 @@
   // the archive of everything generated for it. Any role reaches the page;
   // the archive narrows to the caller's sites server-side and the schedule
   // section shows for administrators only.
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import {
     getReportSchedules, createReportSchedule, updateReportSchedule, deleteReportSchedule, runReportSchedule,
-    getReports, downloadReport, getSites,
+    getReports, downloadReport, getSites, getDevices,
+    exportSitePdf, exportSiteServicePdf, exportTelemetryPdf, exportServicePdf, fetchReportPdf,
   } from '../lib/api.js'
-  import { isAdmin } from '../lib/stores.js'
+  import { isAdmin, devices as deviceStore } from '../lib/stores.js'
   import { t, locale } from '../lib/i18n.js'
   import { toast } from '../lib/toast.js'
   import { formatDate } from '../lib/format.js'
@@ -84,7 +85,134 @@
     }
   }
 
-  onMount(load)
+  onMount(() => { load(); loadDevices() })
+
+  // ── Generate now (audit item 5) ──
+  //
+  // A one-off report from the Reports page itself: the site card and the
+  // device chart had the same dialog, but the person who comes here for
+  // «the report» found only schedules and an archive. The backend keeps the
+  // PDF in the archive (export.js → archivePdf), so the row appears below.
+  const GEN_TYPES = ['haccp', 'service']
+
+  let deviceList = []
+  let gen = { target: 'site', site_id: '', device_id: '', type: 'haccp', from: '', to: '' }
+  let genBusy = null          // null | 'download' | 'open'
+  let objectUrls = []         // revoked on destroy
+
+  const pad = (n) => String(n).padStart(2, '0')
+  /** Local calendar day as YYYY-MM-DD (never toISOString — that is UTC). */
+  const localDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const daysAgo = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - n); return d }
+
+  function pickYesterday() { gen.from = localDay(daysAgo(1)); gen.to = localDay(daysAgo(1)) }
+  function pickWeek()      { gen.from = localDay(daysAgo(7)); gen.to = localDay(daysAgo(1)) }
+  function pickMonth() {
+    const first = new Date(); first.setHours(0, 0, 0, 0); first.setDate(1); first.setMonth(first.getMonth() - 1)
+    const last = new Date(first); last.setMonth(last.getMonth() + 1); last.setDate(0)
+    gen.from = localDay(first); gen.to = localDay(last)
+  }
+  pickYesterday()   // default: the last full day
+
+  /** ISO range: `from` at local midnight, `to` exclusive at the next local midnight. */
+  function genRange() {
+    const from = new Date(gen.from + 'T00:00:00')
+    const to = new Date(gen.to + 'T00:00:00'); to.setDate(to.getDate() + 1)
+    return { from: from.toISOString(), to: to.toISOString() }
+  }
+
+  $: genValid = !!gen.from && !!gen.to && gen.from <= gen.to
+    && (gen.target === 'site' ? !!gen.site_id : !!gen.device_id)
+
+  // The dashboard fills the store; a person who lands here first gets the list fetched.
+  async function loadDevices() {
+    if ($deviceStore.length) { deviceList = $deviceStore; return }
+    try {
+      const res = await getDevices()
+      const list = Array.isArray(res) ? res : (res?.data ?? [])
+      deviceList = list.filter(d => d.status !== 'pending')
+    } catch {
+      deviceList = []
+    }
+  }
+  $: if ($deviceStore.length && deviceList.length === 0) deviceList = $deviceStore
+
+  function deviceLabel(d) {
+    return `${d.name || d.mqtt_device_id}${d.site_name ? ` — ${d.site_name}` : d.location ? ` — ${d.location}` : ''}`
+  }
+
+  function afterGenerated(meta) {
+    if (meta && meta.code) toast.success($t('export.report_code', meta.code), 8000)
+    else toast.success($t('reports.generated'))
+    if (meta && meta.source === 'hourly') toast.info($t('export.hourly_source'), 8000)
+  }
+
+  function genFailed(e) {
+    if (e.status === 404) toast.warning($t('export.no_data'))
+    else if (e.status !== 402) toast.error(e.message || $t('export.export_error'))
+  }
+
+  async function generateDownload() {
+    if (!genValid) { if (gen.from > gen.to) toast.error($t('reports.period_invalid')); return }
+    genBusy = 'download'
+    try {
+      const { from, to } = genRange()
+      let meta
+      if (gen.target === 'site') {
+        meta = gen.type === 'service'
+          ? await exportSiteServicePdf(gen.site_id, from, to, '1h', $locale)
+          : await exportSitePdf(gen.site_id, from, to, '1h', $locale)
+      } else {
+        meta = gen.type === 'service'
+          ? await exportServicePdf(gen.device_id, from, to, '1h', $locale)
+          : await exportTelemetryPdf(gen.device_id, from, to, '1h', $locale)
+      }
+      afterGenerated(meta)
+      await load()
+    } catch (e) {
+      genFailed(e)
+    } finally {
+      genBusy = null
+    }
+  }
+
+  async function generateOpen() {
+    if (!genValid) { if (gen.from > gen.to) toast.error($t('reports.period_invalid')); return }
+    genBusy = 'open'
+    // Opened synchronously in the click, before the await, or the popup
+    // blocker wins; the tab is pointed at the PDF once it has arrived.
+    const tab = window.open('', '_blank')
+    try {
+      const { from, to } = genRange()
+      const res = await fetchReportPdf({
+        kind: gen.target, id: gen.target === 'site' ? gen.site_id : gen.device_id,
+        type: gen.type, from, to, bucket: '1h', lang: $locale,
+      })
+      const url = URL.createObjectURL(res.blob)
+      objectUrls.push(url)
+      if (tab && !tab.closed) {
+        tab.location.href = url
+      } else {
+        // No window to show it in — hand the file over under its server name instead.
+        const a = document.createElement('a')
+        a.href = url
+        a.download = res.fileName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        toast.info($t('reports.popup_blocked'), 6000)
+      }
+      afterGenerated(res)
+      await load()
+    } catch (e) {
+      if (tab && !tab.closed) tab.close()
+      genFailed(e)
+    } finally {
+      genBusy = null
+    }
+  }
+
+  onDestroy(() => { for (const u of objectUrls) URL.revokeObjectURL(u) })
 
   // ── Schedules ──
 
@@ -176,6 +304,70 @@
       <Button size="sm" on:click={openNew}><Icon name="plus" size={14} /> {$t('reports.new_schedule')}</Button>
     {/if}
   </PageHeader>
+
+  <section class="card">
+    <div class="card-head">
+      <h2><Icon name="file-text" size={18} /> {$t('reports.generate_title')}</h2>
+    </div>
+    <p class="muted">{$t('reports.generate_intro')}</p>
+
+    <form class="gen-form" on:submit|preventDefault={generateDownload}>
+      <label>
+        <span>{$t('reports.target')}</span>
+        <select bind:value={gen.target} disabled={!!genBusy}>
+          <option value="site">{$t('reports.target_site')}</option>
+          <option value="device">{$t('reports.target_device')}</option>
+        </select>
+      </label>
+      {#if gen.target === 'site'}
+        <label>
+          <span>{$t('reports.site')}</span>
+          <select bind:value={gen.site_id} disabled={!!genBusy}>
+            <option value="">{$t('reports.select_site')}</option>
+            {#each sites as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
+          </select>
+        </label>
+      {:else}
+        <label>
+          <span>{$t('reports.target_device')}</span>
+          <select bind:value={gen.device_id} disabled={!!genBusy}>
+            <option value="">{deviceList.length ? $t('reports.select_device') : $t('reports.no_devices')}</option>
+            {#each deviceList as d (d.id)}<option value={d.id}>{deviceLabel(d)}</option>{/each}
+          </select>
+        </label>
+      {/if}
+      <label>
+        <span>{$t('reports.type')}</span>
+        <select bind:value={gen.type} disabled={!!genBusy}>
+          {#each GEN_TYPES as ty}<option value={ty}>{$t('export.type_' + ty)}</option>{/each}
+        </select>
+      </label>
+      <label>
+        <span>{$t('export.period_from')}</span>
+        <input type="date" bind:value={gen.from} max={gen.to} disabled={!!genBusy} />
+      </label>
+      <label>
+        <span>{$t('export.period_to')}</span>
+        <input type="date" bind:value={gen.to} min={gen.from} disabled={!!genBusy} />
+      </label>
+      <div class="quick">
+        <span class="muted-inline">{$t('reports.period')}:</span>
+        <button type="button" class="quick-btn" on:click={pickYesterday} disabled={!!genBusy}>{$t('reports.quick_yesterday')}</button>
+        <button type="button" class="quick-btn" on:click={pickWeek} disabled={!!genBusy}>{$t('reports.quick_week')}</button>
+        <button type="button" class="quick-btn" on:click={pickMonth} disabled={!!genBusy}>{$t('reports.quick_month')}</button>
+        <span class="muted-inline">{$t('reports.period_hint')} {$t('reports.lang_note', ($locale || 'uk').toUpperCase())}</span>
+      </div>
+      <div class="row gen-actions">
+        <Button size="sm" type="submit" disabled={!genValid || !!genBusy} loading={genBusy === 'download'}>
+          <Icon name="download" size={14} /> {$t('reports.download_now')}
+        </Button>
+        <Button size="sm" variant="secondary" type="button" on:click={generateOpen} disabled={!genValid || !!genBusy} loading={genBusy === 'open'}>
+          <Icon name="file-text" size={14} /> {$t('reports.open_now')}
+        </Button>
+        <span class="muted-inline">{gen.type === 'service' ? $t('export.service_hint') : $t('export.verify_hint')}</span>
+      </div>
+    </form>
+  </section>
 
   {#if $isAdmin}
     <section class="card">
@@ -358,6 +550,27 @@
   .sched-form label.check { flex-direction: row; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--text-secondary); grid-column: 1 / -1; }
   .sched-form .row { grid-column: 1 / -1; margin-top: 0; }
   .sched-form .muted { grid-column: 1 / -1; }
+  .gen-form {
+    display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  }
+  .gen-form label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--text-muted); min-width: 0; }
+  .gen-form select, .gen-form input {
+    padding: var(--space-2) var(--space-3); min-width: 0;
+    background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+    color: var(--text-primary); font-family: var(--font-sans); font-size: var(--text-sm);
+  }
+  .gen-form input::-webkit-calendar-picker-indicator { filter: invert(0.7); cursor: pointer; }
+  .gen-form .quick { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .quick-btn {
+    padding: 2px var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-full);
+    background: transparent; color: var(--text-secondary); font-family: var(--font-sans); font-size: var(--text-xs); cursor: pointer;
+  }
+  .quick-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--text-muted); }
+  .quick-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .gen-form .gen-actions { grid-column: 1 / -1; margin-top: 0; align-items: center; }
+
   .sched-form select, .sched-form textarea, .filters select {
     padding: var(--space-2) var(--space-3);
     background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-sm);
@@ -385,5 +598,10 @@
 
   @media (max-width: 900px) {
     .sched-form { grid-template-columns: 1fr 1fr; }
+    .gen-form { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 480px) {
+    .gen-form { grid-template-columns: 1fr; }
   }
 </style>
