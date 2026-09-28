@@ -6,3 +6,9 @@
 -- Only the untouched default is rewritten: a tagline someone edited stays.
 UPDATE plan_limits SET tagline = 'Мережі магазинів і HoReCa'
  WHERE plan = 'pro' AND tagline = 'Від 5 до 150 точок';
+
+-- «Старт» called itself «Пілот, один об'єкт», but the pilot the site offers is
+-- 90 days on 10–30 controllers with installation — a different thing from a
+-- free self-service tier. The tagline says what the tier is.
+UPDATE plan_limits SET tagline = 'Безкоштовний старт'
+ WHERE plan = 'free' AND tagline = 'Пілот, один об''єкт';
