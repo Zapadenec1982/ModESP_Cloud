@@ -3,119 +3,253 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ModESP Cloud — хмарний моніторинг і керування холодильним обладнанням</title>
-  <meta name="description" content="Контролер ModESP_v4 у слоті Carel/Eliwell/Dixell і хмара: температура, аварії в Telegram за хвилину, HACCP-журнал інспекційного рівня, дистанційне налаштування, енергія. Для сервісних компаній, мереж, HoReCa і аптек.">
+  <title>ModESP Cloud — холодильне обладнання під наглядом: аварії за хвилини, журнал HACCP для інспектора</title>
+  <meta name="description" content="Керувальний контролер ModESP_v4 і хмара: аварія в Telegram за хвилини, причина з даних агрегату, наряди для техніків, журнал температур у формі для інспектора з кодом перевірки. Для сервісних компаній, мереж магазинів, HoReCa та аптек.">
   <link rel="canonical" href="https://modesp.com.ua/">
-  <meta property="og:title" content="ModESP Cloud — холодильне обладнання під контролем">
-  <meta property="og:description" content="Контролер, який сам розповідає про себе: аварії, HACCP-журнал, дистанційні налаштування, енергія.">
+  <meta property="og:title" content="ModESP Cloud — холод під наглядом">
+  <meta property="og:description" content="Аварію видно за хвилини, причину — з даних контролера, роботу — в журналі. Контролер ModESP_v4 і хмара для холодильного обладнання.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://modesp.com.ua/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/piazzolla-500-normal-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/ibm-plex-sans-400-normal-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/fonts.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<a class="skip" href="#main">До змісту</a>
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="/"><span class="brand-mark">M</span> ModESP Cloud</a>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v20M4 6l16 12M4 18L20 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>ModESP Cloud</a>
     <nav class="nav" aria-label="Розділи">
-      <a href="#controller">Контролер</a>
-      <a href="#segments">Для кого</a>
+      <a href="#how">Як працює</a>
+      <a href="#roles">Учасники</a>
+      <a href="#haccp">HACCP</a>
+      <a href="#hardware">Обладнання</a>
       <a href="#pricing">Ціни</a>
       <a href="/partners.html">Партнерам</a>
-      <a href="#pilot">Пілот</a>
       <a class="btn btn-ghost" href="/cloud/">Увійти</a>
+      <a class="btn btn-primary" href="#pilot">Пілот</a>
     </nav>
   </div>
 </header>
 
-<main>
-  <section class="hero">
-    <div class="wrap">
-      <h1>Холодильна вітрина, яка сама розповідає про себе</h1>
-      <p class="lead">ModESP_v4 стає в той самий слот, що Carel, Eliwell чи Dixell, і надсилає в хмару температуру, аварії, стан компресора та енергію. Ви бачите кожну камеру мережі на одному екрані, отримуєте аварію в Telegram за хвилину і показуєте інспектору HACCP-журнал, а не зошит.</p>
-      <div class="hero-actions">
-        <a class="btn btn-primary" href="#pilot">Попросити пілот</a>
-        <a class="btn btn-ghost" href="#" data-cfg="demoStatusUrl" target="_blank" rel="noopener">Подивитись живу демо-точку</a>
-        <a class="btn btn-ghost" href="#" data-cfg="demoAppUrl" target="_blank" rel="noopener">Демо-кабінет</a>
-      </div>
-      <div class="hero-facts">
-        <div class="fact"><strong>≤ 60 с</strong><span>від події до сповіщення</span></div>
-        <div class="fact"><strong>3 роки</strong><span>погодинного архіву температур</span></div>
-        <div class="fact"><strong>4 мови</strong><span>інтерфейсу і HACCP-звіту</span></div>
-        <div class="fact"><strong>0 змін</strong><span>у холодильному агрегаті</span></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="controller">
-    <div class="wrap">
-      <h2>Що робить контролер, а не лише вимірює температуру</h2>
-      <p class="muted">Накладний датчик бачить лише температуру. ModESP_v4 керує агрегатом і тому знає, чому вона така.</p>
-      <div class="grid">
-        <article class="card"><h3>Керування</h3><ul><li>Уставка, гістерезис, відтайка за розкладом або за датчиком випарника</li><li>Вентилятори, підсвітка, нагрівач дверей</li><li>Зміна параметрів із хмари з підтвердженням і журналом команд</li></ul></article>
-        <article class="card"><h3>Захисти та аварії</h3><ul><li>Висока/низька температура з затримкою і ескалацією</li><li>Відкриті двері, обрив датчика, часті пуски компресора</li><li>Втрата зв'язку стає аварією, а не тишею</li></ul></article>
-        <article class="card"><h3>HACCP і звіти</h3><ul><li>Журнал температур по точці або по вітрині, PDF українською</li><li>Код перевірки і відбиток SHA-256 у футері кожного звіту</li><li>Публічна перевірка справжності для інспектора</li></ul></article>
-        <article class="card"><h3>Енергія та прошивки</h3><ul><li>Оцінка споживання за моделлю компресора і тарифом</li><li>Оновлення прошивки хвилями з автопаузою</li><li>Заміна контролера без втрати історії точки</li></ul></article>
-      </div>
-    </div>
-  </section>
-
-  <section id="segments">
-    <div class="wrap">
-      <h2>Для кого</h2>
-      <div class="grid">
-        <article class="card"><span class="tag">Сервісна компанія</span><h3>Обслуговуєте холод десятків клієнтів</h3><ul><li>Усі клієнти на одній карті, найближчий технік до аварії</li><li>Партнерський рахунок і брендовані статус-сторінки</li><li>Історія обслуговування і команд по кожній вітрині</li></ul></article>
-        <article class="card"><span class="tag">Мережа або HoReCa</span><h3>Від 5 до 150 точок</h3><ul><li>Публічна статус-сторінка на екрані бек-офісу</li><li>Права доступу по точках: керівник бачить своє, техслужба — усе</li><li>Планові звіти за точку, енергія в гривнях</li></ul></article>
-        <article class="card"><span class="tag">Аптека</span><h3>Холодовий ланцюг ліків і вакцин</h3><ul><li>Електронний реєстратор з хмарним резервуванням</li><li>Сповіщення в Telegram і на пошту, тихі години для некритичних</li><li>Журнал для перевірки з підписом відповідальної особи</li></ul></article>
-      </div>
-    </div>
-  </section>
-
-  <section id="chart-section">
-    <div class="wrap">
-      <h2>30 днів однієї вітрини</h2>
-      <p class="muted">Так виглядає місяць у кабінеті: температура повітря, уставка, відтайки, дві події — залишені відкритими двері та перезапуск компресора. Дані з демонстраційного стенду.</p>
-      <div class="chart">
-        <div id="chart" aria-live="polite"></div>
-        <div class="chart-legend"><span><i class="lg-air"></i>повітря</span><span><i class="lg-set"></i>уставка −18 °C</span><span><i class="lg-alarm"></i>аварія</span></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="calc-section">
-    <div class="wrap">
-      <h2>Штраф проти підписки</h2>
-      <p class="muted">У 2026 році штраф за відсутність HACCP для юридичної особи — 259 410 грн. Порахуйте, скільки років підписки він коштує.</p>
-      <form id="calc" class="calc">
-        <div>
-          <label><span>Контролерів (вітрин, камер)</span><input type="number" name="controllers" min="1" max="5000" value="6"></label>
-          <label><span>Тариф</span><select name="plan"><option value="basic">Об'єкт — 150 грн за контролер</option><option value="pro">Мережа — 250 грн за точку + за контролер</option></select></label>
-          <label><span>Точок (для тарифу «Мережа»)</span><input type="number" name="sites" min="1" max="1000" value="1"></label>
+<main id="main">
+  <!-- ── Hero ─────────────────────────────────────────── -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero-grid">
+      <div class="hero-text">
+        <p class="eyebrow rise">Хмара для холодильного обладнання · керувальний контролер ModESP_v4</p>
+        <h1 id="hero-title" class="rise">Холод під наглядом. Аварію видно за хвилини, причину — <em>з даних контролера</em>, роботу — в журналі.</h1>
+        <p class="lead rise">ModESP_v4 стає у вітрину чи камеру замість штатного контролера і сам керує агрегатом. Хмара показує кожну камеру мережі, надсилає аварії в Telegram, на пошту чи push і веде журнал температур у формі для перевірки. Для сервісних компаній, мереж магазинів, HoReCa та аптек.</p>
+        <div class="hero-actions rise">
+          <a class="btn btn-primary btn-lg" href="#pilot">Попросити пілот</a>
+          <a class="btn btn-ghost btn-lg" href="/cloud/">Увійти в кабінет</a>
+          <a class="btn btn-link" href="#" data-cfg="demoStatusUrl" target="_blank" rel="noopener">Жива демо-точка ↗</a>
+          <a class="btn btn-link" href="#" data-cfg="demoAppUrl" target="_blank" rel="noopener">Демо-кабінет ↗</a>
         </div>
-        <div id="calc-out" class="calc-out"></div>
-      </form>
+        <dl class="facts rise">
+          <div><dt>≤ 60 с</dt><dd>від події на контролері до сповіщення — ціль рівня сервісу</dd></div>
+          <div><dt>≈ 4 хв</dt><dd>щоб втрата зв'язку стала аварією, а не тишею</dd></div>
+          <div><dt>90 днів</dt><dd>журналу контролер досилає після відновлення зв'язку</dd></div>
+          <div><dt>3 роки</dt><dd>погодинного архіву температур кожної камери</dd></div>
+        </dl>
+      </div>
+      <figure class="sheet hero-figure rise">
+        <figcaption class="sheet-head">
+          <span class="sheet-title">Морозильна бонета · магазин №102</span>
+          <span class="sheet-meta mono">одна ніч · повітря, °C</span>
+        </figcaption>
+        <div id="story-chart" class="chart" role="img" aria-label="Графік температури повітря за одну добу: відчинені двері о 01:12, аварія о 01:14, технік о 01:38, повернення до −18 °C о 02:05, далі планові відтайки"></div>
+        <div class="legend mono">
+          <span><i class="lg lg-air"></i>повітря</span>
+          <span><i class="lg lg-set"></i>уставка −18</span>
+          <span><i class="lg lg-limit"></i>межа HACCP −15</span>
+          <span><i class="lg lg-alarm"></i>аварія</span>
+          <span><i class="lg lg-defrost"></i>відтайка</span>
+        </div>
+      </figure>
     </div>
   </section>
 
-  <section id="pricing">
+  <!-- ── How: one night ────────────────────────────────── -->
+  <section id="how" class="section">
     <div class="wrap">
-      <h2>Ціни</h2>
-      <p class="muted">Без ПДВ. Ліміти й ціни беруться з того самого каталогу, за яким працює платформа.</p>
-      <div id="plans" class="plans">
-        <article class="card plan"><span class="tag">Пілот, один об'єкт</span><h3>Старт</h3><div class="price">0 грн</div><div class="note">1 точка, до 3 контролерів, 30 днів історії</div><ul><li>Панель, Telegram і push, CSV</li></ul><a class="btn btn-ghost" href="/cloud/#/register">Почати безкоштовно</a></article>
-        <article class="card plan plan-featured"><span class="tag">Аптека, кафе, магазин</span><h3>Об'єкт</h3><div class="price">150 грн<small>/контролер/міс</small></div><div class="note">річна передоплата −15 %</div><ul><li>До 20 контролерів, 3 точки, 10 користувачів</li><li>400 днів первинних даних, 3 роки архіву</li><li>HACCP PDF, енергія, точки і карта</li></ul><a class="btn btn-primary" href="#pilot">Попросити пілот</a></article>
-        <article class="card plan"><span class="tag">Від 5 до 150 точок</span><h3>Мережа</h3><div class="price">250 грн<small>/точка</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 контролерів — 80 грн, від 500 — 60 грн</div><ul><li>До 500 контролерів, 100 точок</li><li>800 днів первинних даних</li><li>+ OTA-ролаути, API-ключі</li></ul><a class="btn btn-ghost" href="#pilot">Попросити пілот</a></article>
-        <article class="card plan"><span class="tag">Великі мережі, держустанови</span><h3>Enterprise</h3><div class="price">за запитом</div><div class="note">окрема інсталяція, SLA, API — від 200 000 грн на рік</div><ul><li>Без обмежень</li><li>Брендовані сторінки і PDF</li></ul><a class="btn btn-ghost" href="#pilot">Обговорити</a></article>
-        <article class="card plan"><span class="tag">Сервісна компанія</span><h3>Партнер</h3><div class="price">2 000 грн<small>/міс</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 — 80 грн, від 300 — 70 грн</div><ul><li>Будь-яка кількість клієнтських організацій</li><li>Партнерський рахунок, крос-тенантна карта</li></ul><a class="btn btn-ghost" href="/partners.html">Партнерська програма</a></article>
+      <p class="kicker mono reveal">01 · Як це працює</p>
+      <div class="split">
+        <div class="split-lead reveal">
+          <h2>Одна ніч однієї вітрини</h2>
+          <p class="muted">Що саме відбувається між «щось не так» і рядком у журналі — і хто це бачить. Демонстраційний сценарій, числа умовні.</p>
+        </div>
+        <ol class="timeline reveal">
+          <li class="tl-door"><span class="tl-time mono">01:12</span><div><strong>Двері лишилися відчиненими.</strong> Температура повітря пішла вгору. Контролер бачить це раніше за термометр на склі — і бачить, що компресор працює без зупинки.</div></li>
+          <li class="tl-alarm"><span class="tl-time mono">01:14</span><div><strong>Аварія «Двері відкриті» після витримки.</strong> Її піднімає сам контролер. Хмара розсилає: черговому техніку в Telegram, власнику — на пошту. Некритичне в тихі години не турбує.</div></li>
+          <li class="tl-tech"><span class="tl-time mono">01:38</span><div><strong>Технік підтверджує аварію і бере наряд.</strong> У наряді — адреса, маршрут, історія саме цієї вітрини. Власник бачить, хто відповідає, а не переказ у месенджері.</div></li>
+          <li class="tl-ok"><span class="tl-time mono">02:05</span><div><strong>−18 °C. Аварію знято обладнанням.</strong> Технік закриває наряд сервісним записом: що зроблено, скільки часу, запчастини. Це дві різні події — і обидві в історії.</div></li>
+          <li class="tl-report"><span class="tl-time mono">06:00</span><div><strong>У журналі HACCP — рядок.</strong> Відхилення з початком, кінцем, крайнім значенням, коригувальною дією і відповідальним. Готовий для перевірки, з кодом і відбитком даних.</div></li>
+        </ol>
       </div>
     </div>
   </section>
 
-  <section id="pilot">
+  <!-- ── Roles ──────────────────────────────────────────── -->
+  <section id="roles" class="section section-tint">
     <div class="wrap">
-      <h2>Запит на пілот</h2>
-      <p class="muted">Один об'єкт, два-три контролери, 30 днів. Ми встановимо контролери, підключимо сповіщення і покажемо перший HACCP-звіт. Відповідаємо протягом одного робочого дня.</p>
-      <form id="pilot-form" class="form" data-source="landing" novalidate>
+      <p class="kicker mono reveal">02 · Учасники</p>
+      <h2 class="reveal">Одне робоче місце для всіх, хто відповідає за холод</h2>
+      <p class="muted lead-sm reveal">У кожного — свій початковий екран і свої права. Дані, історія та документи — спільні, тож наступний бачить зроблене попереднім.</p>
+      <div class="grid grid-4 reveal">
+        <article class="card role">
+          <h3>Власник або керівник точки</h3>
+          <p>Які об'єкти потребують уваги зараз, чому і хто цим уже займається. Планові звіти на пошту — без входу в кабінет.</p>
+          <ul class="ticks"><li>об'єкти й обладнання на карті</li><li>аварії з відповідальним</li><li>звіти щотижня чи щомісяця</li></ul>
+        </article>
+        <article class="card role">
+          <h3>Технік</h3>
+          <p>Аварія → наряд → маршрут → сервісний запис. Усе з телефона. Параметри вітрини можна змінити дистанційно, з підтвердженням і журналом команд.</p>
+          <ul class="ticks"><li>мої наряди і найближчі виклики</li><li>графіки повітря, випарника, компресора</li><li>історія обслуговування кожної вітрини</li></ul>
+        </article>
+        <article class="card role">
+          <h3>Керівник сервісу</h3>
+          <p>Хто відповідає, у які строки, чи підтверджено результат. Усі клієнти на одній карті, найближчий вільний технік до аварії.</p>
+          <ul class="ticks"><li>наряди й сервісні записи по клієнтах</li><li>повторювані аварії як привід для візиту</li><li>один зведений рахунок</li></ul>
+        </article>
+        <article class="card role">
+          <h3>Відповідальний за HACCP</h3>
+          <p>Журнал температур у формі для перевірки: критична межа, відхилення, коригувальні дії, підписи. Справжність підтверджується кодом онлайн.</p>
+          <ul class="ticks"><li>PDF по вітрині або по всій точці</li><li>код перевірки і SHA-256 даних</li><li>архів звітів три роки</li></ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Controller vs sensor ───────────────────────────── -->
+  <section id="controller" class="section">
+    <div class="wrap split">
+      <div class="reveal">
+        <p class="kicker mono">03 · Контролер</p>
+        <h2>Контролер, а не накладний датчик</h2>
+        <p>Накладний реєстратор знає лише температуру. ModESP_v4 керує агрегатом, тому знає, <em>чому</em> вона така: працює компресор чи стоїть, іде відтайка чи ні, відчинені двері чи зачинені. Це різниця між «щось не так» і «двері відчинені 18 хвилин».</p>
+        <p>Захисти працюють на самому контролері — висока чи низька температура з витримкою, обрив датчика, часті пуски, безперервна робота, невдала відтайка. Хмара додає те, чого не видно з однієї вітрини: повторювані аварії за тиждень стають приводом для планового візиту.</p>
+        <p class="muted">Уставку, гістерезис і розклад відтайки можна змінити з хмари. Кожна команда — з підтвердженням і в журналі: хто, коли, що.</p>
+      </div>
+      <div class="sheet data-sheet reveal">
+        <div class="sheet-head"><span class="sheet-title">Що приходить у хмару</span><span class="sheet-meta mono">кожні 60 с · MQTT/TLS</span></div>
+        <table class="datatable mono">
+          <tbody>
+            <tr><th scope="row">повітря</th><td>−17.6 °C</td><td class="muted">зона продукту</td></tr>
+            <tr><th scope="row">випарник</th><td>−24.1 °C</td><td class="muted">ΔT до повітря 6.5</td></tr>
+            <tr><th scope="row">конденсатор</th><td>+33.4 °C</td><td class="muted">норма для +24 в залі</td></tr>
+            <tr><th scope="row">уставка</th><td>−18.0 °C</td><td class="muted">гістерезис 2.0</td></tr>
+            <tr><th scope="row">компресор</th><td>працює</td><td class="muted">37 % часу, 1.5 пуск/год</td></tr>
+            <tr><th scope="row">відтайка</th><td>ні</td><td class="muted">наступна о 05:00</td></tr>
+            <tr><th scope="row">двері</th><td>зачинені</td><td class="muted">аварія після 10 хв</td></tr>
+            <tr><th scope="row">зв'язок</th><td>онлайн</td><td class="muted">heartbeat 30 с</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Offline ────────────────────────────────────────── -->
+  <section id="offline" class="section section-dark">
+    <div class="wrap">
+      <p class="kicker mono reveal">04 · Без Інтернету</p>
+      <h2 class="reveal">Коли зникає зв'язок</h2>
+      <div class="grid grid-3 reveal">
+        <article class="card card-dark"><h3>Контролер працює автономно</h3><p>Термостат, відтайка і всі захисти виконуються на самому контролері. Хмара потрібна, щоб бачити і повідомляти, а не щоб холодити.</p></article>
+        <article class="card card-dark"><h3>Журнал не зупиняється</h3><p>Вимірювання накопичуються локально і досилаються в хмару після відновлення зв'язку — до 90 днів. У журналі HACCP такий період не стає розривом: рядки на місці.</p></article>
+        <article class="card card-dark"><h3>Тиша — теж сигнал</h3><p>Якщо контролер мовчить довше ніж півтори хвилини, за кілька хвилин це стає аварією «пристрій офлайн» — з тими самими сповіщеннями, що й температура.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── HACCP ──────────────────────────────────────────── -->
+  <section id="haccp" class="section">
+    <div class="wrap">
+      <p class="kicker mono reveal">05 · HACCP</p>
+      <div class="split">
+        <figure class="sheet journal reveal">
+          <figcaption class="sheet-head"><span class="sheet-title">Журнал контролю температурного режиму</span><span class="sheet-meta mono">магазин №102 · 2026-09-27</span></figcaption>
+          <p class="journal-rule">Критична межа: не вище −18 °C, допустиме відхилення 3 °C. Відхиленням вважається температура повітря за межею довше ніж 30 хв; інтервали відтайки не враховуються.</p>
+          <table class="journal-table">
+            <thead><tr><th>Час</th><th>Повітря °C</th><th>Межа</th><th>Відхилення</th><th>Примітка</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">00:00</td><td class="mono">−18.2</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
+              <tr class="row-dev"><td class="mono">01:00</td><td class="mono">−13.4</td><td class="mono muted">≤ −18 (+3)</td><td><strong>Так</strong></td><td>двері &gt; 10 хв</td></tr>
+              <tr class="row-dev"><td class="mono">02:00</td><td class="mono">−16.9</td><td class="mono muted">≤ −18 (+3)</td><td><strong>Так</strong></td><td>до 02:05</td></tr>
+              <tr><td class="mono">03:00</td><td class="mono">−18.1</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
+              <tr><td class="mono">05:00</td><td class="mono">−15.3</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td class="muted">відтайка</td></tr>
+              <tr><td class="mono">06:00</td><td class="mono">−18.3</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
+            </tbody>
+          </table>
+          <div class="journal-foot">
+            <div class="journal-ex"><span class="mono">01:14 — 02:05 · 51 хв · крайнє −11.8 °C</span><span>Коригувальна дія: двері зачинено, ущільнювач замінено · Відповідальний: черговий технік</span></div>
+            <div class="stamp mono">код перевірки D7S4-PPDP-LCXY<br>SHA-256 c01102bc…2be959</div>
+          </div>
+        </figure>
+        <div class="reveal">
+          <h2>Журнал у формі для інспектора, а не зошит</h2>
+          <ul class="ticks ticks-lg">
+            <li>Лише температура повітря в зоні продукту, по днях, у місцевому часі точки. Критична межа з допустимим відхиленням і правило відхилення надруковані в шапці.</li>
+            <li>Кожне відхилення — з початком, кінцем, крайнім значенням, коригувальною дією і відповідальним із наряду. Розриви запису — окремою таблицею.</li>
+            <li>Без заданої межі журнал так і каже: «оцінити неможливо» — а не «відхилень: 0».</li>
+            <li>Блоки підписів, код перевірки, SHA-256 даних і QR. Інспектор перевіряє справжність онлайн, без входу в кабінет.</li>
+            <li>Планові звіти щотижня чи щомісяця на пошту, архів три роки. Експорт CSV і всіх даних організації одним архівом — дані ваші.</li>
+          </ul>
+          <div class="notice">
+            <strong>Чого платформа не робить.</strong> Вона не є системою безпеки і не замінює процедури контролю температури, передбачені вашою програмою HACCP. Межі, уставки й реакцію визначаєте ви; ми даємо дані, сповіщення і документ, який це підтверджує.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Hardware ───────────────────────────────────────── -->
+  <section id="hardware" class="section section-tint">
+    <div class="wrap">
+      <p class="kicker mono reveal">06 · Обладнання і встановлення</p>
+      <h2 class="reveal">Що потрібно, щоб це запрацювало</h2>
+      <div class="grid grid-2 reveal">
+        <article class="card"><h3>Контролер ModESP_v4</h3><p>ESP32, зв'язок MQTT через TLS, керування вітриною чи камерою: компресор, відтайка, вентилятори, двері, датчики. Стає замість штатного контролера; сам агрегат не змінюється.</p><p class="muted">Хмара розуміє протокол ModESP_v4. Сумісності з іншими контролерами поки що немає — адаптери в планах, строків не обіцяємо.</p></article>
+        <article class="card"><h3>Підключення за кодом</h3><p>Контролер з наклейкою-кодом сам з'являється в черзі очікування хмари. Ви призначаєте його організації — унікальні облікові дані видаються по повітрю. Мережу на сотні контролерів можна завести одним CSV.</p><p class="muted">Прошивки оновлюються з хмари хвилями, з автопаузою при першій помилці.</p></article>
+        <article class="card"><h3>Хто встановлює</h3><p>На пілоті — ми або партнерська сервісна компанія: монтаж під час планового ТО, підключення сповіщень, перший звіт. Далі — партнер або ваша служба за інструкцією.</p></article>
+        <article class="card"><h3>Скільки це коштує</h3><p>Підписка — лише за хмару, за контролер на місяць. Контролер і монтаж оплачуються окремо, за запитом: залежить від кількості й обладнання. На пілоті — безкоштовно.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Pricing ────────────────────────────────────────── -->
+  <section id="pricing" class="section">
+    <div class="wrap">
+      <p class="kicker mono reveal">07 · Ціни</p>
+      <h2 class="reveal">Підписка на хмару</h2>
+      <p class="muted lead-sm reveal">Ціни без ПДВ, з того самого каталогу, за яким працює платформа. Ліміти планів — у кабінеті та в <a href="/legal/offer">оферті</a>. Самореєстрація дає 14 днів плану «Старт» без картки.</p>
+      <div id="plans" class="plans reveal">
+        <article class="card plan"><span class="tag">Безкоштовний старт</span><h3>Старт</h3><div class="price">0 грн</div><div class="note">Панель, аварії, Telegram і push, CSV</div><a class="btn btn-ghost" href="/cloud/#/register">Зареєструватися</a></article>
+        <article class="card plan plan-featured"><span class="tag">Аптека, кафе, магазин</span><h3>Об'єкт</h3><div class="price">150 грн<small>/контролер/міс</small></div><div class="note">річна передоплата −15 %</div><ul><li>HACCP PDF і планові звіти</li><li>Точки і карта, енергія</li><li>Рекомендації з обслуговування</li></ul><a class="btn btn-primary" href="#pilot">Попросити пілот</a></article>
+        <article class="card plan"><span class="tag">Мережі магазинів і HoReCa</span><h3>Мережа</h3><div class="price">250 грн<small>/точка</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 контролерів — 80 грн, від 500 — 60 грн</div><ul><li>Усе з «Об'єкта»</li><li>OTA-ролаути, API-ключі, вебхуки</li><li>Погода на точках, планувальник об'їзду</li></ul><a class="btn btn-ghost" href="#pilot">Попросити пілот</a></article>
+        <article class="card plan"><span class="tag">Сервісна компанія</span><h3>Партнер</h3><div class="price">2 000 грн<small>/міс</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 — 80 грн, від 300 — 70 грн</div><ul><li>Клієнти як окремі організації</li><li>Один зведений рахунок</li><li>Ваш бренд на сторінках і PDF</li></ul><a class="btn btn-ghost" href="/partners.html">Партнерська програма</a></article>
+        <article class="card plan"><span class="tag">Великі мережі, держустанови</span><h3>Enterprise</h3><div class="price">за запитом</div><div class="note">окрема інсталяція, SLA, API</div><a class="btn btn-ghost" href="#pilot">Обговорити</a></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Pilot ──────────────────────────────────────────── -->
+  <section id="pilot" class="section section-pilot">
+    <div class="wrap split">
+      <div class="reveal">
+        <p class="kicker mono">08 · Пілот</p>
+        <h2>Пілот: 90 днів, 10–30 контролерів</h2>
+        <p>Для перших партнерів — безкоштовно, в обмін на відвертий кейс: скільки виїздів, який час реакції, які несправності знайшли. Ми встановлюємо контролери, підключаємо сповіщення і показуємо перший HACCP-звіт.</p>
+        <ul class="ticks">
+          <li>сервісна компанія — на власних клієнтах</li>
+          <li>мережа або HoReCa — на одному-двох об'єктах</li>
+          <li>аптека — на холодильниках для ліків</li>
+        </ul>
+        <p class="muted">Відповідаємо протягом робочого дня. Дані форми зберігаються лише для відповіді на запит.</p>
+      </div>
+      <form id="pilot-form" class="form reveal" data-source="landing" novalidate>
         <label><span>Ім'я *</span><input name="name" required maxlength="120" autocomplete="name"></label>
         <label><span>Компанія</span><input name="company" maxlength="160" autocomplete="organization"></label>
         <label><span>E-mail *</span><input name="email" type="email" required maxlength="254" autocomplete="email"></label>
@@ -126,23 +260,55 @@
         <label class="full"><span>Що у вас стоїть зараз і що болить</span><textarea name="message" rows="4" maxlength="4000"></textarea></label>
         <label class="hp" aria-hidden="true">Не заповнюйте<input name="website" tabindex="-1" autocomplete="off"></label>
         <label class="full consent"><input type="checkbox" name="consent" required> <span>Погоджуюся з <a href="/legal/privacy" target="_blank" rel="noopener">політикою конфіденційності</a>; дані використовуються лише для відповіді на цей запит.</span></label>
-        <div class="full"><button class="btn btn-primary" type="submit">Надіслати запит</button><div id="pilot-msg" class="form-msg" role="status"></div></div>
+        <div class="full form-actions"><button class="btn btn-primary btn-lg" type="submit">Надіслати запит</button><div id="pilot-msg" class="form-msg" role="status" aria-live="polite"></div></div>
       </form>
+    </div>
+  </section>
+
+  <!-- ── FAQ ────────────────────────────────────────────── -->
+  <section id="faq" class="section section-tint">
+    <div class="wrap wrap-narrow">
+      <p class="kicker mono reveal">09 · Питання</p>
+      <h2 class="reveal">Що питають перед пілотом</h2>
+      <div class="faq reveal">
+        <details><summary>Чи треба міняти холодильний агрегат?</summary><p>Ні. ModESP_v4 стає замість штатного контролера керування; компресор, датчики, реле і сам агрегат лишаються. Монтаж зазвичай роблять під час планового ТО.</p></details>
+        <details><summary>Чи працює хмара з нашими контролерами Carel, Eliwell або Dixell?</summary><p>Поки що ні: хмара розуміє протокол ModESP_v4. Адаптери для чужих контролерів — у планах; строків не обіцяємо, щоб не обіцяти зайвого.</p></details>
+        <details><summary>Що з даними, коли пропадає Інтернет?</summary><p>Контролер продовжує керувати і веде журнал локально; після відновлення зв'язку досилає до 90 днів вимірювань. Якщо контролер мовчить, хмара за кілька хвилин піднімає аварію «пристрій офлайн».</p></details>
+        <details><summary>Хто бачить наші дані?</summary><p>Кожна організація ізольована на рівні бази даних і черги повідомлень. Сервісна компанія бачить лише тих клієнтів, які їй довірені. Сервери — у Європейському Союзі, резервні копії щодня, журнал дій незмінний.</p></details>
+        <details><summary>Чи можна забрати дані?</summary><p>Так: CSV з кабінету будь-коли, повний архів організації одним zip-файлом за запитом, і 30 днів на вивантаження після припинення договору.</p></details>
+        <details><summary>Скільки коштує контролер і монтаж?</summary><p>Окремо від підписки, за запитом — залежить від кількості й обладнання. На пілоті контролери та монтаж — безкоштовно.</p></details>
+        <details><summary>Чи є мобільний застосунок?</summary><p>Сповіщення приходять у Telegram, на пошту і як push. Кабінет працює у браузері телефона: наряди, графіки й підтвердження аварій — з рук техніка.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Trust ──────────────────────────────────────────── -->
+  <section id="trust" class="section section-trust">
+    <div class="wrap">
+      <ul class="trust reveal">
+        <li><strong>TLS</strong><span>для контролерів і людей</span></li>
+        <li><strong>Ізоляція</strong><span>організацій на рівні бази даних</span></li>
+        <li><strong>2FA</strong><span>і сесії під контролем</span></li>
+        <li><strong>Аудит</strong><span>незмінний журнал усіх дій</span></li>
+        <li><strong>Копії</strong><span>щодня, поза сервером</span></li>
+        <li><strong>ЄС</strong><span>дані на серверах у Європі</span></li>
+      </ul>
+      <p class="muted small reveal">Цілі рівня сервісу — в <a href="/legal/service">описі рівня сервісу</a>. <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Статус платформи ↗</a></p>
     </div>
   </section>
 </main>
 
-<footer>
+<footer class="foot">
   <div class="wrap">
-    <div>
+    <div class="foot-links">
       <a href="/legal/offer">Публічна оферта</a>
       <a href="/legal/privacy">Конфіденційність</a>
       <a href="/legal/service">Рівень сервісу</a>
+      <a href="/legal/dpa">Обробка даних</a>
       <a href="/partners.html">Партнерам</a>
-      <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Статус платформи</a>
       <a href="#" data-cfg="github" target="_blank" rel="noopener">GitHub</a>
     </div>
-    <div>
+    <div class="foot-meta">
       <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>
       <span>© <span data-year>2026</span> ModESP</span>
     </div>

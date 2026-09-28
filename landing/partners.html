@@ -3,69 +3,122 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Партнерська програма — ModESP Cloud</title>
-  <meta name="description" content="Сервісним компаніям з обслуговування холодильного обладнання: партнерський рахунок ModESP Cloud, усі клієнти на одній карті, брендовані статус-сторінки і HACCP-звіти, дохід з підписки.">
+  <title>Партнерська програма — ModESP Cloud для сервісних компаній з холодильного обладнання</title>
+  <meta name="description" content="Сервісним компаніям з обслуговування холодильного обладнання: партнерський рахунок ModESP Cloud, усі клієнти на одній карті, наряди для техніків, брендовані статус-сторінки і HACCP-звіти, один зведений рахунок.">
   <link rel="canonical" href="https://modesp.com.ua/partners.html">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/fonts.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<a class="skip" href="#main">До змісту</a>
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="/"><span class="brand-mark">M</span> ModESP Cloud</a>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v20M4 6l16 12M4 18L20 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>ModESP Cloud</a>
     <nav class="nav" aria-label="Розділи">
-      <a href="/#controller">Контролер</a>
+      <a href="/#how">Як працює</a>
+      <a href="/#haccp">HACCP</a>
       <a href="/#pricing">Ціни</a>
       <a href="#how">Як почати</a>
       <a class="btn btn-ghost" href="/cloud/">Увійти</a>
+      <a class="btn btn-primary" href="/#pilot">Пілот</a>
     </nav>
   </div>
 </header>
-<main>
-  <section class="hero">
+
+<main id="main">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap hero-grid">
+      <div class="hero-text">
+        <p class="eyebrow rise">Партнерська програма · сервісним компаніям з холоду</p>
+        <h1 id="hero-title" class="rise">Ви вже знаєте кожну вітрину своїх клієнтів. Тепер вона <em>сама розповідає</em>, що з нею.</h1>
+        <p class="lead rise">Аварія приходить до вашого чергового техніка раніше, ніж клієнт зателефонує. Наряд, маршрут і сервісний запис — в одному місці, а не в месенджері. Планове ТО спирається на історію кожної вітрини, а не на пам'ять.</p>
+        <div class="hero-actions rise">
+          <a class="btn btn-primary btn-lg" href="/#pilot">Стати партнером</a>
+          <a class="btn btn-ghost btn-lg" href="/legal/partner">Партнерська угода (чернетка)</a>
+        </div>
+        <dl class="facts rise">
+          <div><dt>1 рахунок</dt><dd>зведений, за всіх клієнтів наприкінці місяця</dd></div>
+          <div><dt>Ваш бренд</dt><dd>на публічних статус-сторінках і в HACCP-звітах</dd></div>
+          <div><dt>90 днів</dt><dd>безкоштовного пілота на 10–30 контролерах</dd></div>
+          <div><dt>Ваша ціна</dt><dd>для клієнта — визначаєте ви, не нижче мінімальної роздрібної</dd></div>
+        </dl>
+      </div>
+      <figure class="sheet hero-figure rise">
+        <figcaption class="sheet-head"><span class="sheet-title">Ранок чергового техніка</span><span class="sheet-meta mono">клієнти · наряди</span></figcaption>
+        <table class="datatable">
+          <tbody>
+            <tr><th scope="row" class="mono">07:40</th><td>Магазин №102 · бонета</td><td class="muted">аварія знята, наряд закрито — ущільнювач</td></tr>
+            <tr><th scope="row" class="mono">08:15</th><td>Кафе «Ліхтар» · камера</td><td class="muted">короткі цикли 3-й день поспіль — рекомендація візиту</td></tr>
+            <tr><th scope="row" class="mono">09:00</th><td>Аптека №7 · холодильник</td><td class="muted">офлайн 12 хв, повернувся, журнал досилано</td></tr>
+            <tr><th scope="row" class="mono">09:30</th><td>Маршрут на день</td><td class="muted">3 точки, 41 км, найближчий вільний технік</td></tr>
+          </tbody>
+        </table>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section">
     <div class="wrap">
-      <h1>Партнерам: сервісним компаніям з холоду</h1>
-      <p class="lead">Ви вже знаєте кожну вітрину своїх клієнтів. ModESP Cloud робить це знання видимим: аварія приходить до вашого чергового техніка раніше, ніж клієнт зателефонує, а планове ТО спирається на історію, а не на пам'ять.</p>
-      <div class="hero-actions">
-        <a class="btn btn-primary" href="/#pilot">Стати партнером</a>
-        <a class="btn btn-ghost" href="/legal/partner">Партнерська угода (чернетка)</a>
+      <p class="kicker mono reveal">01 · Що отримує партнер</p>
+      <h2 class="reveal">Робоче місце сервісної компанії</h2>
+      <div class="grid grid-2 reveal">
+        <article class="card"><h3>Партнерський рахунок</h3><p>Клієнти — окремі організації з власними користувачами і правами. Ваш технік перемикається між ними без повторного входу. Один зведений рахунок наприкінці місяця: абонплата плюс контролери кожного клієнта.</p></article>
+        <article class="card"><h3>Карта і диспетчеризація</h3><p>Усі точки всіх клієнтів на одній карті. Найближчий вільний технік до аварії, планувальник об'їзду, підтвердження аварії і ескалація, якщо ніхто не відреагував.</p></article>
+        <article class="card"><h3>Наряди й історія</h3><p>Аварія або рекомендація стає нарядом з адресою і маршрутом; технік закриває його сервісним записом — час, запчастини, вартість. Історія команд і обслуговування по кожній вітрині — доказ реакції для клієнта.</p></article>
+        <article class="card"><h3>Брендування</h3><p>Публічні статус-сторінки точок і HACCP-звіти — з вашою назвою. Клієнт бачить вас, а не платформу.</p></article>
       </div>
     </div>
   </section>
 
-  <section>
+  <section id="how" class="section section-tint">
     <div class="wrap">
-      <h2>Що отримує партнер</h2>
-      <div class="grid">
-        <article class="card"><h3>Партнерський рахунок</h3><ul><li>Клієнти як окремі організації з власними користувачами</li><li>Ваш технік перемикається між ними без повторного входу</li><li>Один зведений рахунок наприкінці місяця</li></ul></article>
-        <article class="card"><h3>Карта і диспетчеризація</h3><ul><li>Усі точки всіх клієнтів на одній карті, теплова карта аварій</li><li>Найближчий технік до аварії, планувальник об'їзду</li><li>Підтвердження аварії і ескалація, якщо ніхто не відреагував</li></ul></article>
-        <article class="card"><h3>Брендування</h3><ul><li>Публічні статус-сторінки і HACCP-звіти з вашою назвою</li><li>Клієнт бачить вас, а не платформу</li></ul></article>
-        <article class="card"><h3>Обладнання</h3><ul><li>ModESP_v4 у слоті Carel / Eliwell / Dixell, без переробки агрегату</li><li>Коди підключення: контролер потрапляє в потрібну організацію з першого ввімкнення</li><li>Оновлення прошивок хвилями</li></ul></article>
+      <p class="kicker mono reveal">02 · Як почати</p>
+      <h2 class="reveal">Три кроки</h2>
+      <div class="grid grid-3 reveal">
+        <article class="card"><span class="tag mono">1</span><h3>Пілот на власних клієнтах</h3><p>90 днів, 10–30 контролерів, безкоштовно — в обмін на відвертий кейс: виїзди, час реакції, знайдені несправності. Монтаж під час планового ТО, ми допомагаємо з підключенням і навчанням техніків.</p></article>
+        <article class="card"><span class="tag mono">2</span><h3>Партнерський рахунок</h3><p>2 000 грн на місяць + 100 грн за контролер клієнтів на місяць; від 100 контролерів — 80 грн, від 300 — 70 грн. Ціну для клієнта визначаєте ви, не нижче мінімальної роздрібної.</p></article>
+        <article class="card"><span class="tag mono">3</span><h3>Клієнти в роботі</h3><p>Ви — перша лінія для клієнта і монтаж; ми — друга лінія, оновлення прошивок і платформа. Клієнт може будь-коли перейти на прямий договір — дані лишаються його.</p></article>
       </div>
+      <p class="muted small reveal">Умови — у <a href="/legal/partner">партнерській угоді</a> (чернетка до затвердження юристом). Питання — <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>.</p>
     </div>
   </section>
 
-  <section id="how">
-    <div class="wrap">
-      <h2>Як почати</h2>
-      <div class="grid">
-        <article class="card"><span class="tag">1</span><h3>Пілот на своєму об'єкті</h3><p class="muted">Два-три контролери у вашій майстерні або у лояльного клієнта, 30 днів, безкоштовно.</p></article>
-        <article class="card"><span class="tag">2</span><h3>Партнерський рахунок</h3><p class="muted">2 000 грн на місяць + 100 грн за контролер клієнтів (80 від 100, 70 від 300). Ціну для клієнта визначаєте ви.</p></article>
-        <article class="card"><span class="tag">3</span><h3>Перші клієнти</h3><p class="muted">Ми допомагаємо з першими трьома впровадженнями: налаштування, навчання техніків, шаблон договору для клієнта.</p></article>
+  <section class="section">
+    <div class="wrap split">
+      <div class="reveal">
+        <p class="kicker mono">03 · Обов'язки</p>
+        <h2>Що бере на себе партнер</h2>
+        <ul class="ticks ticks-lg">
+          <li>Монтаж і введення контролерів в експлуатацію за інструкцією; перша лінія підтримки клієнтів.</li>
+          <li>Договір з кожним клієнтом на умовах не гірших за публічну оферту.</li>
+          <li>Сумісне обладнання і актуальні прошивки; оплата зведеного рахунку.</li>
+          <li>Позначення «ModESP Partner» — без вигляду виробника платформи.</li>
+        </ul>
       </div>
-      <p class="muted small">Умови — у <a href="/legal/partner">партнерській угоді</a> (чернетка до затвердження юристом). Питання — <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>.</p>
+      <div class="reveal">
+        <p class="kicker mono">04 · Обладнання</p>
+        <h2>Контролер ModESP_v4</h2>
+        <p>Стає замість штатного контролера керування, сам агрегат не змінюється. Підключення за кодом з наклейки: контролер потрапляє в потрібну організацію з першого ввімкнення. Прошивки — хвилями з хмари, з автопаузою.</p>
+        <p class="muted">Сумісності з контролерами інших виробників поки що немає; адаптери — у планах. Вартість контролерів і монтажу — окремо від підписки, за запитом; на пілоті — безкоштовно.</p>
+      </div>
     </div>
   </section>
 </main>
-<footer>
+
+<footer class="foot">
   <div class="wrap">
-    <div>
+    <div class="foot-links">
       <a href="/legal/offer">Публічна оферта</a>
       <a href="/legal/privacy">Конфіденційність</a>
       <a href="/legal/service">Рівень сервісу</a>
+      <a href="/legal/partner">Партнерська угода</a>
       <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Статус платформи</a>
     </div>
-    <div><span>© <span data-year>2026</span> ModESP</span></div>
+    <div class="foot-meta">
+      <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>
+      <span>© <span data-year>2026</span> ModESP</span>
+    </div>
   </div>
 </footer>
 <script src="/config.js"></script>
