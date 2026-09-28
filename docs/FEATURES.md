@@ -102,6 +102,12 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 - State visible in UI with grouped categories (Equipment, Thermostat, Defrost, Protection)
 - WebSocket push — UI updates instantly without polling
 
+### Dashboard — the work of today
+- **"Needs attention"** — a block under the counters: site · device · reason · duration · responsible, most urgent first: active alarms (critical first, then by age), temperature out of the HACCP range, equipment offline (longest first), open maintenance hints, new work orders with no assignee. Responsible is the work order's assignee when an order exists, otherwise "no assignee yet"; a row opens the device, the alarm list or the work order. Eight rows and "Show all"; when there is nothing to do, one calm line
+- **Counters are filters** — the "Online / Offline / Total / Alarms / Hints" tiles are buttons (keyboard too) that set the same filter as the pills below. "Offline" leaves out controllers from the pending queue — they were never set up — and shows them apart as "+N pending", so the counter and the list agree
+- **Three axes on a card** — connectivity (dot, status), temperature against the organisation's HACCP range (the range "−18…−15 °C (±3)" under the figure; "out of range for 40 min" from the moment of the temperature alarm, or "out of range" from the live reading; the figure turns red for temperature only, a door alarm keeps just the badge) and operating mode ("Compressor", "Defrost" — while the device is online). `GET /api/devices` returns `alarm_codes`, `temp_alarm_since`, `compressor` and `defrost` for it
+- **Order and groups** — trouble first (alarm → out of range → offline → hint → the rest), then by name; the grid is grouped by site, "No site" last. `#/?site=<uuid>` shows one site's equipment with a removable "Site: …" chip
+
 ### Device Reassignment
 - Superadmin moves device between tenants in one click
 - Automatic credential rotation, RBAC cleanup, and MQTT topic migration
