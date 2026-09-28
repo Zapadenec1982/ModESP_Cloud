@@ -40,13 +40,7 @@ const archived = async (channel = 'air') => (await db.query(
 // handleBackfill fires the insert and the hour-marking without awaiting either — a
 // controller must never wait on the database. So the test waits on the result
 // rather than on a fixed number of ticks, which raced.
-async function waitFor(cond, iterations = 400) {
-  for (let i = 0; i < iterations; i++) {
-    if (await cond()) return true;
-    await new Promise(r => setImmediate(r));
-  }
-  return false;
-}
+const { waitFor } = require('./helpers/wait');
 // Marking follows the insert, so waiting on the marker implies the rows are in.
 const landed = async (rawRows, hours) => {
   expect(await waitFor(async () => await dirtyHours() === hours)).toBe(true);
