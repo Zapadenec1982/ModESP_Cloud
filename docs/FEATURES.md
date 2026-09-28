@@ -125,7 +125,7 @@ Full lifecycle from factory to field — auto-discovery, assignment, monitoring,
 
 Send commands to devices from the cloud — REST API or Web UI.
 
-- **Parameter editing** — change thermostat setpoint, defrost intervals, protection thresholds remotely
+- **Parameter editing** (audit item 6) — change thermostat setpoint, defrost intervals, protection thresholds remotely. Every parameter has a human name, a one-line explanation and its unit from the firmware manifests (seconds, minutes, hours, °C/min — not guessed from the key name); the mode parameters (defrost type, evaporator fan, night mode, display during defrost…) are chosen from named options, not typed as a number; a value the controller has not sent yet reads «—» with an explanation; the «Received from the controller N of 49» count says where the values come from; the protocol keys sit behind a «Technical keys» switch; parameters that change how the equipment runs are marked and ask for confirmation. The service PDF report uses the same names, units and mode names
 - **Validated commands** — only writable parameters accepted (defined in device metadata schema)
 - **Full state refresh** — request device to re-publish all 48 parameters on demand
 - **MQTT delivery** — commands published to device-specific MQTT topics with QoS guarantees
