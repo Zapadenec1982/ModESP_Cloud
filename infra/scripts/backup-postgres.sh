@@ -7,7 +7,9 @@
 #     globals.sql    pg_dumpall --globals-only (roles incl. the app/MQTT roles)
 #     db.dump        pg_dump --format=custom --no-owner of the application DB
 #     files.tar.gz   backend/.env, firmware store, FCM key, webui/.env,
-#                    /etc/mosquitto, /etc/letsencrypt, nginx site, systemd units
+#                    /etc/mosquitto, /etc/letsencrypt, nginx site, systemd units;
+#                    in the release layout (infra/deploy.sh) also the shared/
+#                    directory those app files are symlinks into
 #
 # Runs daily as root from modesp-backup.timer. pg_dump is executed as the
 # postgres OS user over the local socket (peer auth, no password), the files
@@ -79,12 +81,23 @@ FW_PATH="${FW_PATH#./}"; FCM_PATH="${FCM_PATH#./}"
 [ -n "$FW_PATH" ] && [ "${FW_PATH#/}" = "$FW_PATH" ] && FW_PATH="$APP_DIR/backend/$FW_PATH"
 [ -n "$FCM_PATH" ] && [ "${FCM_PATH#/}" = "$FCM_PATH" ] && FCM_PATH="$APP_DIR/backend/$FCM_PATH"
 
+# Release layout (infra/deploy.sh init — APP_DIR is a symlink, the same test
+# deploy.sh uses): backend/.env, backend/firmware, infra/backup.env and
+# webui/.env are symlinks into SHARED_DIR. tar keeps a symlink named on its
+# command line as a symlink, without the file behind it, so SHARED_DIR itself
+# is archived. Nothing is dereferenced: /etc/letsencrypt/live/* must come back
+# as symlinks for certbot.
+SHARED_DIR="${MODESP_RELEASES:-/opt/modesp-releases}/shared"
+LAYOUT=checkout
+[ -L "$APP_DIR" ] && LAYOUT=release
+
 CANDIDATES=(
   "$BACKEND_ENV"
   "$APP_DIR/webui/.env"
   "$APP_DIR/infra/backup.env"
   "${FW_PATH:-$APP_DIR/backend/firmware}"
   "${FCM_PATH:-}"
+  "$SHARED_DIR"
   /etc/mosquitto/conf.d
   /etc/mosquitto/acl.conf
   /etc/mosquitto/passwd
@@ -96,11 +109,31 @@ CANDIDATES=(
 for u in /etc/systemd/system/modesp-*; do CANDIDATES+=("$u"); done
 for extra in ${BACKUP_EXTRA_PATHS:-}; do CANDIDATES+=("$extra"); done
 
+# Each path once: tar stores a repeated path twice, and BACKUP_EXTRA_PATHS may
+# still name SHARED_DIR from before it was archived automatically.
+declare -A SEEN=()
 FILES=()
 for p in "${CANDIDATES[@]}"; do
-  [ -n "$p" ] && [ -e "$p" ] && FILES+=("${p#/}")
+  [ -n "$p" ] && [ -e "$p" ] || continue
+  p="${p#/}"; p="${p%/}"
+  [ -n "$p" ] && [ -z "${SEEN[$p]:-}" ] || continue
+  SEEN[$p]=1
+  FILES+=("$p")
 done
-log "archiving ${#FILES[@]} path(s)"
+
+# A symlink carries no data: name it when what it points to is not archived.
+REAL=()
+for f in "${FILES[@]}"; do [ -L "/$f" ] || REAL+=("$(readlink -f "/$f")"); done
+for f in "${FILES[@]}"; do
+  [ -L "/$f" ] || continue
+  target=$(readlink -f "/$f"); covered=
+  for r in "${REAL[@]}"; do
+    case "$target/" in "$r/"*) covered=1 ;; esac
+  done
+  [ -n "$covered" ] || log "WARNING: /$f is a symlink to $target, which is not archived"
+done
+
+log "archiving ${#FILES[@]} path(s), $LAYOUT layout"
 tar -C / -czf "$WORK/files.tar.gz" --ignore-failed-read "${FILES[@]}"
 
 # ── 3. Manifest + bundle ──────────────────────────────────────────────────────
@@ -109,6 +142,9 @@ tar -C / -czf "$WORK/files.tar.gz" --ignore-failed-read "${FILES[@]}"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "host=$(hostname -f 2>/dev/null || hostname)"
   echo "app_dir=$APP_DIR"
+  echo "layout=$LAYOUT"
+  if [ "$LAYOUT" = release ]; then echo "release_dir=$(readlink -f "$APP_DIR")"; fi
+  if [ -d "$SHARED_DIR" ]; then echo "shared_dir=$SHARED_DIR"; fi
   echo "release=$(cat "$APP_DIR/VERSION" 2>/dev/null || echo checkout)"
   echo "git_commit=$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   echo "db_name=$DB_NAME"
@@ -116,7 +152,9 @@ tar -C / -czf "$WORK/files.tar.gz" --ignore-failed-read "${FILES[@]}"
   echo "pg_dump_version=$(pg_dump --version | awk '{print $3}')"
   echo "dump_format=custom (pg_restore)"
   echo "files:"
-  for f in "${FILES[@]}"; do echo "  /$f"; done
+  for f in "${FILES[@]}"; do
+    if [ -L "/$f" ]; then echo "  /$f -> $(readlink "/$f")"; else echo "  /$f"; fi
+  done
   echo "sha256:"
   (cd "$WORK" && sha256sum globals.sql db.dump files.tar.gz | sed 's/^/  /')
 } > "$WORK/manifest.txt"

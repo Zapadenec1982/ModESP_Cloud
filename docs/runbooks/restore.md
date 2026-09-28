@@ -16,10 +16,25 @@
 
 | Член | Вміст | Як використовується |
 |---|---|---|
-| `manifest.txt` | хост, коміт, розмір БД, версія `pg_dump`, перелік файлів, sha256 кожного члена | перевірка цілісності, вибір коміту для checkout |
+| `manifest.txt` | хост, розкладка (`layout`), реліз і коміт, розмір БД, версія `pg_dump`, перелік файлів (символьні посилання — зі стрілкою `->`), sha256 кожного члена | перевірка цілісності, вибір гілки кроків 3 і 6 |
 | `globals.sql` | `pg_dumpall --globals-only`: ролі `modesp_cloud`, `modesp_mqtt_ro` з хешами паролів | крок 4 |
 | `db.dump` | `pg_dump --format=custom --no-owner` бази `modesp_cloud` | крок 5 |
-| `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto/{conf.d,acl.conf,passwd,certs}`, `/etc/letsencrypt`, `/etc/nginx/sites-available/modesp`, `/etc/nginx/conf.d/modesp-ratelimit.conf`, `/etc/systemd/system/modesp-*`, `infra/backup.env` | крок 6 |
+| `files.tar.gz` | `backend/.env`, `webui/.env`, сховище прошивок, ключ FCM, `/etc/mosquitto/{conf.d,acl.conf,passwd,certs}`, `/etc/letsencrypt`, `/etc/nginx/sites-available/modesp`, `/etc/nginx/conf.d/modesp-ratelimit.conf`, `/etc/systemd/system/modesp-*`, `infra/backup.env`; у релізній розкладці — ще весь `/opt/modesp-releases/shared` | крок 6 |
+
+### Розкладка сервера
+
+Кроки 3 і 6 залежать від того, з якої розкладки зроблено архів, — рядок `layout=` у `manifest.txt`:
+
+| `layout` | Старий сервер | Секрети й прошивки у `files.tar.gz` | Кроки |
+|---|---|---|---|
+| `checkout` | `/opt/modesp-cloud` — git-checkout | `opt/modesp-cloud/backend/.env`, `…/backend/firmware/` тощо — звичайні файли | 3а, 6а |
+| `release` | після `deploy.sh init`: `/opt/modesp-cloud` → `release_dir` | `opt/modesp-releases/shared/…` (`shared_dir`); `opt/modesp-cloud/backend/.env` та інші — лише посилання на нього | 3б, 6б |
+
+Маніфест без рядка `layout` зроблено старішим скриптом: розкладка релізна, якщо в `files:` є
+`/opt/modesp-releases/shared` (тоді `release_dir` — `/opt/modesp-releases/releases/<release>`,
+`shared_dir` — `/opt/modesp-releases/shared`), інакше — checkout. Релізний архів не відновлюйте як
+checkout: `.env` у клоні стане посиланням на `shared/`, а `deploy.sh init` на такому каталозі
+зупиниться на півдорозі (`mv: … are the same file`) — з уже зупиненим бекендом.
 
 ## 2. Отримати і перевірити архів
 
@@ -39,28 +54,69 @@ mkdir x && tar -xf modesp_backup_X.tar -C x && cd x
 cat manifest.txt
 sha256sum -c <(sed -n '/^sha256:/,$p' manifest.txt | tail -n +2 | sed 's/^  //')
 pg_restore --list db.dump | head             # дамп читається
+
+grep -E '^(layout|release_dir|shared_dir|release|git_commit)=' manifest.txt   # гілка кроків 3 і 6
+tar -tzvf files.tar.gz | grep -E 'backend/?\.env'   # секрети справді в архіві
 ```
 
 Якщо контрольні суми не збігаються — взяти попередній архів. Не відновлювати з пошкодженого.
 
+Остання команда має показати хоча б один звичайний файл — рядок, що починається з `-`
+(`opt/modesp-cloud/backend/.env` у checkout, `opt/modesp-releases/shared/backend.env` у релізній
+розкладці). Якщо є лише рядок `l…` (посилання `backend/.env -> /opt/modesp-releases/shared/backend.env`),
+це архів релізної розкладки від старого скрипта без `BACKUP_EXTRA_PATHS` (на продакшені — до
+2026-09-28): ні `.env`, ні прошивок у ньому немає, брати новіший.
+
 ## 3. Базова система
 
 ```bash
-git clone https://github.com/Zapadenec1982/ModESP_Cloud.git /opt/modesp-cloud
-cd /opt/modesp-cloud && git checkout <git_commit з manifest.txt>   # той самий код, що й дані
-
 # Пакети, користувач, firewall — як у infra/setup.sh, але БЕЗ його кроків 4 і 7
 # (схему й міграції дасть дамп; юніти повернуться з files.tar.gz):
 apt-get update && apt-get install -y postgresql-16 mosquitto mosquitto-clients \
   nginx certbot python3-certbot-nginx nodejs npm fail2ban ufw curl git
 useradd -r -m -s /bin/bash modesp || true
 ufw allow ssh && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8883/tcp && ufw --force enable
-cd /opt/modesp-cloud/backend && npm ci --omit=dev
-cd /opt/modesp-cloud/webui && npm ci && npm run build
 ```
 
 mosquitto-go-auth збирається за `docs/DEPLOYMENT.md` (розділ MQTT Auth) — це єдиний крок, який не
 входить у пакети дистрибутива; його конфіг повернеться з архіву на кроці 6.
+
+Код — той самий, що й дані; куди його класти, визначає розкладка (розділ 1).
+
+### 3а. `layout=checkout`
+
+```bash
+git clone https://github.com/Zapadenec1982/ModESP_Cloud.git /opt/modesp-cloud
+cd /opt/modesp-cloud && git checkout <git_commit з manifest.txt>   # той самий код, що й дані
+cd /opt/modesp-cloud/backend && npm ci --omit=dev
+cd /opt/modesp-cloud/webui && npm ci && npm run build
+```
+
+### 3б. `layout=release`
+
+Розкладку `infra/deploy.sh` відтворюємо вручну, з тим самим релізом:
+
+```bash
+V=<release з manifest.txt>        # напр. v1.1.0
+R=<release_dir з manifest.txt>    # напр. /opt/modesp-releases/releases/v1.1.0
+mkdir -p /opt/modesp-releases/releases /opt/modesp-releases/shared /opt/modesp-releases/downloads "$R"
+
+# архів релізу і його контрольна сума — з GitHub Releases, як їх бере deploy.sh
+cd /opt/modesp-releases/downloads
+curl -fsSLO "https://github.com/Zapadenec1982/ModESP_Cloud/releases/download/$V/modesp-cloud-$V.tar.gz"
+curl -fsSLO "https://github.com/Zapadenec1982/ModESP_Cloud/releases/download/$V/modesp-cloud-$V.tar.gz.sha256"
+sha256sum -c "modesp-cloud-$V.tar.gz.sha256"
+tar -xzf "modesp-cloud-$V.tar.gz" -C "$R" --strip-components=1
+chown -R modesp:modesp "$R"
+(cd "$R/backend" && runuser -u modesp -- npm ci --omit=dev --no-audit --no-fund)
+ln -sfn "$R" /opt/modesp-cloud       # те саме посилання, що ставить deploy.sh
+```
+
+WebUI у релізі вже зібраний (`webui/dist`). Архіву релізу немає у двох випадках: `release=checkout`
+(колишній git-checkout, який `init` переніс у `releases/checkout-<час>`) і staging-знімок
+`main-<sha>`. Тоді замість завантаження — `git clone` у `"$R"`, `git checkout <git_commit>` (для
+`main-<sha>` — цей `<sha>`), `chown -R modesp:modesp "$R"`, `npm ci` і збірка WebUI, як у 3а, і той
+самий `ln -sfn`.
 
 ## 4. Ролі PostgreSQL
 
@@ -101,6 +157,8 @@ sudo -u postgres psql -d modesp_cloud -Atc "
 
 ## 6. Файли, конфіги, сертифікати
 
+### 6а. `layout=checkout`
+
 ```bash
 cd /root/restore/x
 tar -xzf files.tar.gz -C / --no-same-owner --keep-directory-symlink
@@ -111,12 +169,52 @@ tar -xzf files.tar.gz -C / --no-same-owner --keep-directory-symlink
 chown -R modesp:modesp /opt/modesp-cloud
 chmod 600 /opt/modesp-cloud/backend/.env
 chown root:root /opt/modesp-cloud/infra/backup.env && chmod 600 /opt/modesp-cloud/infra/backup.env
+```
+
+### 6б. `layout=release`
+
+`shared/` повертається з архіву на своє місце, а посилання в реліз ставлять ті самі команди, що й
+`link_shared` в `infra/deploy.sh`. `opt/modesp-cloud/…` з архіву пропускаємо: там лише ці посилання,
+а крізь абсолютне посилання `/opt/modesp-cloud` tar 1.35 (Ubuntu 24.04) і не пише (`Cannot open:
+Invalid cross-device link`).
+
+```bash
+cd /root/restore/x
+tar -xzf files.tar.gz -C / --no-same-owner --keep-directory-symlink --exclude=opt/modesp-cloud
+# відновлює /opt/modesp-releases/shared/{backend.env,webui.env,backup.env,firmware/},
+# /etc/mosquitto/…, /etc/letsencrypt/…, /etc/nginx/…, /etc/systemd/system/modesp-*
+
+S=<shared_dir з manifest.txt>        # напр. /opt/modesp-releases/shared
+ln -sfn "$S/backend.env" /opt/modesp-cloud/backend/.env
+rm -rf /opt/modesp-cloud/backend/firmware && ln -sfn "$S/firmware" /opt/modesp-cloud/backend/firmware
+[ -f "$S/backup.env" ] && ln -sfn "$S/backup.env" /opt/modesp-cloud/infra/backup.env
+[ -f "$S/webui.env" ]  && ln -sfn "$S/webui.env"  /opt/modesp-cloud/webui/.env
+
+# власники й права — як після deploy.sh init
+chown modesp:modesp "$S/backend.env" && chmod 600 "$S/backend.env"
+install -d -o modesp -g modesp "$S/firmware" && chown -R modesp:modesp "$S/firmware"
+[ -f "$S/backup.env" ] && chown root:root "$S/backup.env" && chmod 600 "$S/backup.env"
+chmod 755 /opt/modesp-releases /opt/modesp-releases/releases "$S"
+ls -l /opt/modesp-cloud/backend/.env /opt/modesp-cloud/backend/firmware   # обидва -> $S/…
+```
+
+- Абсолютний `FIRMWARE_STORAGE_PATH` у `backend.env`: каталог прошивок повернувся з архіву за своїм
+  шляхом, а посилання `backend/firmware` бекенд просто не використовує.
+- Рядок у `files:` маніфесту під `/opt/modesp-cloud` без стрілки `->` — справжній файл у каталозі
+  релізу (наприклад, ключ FCM). Його витягнути окремо й покласти в `"$R"` за тим самим шляхом:
+  `mkdir -p /tmp/app && tar -xzf files.tar.gz -C /tmp/app opt/modesp-cloud/<шлях> && cp /tmp/app/opt/modesp-cloud/<шлях> "$R/<шлях>"`.
+- Надалі сервер оновлюється `deploy.sh release`; `init` не потрібен — розкладку вже відтворено.
+
+### Обидві розкладки
+
+```bash
 chmod 600 /etc/mosquitto/passwd 2>/dev/null; chown mosquitto:mosquitto /etc/mosquitto/passwd 2>/dev/null
 
-# nginx: symlink сайту і статики WebUI
+# nginx: symlink сайту, статики WebUI і лендингу
 ln -sf /etc/nginx/sites-available/modesp /etc/nginx/sites-enabled/modesp
 rm -f /etc/nginx/sites-enabled/default
 mkdir -p /var/www/modesp && ln -sfn /opt/modesp-cloud/webui/dist /var/www/modesp/webui
+ln -sfn /opt/modesp-cloud/landing /var/www/modesp/landing
 nginx -t
 
 # Сертифікати: якщо /etc/letsencrypt відновлено — certbot їх підхопить після зміни DNS
@@ -170,3 +268,5 @@ systemctl start modesp-backup.service && cat /var/backups/modesp/last-success
 | `no partition of relation "telemetry" found for row` | дамп із минулого місяця, нових партицій нема | `sudo -u modesp node backend/src/scripts/ensure-partitions.js` |
 | контролери не підключаються після DNS | старий IP у кеші або сертифікат не для домену | `certbot --nginx -d modesp.com.ua`, symlink у `/etc/mosquitto/certs`, `systemctl restart mosquitto` |
 | `gpg: decryption failed: Bad session key` | не той passphrase | passphrase зберігається окремо від сервера (менеджер паролів засновника) |
+| `tar: opt/modesp-cloud/…: Cannot open: Invalid cross-device link` | релізний архів розпаковано без `--exclude=opt/modesp-cloud`, коли `/opt/modesp-cloud` уже посилання | решту tar розпакував; поставити посилання й права з кроку 6б |
+| у `files.tar.gz` лише `l… opt/modesp-cloud/backend/.env -> …/shared/backend.env`, самого `shared/backend.env` немає | архів релізної розкладки від старого скрипта без `BACKUP_EXTRA_PATHS` (на продакшені — до 2026-09-28) | секретів і прошивок у ньому немає — взяти новіший архів |
