@@ -162,7 +162,10 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
 - **Critical limits on the equipment** — `haccp_max`/`haccp_min`, the allowed deviation and "what is
   stored" on the device card (the HACCP block of the edit form); the excursion threshold in the
   organisation's and the site's settings; with no limits the log falls back to the controller's alarm
-  limits, and with neither it prints "not set"
+  limits, and with neither it prints "not set" and says the excursions cannot be assessed instead of
+  counting zero; the log speaks of air-temperature excursions, since the air is what the sensor measures;
+  an interval the period covers only partly is marked "from hh:mm" / "until hh:mm", the log is one table
+  per day, and the file is named after the local days the document prints
 - **Limits in bulk** — typical limits by what the equipment is for (frozen ≤ −18 ±3, ice cream, chilled
   0…6, meat 0…4, fish 0…2, dairy 2…6, vegetables 2…10, medicines 2…8 ±0; labels in four languages) as a
   starting point: a preset on the device card, the "HACCP limits" bulk action on the dashboard (by default
@@ -176,8 +179,12 @@ Built-in tools for food safety compliance (Ukraine HACCP regulations).
   vector chart carrying the critical-limit line, how the equipment worked (compressor duty and starts, the
   longest run, defrost cycles and their length, the door, offline, gaps, HACCP excursions), every alarm
   with its name in the report's language and its work orders, cloud connectivity, maintenance hints, work
-  orders and service records, and an engineering log by interval; the same verification code, SHA-256 and
-  QR; a separate type in the report archive
+  orders and service records, and an engineering log by interval (one table per day); it opens with a
+  conclusion for the period drawn from the report's own facts — the warmest interval and what coincided
+  with it, the HACCP verdict or "cannot be assessed", the event counts, "action needed" only for what is
+  still open; "last data in the period" from the period itself, a note on raw measurements versus interval
+  averages, a legend that names only what is drawn; the same verification code, SHA-256 and QR — in the
+  header; a separate type in the report archive
 - Empty periods answer `404 no_data` instead of producing a blank document
 
 ### Scheduled Reports

@@ -11,11 +11,19 @@
  * connectivity events, maintenance hints, work orders and service records,
  * and an engineering log per interval. Same verification: a code, the
  * SHA-256 of the data and a QR code with the verification URL.
+ *
+ * It opens with a conclusion built from those facts alone — the warmest
+ * interval and what coincided with it, the HACCP verdict or that none is
+ * possible without a limit, the event counts, and whether anything is still
+ * open — and says it was generated from the device data, not from a look at
+ * the product. The summary table is over raw measurements while the chart and
+ * the log are interval averages; the note under the table says so, so a raw
+ * maximum above every plotted point is not read as a chart with holes.
  */
 
 const haccp = require('./haccp-report');
 const { fetchSeries, summarize, stepOf, defrostIntervals, detectExcursions, detectGaps, limitsFor, toleranceOf, limitSentence,
-        localParts, fmtDuration, tpl, num, fmt1, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS } = haccp.helpers;
+        localParts, fmtDuration, fmtStep, tpl, num, fmt1, edgeNotes, dayTable, DEFAULT_EXCURSION_MIN, DEFAULT_DOOR_DELAY_MS, MAX_ROWS } = haccp.helpers;
 const { localFmt, planSource, render, registerExport, verifyUrlFor, newCode, fmtCode, sha256 } = haccp;
 const { EVENT_RETENTION_DAYS } = require('../lib/platform-defaults');
 
@@ -29,20 +37,22 @@ const STRINGS = {
     organisation: 'Організація', tax_id: 'Код ЄДРПОУ/ІПН', serviced_by: 'Обслуговує', site: 'Точка', address: 'Адреса', timezone: 'Часовий пояс',
     period: 'Період', bucket: 'Інтервал', generated: 'Сформовано', by: 'ким', source: 'Джерело даних', source_raw: 'первинні вимірювання приладу', source_hourly: 'погодинний архів',
     not_haccp: 'Технічний документ для сервісу; для інспектора призначений журнал контролю температури (HACCP).',
-    device: 'Обладнання', device_id: 'Ідентифікатор', serial: 'Серійний номер', model: 'Модель', firmware: 'Прошивка', last_seen: 'Останні дані', product: 'Продукція',
+    device: 'Обладнання', device_id: 'Ідентифікатор', serial: 'Серійний номер', model: 'Модель', firmware: 'Прошивка', last_data: 'Останні дані за період', product: 'Продукція',
     settings: 'Налаштування приладу (останній стан)', no_settings: 'стан приладу ще не отримано',
     keys: { 'thermostat.setpoint': 'Уставка', 'thermostat.differential': 'Гістерезис', 'protection.high_limit': 'Межа тривоги, верхня', 'protection.low_limit': 'Межа тривоги, нижня', 'protection.high_alarm_delay': 'Затримка тривоги, верхня', 'protection.low_alarm_delay': 'Затримка тривоги, нижня', 'protection.door_delay': 'Затримка тривоги дверей', 'thermostat.min_off_time': 'Мін. пауза компресора', 'thermostat.min_on_time': 'Мін. робота компресора', 'thermostat.night_setback': 'Нічний зсув', 'defrost.interval': 'Інтервал відтайки', 'defrost.max_duration': 'Макс. тривалість відтайки', 'defrost.termination': 'Завершення відтайки', 'protection.max_starts_hour': 'Макс. пусків за годину', 'protection.max_continuous_run': 'Макс. безперервна робота', 'protection.pulldown_min_drop': 'Мін. падіння при охолодженні', 'protection.max_rise_rate': 'Макс. швидкість росту' },
     haccp_limit: 'Критична межа HACCP', excursion_rule: 'відхилення — довше ніж {0} хв за межею, відтайка не враховується',
     summary: 'Температури за період', channel: 'Канал', min: 'Мін °C', max: 'Макс °C', avg: 'Сер. °C', samples: 'Вимірювань',
+    summary_note: 'Мін/макс/сер. — по всіх первинних вимірюваннях за період (кожні {0}); графік та інженерний журнал показують середнє за інтервал {1}, тому короткі піки на них згладжені.',
+    summary_note_hourly: 'Мін/макс — по погодинному архіву (мін/макс кожної години); графік та інженерний журнал показують середнє за інтервал {0}.',
     ch: { air: 'Повітря', evap: 'Випарник', cond: 'Конденсатор', setpoint: 'Уставка', comp: 'Компресор', defrost: 'Відтайка' },
     delta_t: 'ΔT повітря − випарник (сер.)', cond_max: 'Конденсатор, макс.',
     channels_absent: 'Канали {0} за цей період відсутні: їх або не передає прилад, або період старший за термін зберігання інженерних каналів (повітря і відтайка зберігаються довше — їх потребує HACCP-журнал).',
-    chart: 'Графік', chart_legend: 'синя — повітря, зелена — випарник, сіра пунктирна — уставка, червона — межа HACCP',
+    chart: 'Графік (середнє за {0})', legend_air: 'синя — повітря', legend_evap: 'зелена — випарник', legend_setpoint: 'сіра пунктирна — уставка', legend_limit: 'червона пунктирна — межа HACCP',
     operation: 'Робота обладнання', comp_duty: 'Компресор: частка часу', comp_starts: 'Пусків компресора', comp_longest: 'Найдовша робота без зупинки', comp_per_hour: 'пусків/год',
     defrost_cycles: 'Циклів відтайки', defrost_total: 'Загальна тривалість відтайки', defrost_avg: 'Середня тривалість відтайки',
     door_events: 'Тривог дверей', door_total: 'Двері відчинені (сумарно, за тривогами)',
     offline_periods: 'Періодів офлайн', offline_total: 'Офлайн сумарно', gaps: 'Розривів запису', gaps_total: 'Розриви сумарно',
-    excursions: 'Відхилень HACCP', excursions_total: 'Відхилення сумарно', none: 'немає', nd: 'н/д',
+    excursions: 'Відхилень HACCP', excursions_total: 'Відхилення сумарно', none: 'немає', nd: 'н/д', nd_no_limit: 'н/д — межу не задано',
     alarms: 'Тривоги за період', no_alarms: 'Тривог за період не зафіксовано.',
     time: 'Час', event: 'Подія', severity: 'Важливість', value: 'Значення', limit: 'межа', cleared: 'Знято', active: 'Активна', ack: 'Підтверджено', note: 'нотатка', work_order: 'Наряд',
     sev: { critical: 'критична', warning: 'попередження', info: 'інформація' },
@@ -52,8 +62,19 @@ const STRINGS = {
     work: 'Наряди й сервісні записи', no_work: 'Нарядів і сервісних записів за період немає.', col_kind: 'Тип', col_what: 'Що зроблено / назва', col_who: 'Хто', service_record: 'Сервісний запис', parts: 'запчастини', duration: 'тривалість',
     wo: { new: 'новий', assigned: 'призначено', in_progress: 'у роботі', done: 'виконано', cancelled: 'скасовано' },
     log: 'Інженерний журнал', col_time: 'Час', col_comp: 'Компр. %', col_defrost: 'Відтайка', col_note: 'Примітка', note_offline: 'офлайн', note_gap: 'розрив', note_door: 'двері', yes: 'так',
+    note_from: 'з {0}', note_to: 'до {0}', partial_note: 'Інтервал, який період покриває лише частково, позначено в примітці («з …», «до …»); його значення обчислено за наявну частину.',
+    conclusion: 'Висновок за період',
+    c_peak: 'Найвища температура повітря в журналі — {0} °C ({1}, середнє за інтервал): {2}.',
+    c_peak_defrost: 'під час відтайки', c_peak_door: 'при тривозі дверей', c_peak_offline: 'у період офлайн', c_peak_excursion: 'у межах відхилення HACCP', c_peak_plain: 'поза відтайкою, тривогами дверей і звʼязку — причина з даних не видна',
+    c_next: 'Наступний інтервал: {0} °C.',
+    c_excursions: 'Відхилень HACCP: {0} ({1}).', c_excursions_none: 'Відхилень HACCP не зафіксовано.', c_excursions_no_limit: 'Відхилення HACCP оцінити неможливо — критичну межу не задано; задайте її в картці обладнання.',
+    c_events: 'Тривог: {0} (активних на кінець періоду: {1}) · тривог дверей: {2} · періодів офлайн: {3} · розривів запису: {4}.',
+    c_events_none: 'Тривог, періодів офлайн і розривів запису за період не було.',
+    c_action_needed: 'Дія потрібна: {0}.', c_action_check: 'На розсуд техніка: події періоду завершилися самі, але варто переглянути їхню причину.', c_action_none: 'Дія не потрібна за даними періоду.',
+    c_reason_alarm: 'активна тривога', c_reason_excursion: 'відхилення HACCP', c_reason_hint: 'відкрита рекомендація з обслуговування', c_reason_offline: 'прилад досі офлайн', c_reason_wo: 'незавершений наряд',
+    c_auto: 'Висновок сформовано автоматично за даними приладу; він не оцінює стан продукції та не замінює огляд техніка.',
     min_short: 'хв', h_short: 'год', d_short: 'дн', s_short: 'с', pct: '%',
-    verify: 'Перевірка автентичності', verify_text: 'Код перевірки та SHA-256 даних звіту зберігаються платформою. Перевірити:',
+    verify: 'Перевірка автентичності', verify_text: 'SHA-256 обчислено з даних звіту — періоду, обладнання, кожного рядка журналу, тривог, періодів офлайн і показників компресора, — а не з файлу PDF. За кодом перевірки платформа показує, коли, ким і за який період сформовано звіт, і той самий SHA-256: збіг означає, що дані не змінювалися. Перевірити:',
     page: 'Сторінка', of: 'з', no_data: 'Дані за період відсутні',
   },
   en: {
@@ -61,20 +82,22 @@ const STRINGS = {
     organisation: 'Organisation', tax_id: 'Tax ID', serviced_by: 'Serviced by', site: 'Site', address: 'Address', timezone: 'Time zone',
     period: 'Period', bucket: 'Interval', generated: 'Generated', by: 'by', source: 'Data source', source_raw: 'raw measurements of the device', source_hourly: 'hourly archive',
     not_haccp: 'A technical document for service; the inspector gets the HACCP temperature control log instead.',
-    device: 'Equipment', device_id: 'Identifier', serial: 'Serial number', model: 'Model', firmware: 'Firmware', last_seen: 'Last data', product: 'Product',
+    device: 'Equipment', device_id: 'Identifier', serial: 'Serial number', model: 'Model', firmware: 'Firmware', last_data: 'Last data in the period', product: 'Product',
     settings: 'Controller settings (last state)', no_settings: 'no state received from the device yet',
     keys: { 'thermostat.setpoint': 'Setpoint', 'thermostat.differential': 'Differential', 'protection.high_limit': 'Alarm limit, high', 'protection.low_limit': 'Alarm limit, low', 'protection.high_alarm_delay': 'Alarm delay, high', 'protection.low_alarm_delay': 'Alarm delay, low', 'protection.door_delay': 'Door alarm delay', 'thermostat.min_off_time': 'Min compressor off time', 'thermostat.min_on_time': 'Min compressor on time', 'thermostat.night_setback': 'Night setback', 'defrost.interval': 'Defrost interval', 'defrost.max_duration': 'Max defrost duration', 'defrost.termination': 'Defrost termination', 'protection.max_starts_hour': 'Max starts per hour', 'protection.max_continuous_run': 'Max continuous run', 'protection.pulldown_min_drop': 'Min pull-down drop', 'protection.max_rise_rate': 'Max rise rate' },
     haccp_limit: 'HACCP critical limit', excursion_rule: 'excursion — longer than {0} min past the limit, defrost excluded',
     summary: 'Temperatures over the period', channel: 'Channel', min: 'Min °C', max: 'Max °C', avg: 'Avg °C', samples: 'Samples',
+    summary_note: 'Min/max/avg are over all raw measurements of the period (every {0}); the chart and the engineering log show the {1} interval average, so short peaks are smoothed there.',
+    summary_note_hourly: 'Min/max are from the hourly archive (min/max of every hour); the chart and the engineering log show the {0} interval average.',
     ch: { air: 'Air', evap: 'Evaporator', cond: 'Condenser', setpoint: 'Setpoint', comp: 'Compressor', defrost: 'Defrost' },
     delta_t: 'ΔT air − evaporator (avg)', cond_max: 'Condenser, max',
     channels_absent: 'Channels {0} are absent for this period: either the controller does not report them, or the period predates the retention of the engineering channels (air and defrost are kept longer — the HACCP journal needs them).',
-    chart: 'Chart', chart_legend: 'blue — air, green — evaporator, grey dashed — setpoint, red — HACCP limit',
+    chart: 'Chart ({0} average)', legend_air: 'blue — air', legend_evap: 'green — evaporator', legend_setpoint: 'grey dashed — setpoint', legend_limit: 'red dashed — HACCP limit',
     operation: 'Equipment operation', comp_duty: 'Compressor: share of time', comp_starts: 'Compressor starts', comp_longest: 'Longest uninterrupted run', comp_per_hour: 'starts/h',
     defrost_cycles: 'Defrost cycles', defrost_total: 'Total defrost time', defrost_avg: 'Average defrost duration',
     door_events: 'Door alarms', door_total: 'Door open (total, by alarms)',
     offline_periods: 'Offline periods', offline_total: 'Offline total', gaps: 'Recording gaps', gaps_total: 'Gaps total',
-    excursions: 'HACCP excursions', excursions_total: 'Excursions total', none: 'none', nd: 'n/a',
+    excursions: 'HACCP excursions', excursions_total: 'Excursions total', none: 'none', nd: 'n/a', nd_no_limit: 'n/a — no limit set',
     alarms: 'Alarms during the period', no_alarms: 'No alarms during the period.',
     time: 'Time', event: 'Event', severity: 'Severity', value: 'Value', limit: 'limit', cleared: 'Cleared', active: 'Active', ack: 'Acknowledged', note: 'note', work_order: 'Work order',
     sev: { critical: 'critical', warning: 'warning', info: 'info' },
@@ -84,8 +107,19 @@ const STRINGS = {
     work: 'Work orders and service records', no_work: 'No work orders or service records during the period.', col_kind: 'Kind', col_what: 'Work done / title', col_who: 'Who', service_record: 'Service record', parts: 'parts', duration: 'duration',
     wo: { new: 'new', assigned: 'assigned', in_progress: 'in progress', done: 'done', cancelled: 'cancelled' },
     log: 'Engineering log', col_time: 'Time', col_comp: 'Comp. %', col_defrost: 'Defrost', col_note: 'Note', note_offline: 'offline', note_gap: 'gap', note_door: 'door', yes: 'yes',
+    note_from: 'from {0}', note_to: 'until {0}', partial_note: 'An interval the period covers only partly is marked in the note («from …», «until …»); its value is computed from the covered part.',
+    conclusion: 'Conclusion for the period',
+    c_peak: 'Highest air temperature in the log — {0} °C ({1}, interval average): {2}.',
+    c_peak_defrost: 'during defrost', c_peak_door: 'during a door alarm', c_peak_offline: 'during an offline period', c_peak_excursion: 'within a HACCP excursion', c_peak_plain: 'outside defrost, door and connectivity events — no cause is visible in the data',
+    c_next: 'Next interval: {0} °C.',
+    c_excursions: 'HACCP excursions: {0} ({1}).', c_excursions_none: 'No HACCP excursions recorded.', c_excursions_no_limit: 'HACCP excursions cannot be assessed — no critical limit is set; set it on the equipment card.',
+    c_events: 'Alarms: {0} (active at the end of the period: {1}) · door alarms: {2} · offline periods: {3} · recording gaps: {4}.',
+    c_events_none: 'No alarms, offline periods or recording gaps during the period.',
+    c_action_needed: 'Action needed: {0}.', c_action_check: "At the technician's discretion: the events of the period ended on their own, but their cause is worth a look.", c_action_none: 'No action needed on the data of the period.',
+    c_reason_alarm: 'an active alarm', c_reason_excursion: 'a HACCP excursion', c_reason_hint: 'an open maintenance hint', c_reason_offline: 'the device is still offline', c_reason_wo: 'an unfinished work order',
+    c_auto: "This conclusion is generated automatically from the device data; it does not assess the product and does not replace a technician's inspection.",
     min_short: 'min', h_short: 'h', d_short: 'd', s_short: 's', pct: '%',
-    verify: 'Authenticity check', verify_text: 'The verification code and the SHA-256 of the report data are stored by the platform. Verify at:',
+    verify: 'Authenticity check', verify_text: 'The SHA-256 is computed from the report data — the period, the equipment, every log row, the alarms, the offline periods and the compressor figures — not from the PDF file. By the verification code the platform shows when, by whom and for which period the report was generated, and the same SHA-256: a match means the data has not been altered. Verify at:',
     page: 'Page', of: 'of', no_data: 'No data for the period',
   },
   pl: {
@@ -93,20 +127,22 @@ const STRINGS = {
     organisation: 'Organizacja', tax_id: 'NIP', serviced_by: 'Obsługuje', site: 'Lokalizacja', address: 'Adres', timezone: 'Strefa czasowa',
     period: 'Okres', bucket: 'Interwał', generated: 'Wygenerowano', by: 'przez', source: 'Źródło danych', source_raw: 'pomiary surowe urządzenia', source_hourly: 'archiwum godzinowe',
     not_haccp: 'Dokument techniczny dla serwisu; dla inspektora przeznaczony jest dziennik kontroli temperatury (HACCP).',
-    device: 'Urządzenie', device_id: 'Identyfikator', serial: 'Numer seryjny', model: 'Model', firmware: 'Firmware', last_seen: 'Ostatnie dane', product: 'Produkt',
+    device: 'Urządzenie', device_id: 'Identyfikator', serial: 'Numer seryjny', model: 'Model', firmware: 'Firmware', last_data: 'Ostatnie dane w okresie', product: 'Produkt',
     settings: 'Ustawienia sterownika (ostatni stan)', no_settings: 'stan urządzenia nie został jeszcze odebrany',
     keys: { 'thermostat.setpoint': 'Nastawa', 'thermostat.differential': 'Histereza', 'protection.high_limit': 'Limit alarmu, górny', 'protection.low_limit': 'Limit alarmu, dolny', 'protection.high_alarm_delay': 'Opóźnienie alarmu, górne', 'protection.low_alarm_delay': 'Opóźnienie alarmu, dolne', 'protection.door_delay': 'Opóźnienie alarmu drzwi', 'thermostat.min_off_time': 'Min. przerwa sprężarki', 'thermostat.min_on_time': 'Min. praca sprężarki', 'thermostat.night_setback': 'Nocne przesunięcie', 'defrost.interval': 'Interwał odszraniania', 'defrost.max_duration': 'Maks. czas odszraniania', 'defrost.termination': 'Zakończenie odszraniania', 'protection.max_starts_hour': 'Maks. startów na godzinę', 'protection.max_continuous_run': 'Maks. praca ciągła', 'protection.pulldown_min_drop': 'Min. spadek przy schładzaniu', 'protection.max_rise_rate': 'Maks. tempo wzrostu' },
     haccp_limit: 'Limit krytyczny HACCP', excursion_rule: 'odchylenie — dłużej niż {0} min poza limitem, odszranianie wyłączone',
     summary: 'Temperatury w okresie', channel: 'Kanał', min: 'Min °C', max: 'Maks °C', avg: 'Śr. °C', samples: 'Pomiary',
+    summary_note: 'Min/maks/śr. — ze wszystkich pomiarów surowych w okresie (co {0}); wykres i dziennik inżynierski pokazują średnią z interwału {1}, więc krótkie piki są na nich wygładzone.',
+    summary_note_hourly: 'Min/maks — z archiwum godzinowego (min/maks każdej godziny); wykres i dziennik inżynierski pokazują średnią z interwału {0}.',
     ch: { air: 'Powietrze', evap: 'Parownik', cond: 'Skraplacz', setpoint: 'Nastawa', comp: 'Sprężarka', defrost: 'Odszranianie' },
     delta_t: 'ΔT powietrze − parownik (śr.)', cond_max: 'Skraplacz, maks.',
     channels_absent: 'Kanały {0} są nieobecne w tym okresie: albo sterownik ich nie przesyła, albo okres jest starszy niż czas przechowywania kanałów inżynierskich (powietrze i odszranianie są przechowywane dłużej — potrzebuje ich dziennik HACCP).',
-    chart: 'Wykres', chart_legend: 'niebieska — powietrze, zielona — parownik, szara przerywana — nastawa, czerwona — limit HACCP',
+    chart: 'Wykres (średnia z {0})', legend_air: 'niebieska — powietrze', legend_evap: 'zielona — parownik', legend_setpoint: 'szara przerywana — nastawa', legend_limit: 'czerwona przerywana — limit HACCP',
     operation: 'Praca urządzenia', comp_duty: 'Sprężarka: udział czasu', comp_starts: 'Startów sprężarki', comp_longest: 'Najdłuższa praca bez przerwy', comp_per_hour: 'startów/h',
     defrost_cycles: 'Cykli odszraniania', defrost_total: 'Łączny czas odszraniania', defrost_avg: 'Średni czas odszraniania',
     door_events: 'Alarmów drzwi', door_total: 'Drzwi otwarte (łącznie, wg alarmów)',
     offline_periods: 'Okresów offline', offline_total: 'Offline łącznie', gaps: 'Przerw w zapisie', gaps_total: 'Przerwy łącznie',
-    excursions: 'Odchyleń HACCP', excursions_total: 'Odchylenia łącznie', none: 'brak', nd: 'b/d',
+    excursions: 'Odchyleń HACCP', excursions_total: 'Odchylenia łącznie', none: 'brak', nd: 'b/d', nd_no_limit: 'b/d — nie ustawiono limitu',
     alarms: 'Alarmy w okresie', no_alarms: 'Brak alarmów w okresie.',
     time: 'Czas', event: 'Zdarzenie', severity: 'Ważność', value: 'Wartość', limit: 'limit', cleared: 'Zakończony', active: 'Aktywny', ack: 'Potwierdzony', note: 'uwaga', work_order: 'Zlecenie',
     sev: { critical: 'krytyczny', warning: 'ostrzeżenie', info: 'informacja' },
@@ -116,8 +152,19 @@ const STRINGS = {
     work: 'Zlecenia i wpisy serwisowe', no_work: 'Brak zleceń i wpisów serwisowych w okresie.', col_kind: 'Rodzaj', col_what: 'Wykonano / tytuł', col_who: 'Kto', service_record: 'Wpis serwisowy', parts: 'części', duration: 'czas',
     wo: { new: 'nowe', assigned: 'przydzielone', in_progress: 'w toku', done: 'wykonane', cancelled: 'anulowane' },
     log: 'Dziennik inżynierski', col_time: 'Czas', col_comp: 'Spręż. %', col_defrost: 'Odszr.', col_note: 'Uwaga', note_offline: 'offline', note_gap: 'przerwa', note_door: 'drzwi', yes: 'tak',
+    note_from: 'od {0}', note_to: 'do {0}', partial_note: 'Interwał, który okres obejmuje tylko częściowo, jest oznaczony w uwadze („od …”, „do …”); jego wartość obliczono z objętej części.',
+    conclusion: 'Wniosek za okres',
+    c_peak: 'Najwyższa temperatura powietrza w dzienniku — {0} °C ({1}, średnia z interwału): {2}.',
+    c_peak_defrost: 'podczas odszraniania', c_peak_door: 'podczas alarmu drzwi', c_peak_offline: 'w okresie offline', c_peak_excursion: 'w ramach odchylenia HACCP', c_peak_plain: 'poza odszranianiem, alarmami drzwi i łączności — przyczyna nie wynika z danych',
+    c_next: 'Następny interwał: {0} °C.',
+    c_excursions: 'Odchyleń HACCP: {0} ({1}).', c_excursions_none: 'Nie odnotowano odchyleń HACCP.', c_excursions_no_limit: 'Odchyleń HACCP nie można ocenić — nie ustawiono limitu krytycznego; ustaw go w karcie urządzenia.',
+    c_events: 'Alarmów: {0} (aktywnych na koniec okresu: {1}) · alarmów drzwi: {2} · okresów offline: {3} · przerw w zapisie: {4}.',
+    c_events_none: 'W okresie nie było alarmów, okresów offline ani przerw w zapisie.',
+    c_action_needed: 'Wymagane działanie: {0}.', c_action_check: 'Do oceny technika: zdarzenia okresu zakończyły się same, ale warto sprawdzić ich przyczynę.', c_action_none: 'Według danych okresu działanie nie jest wymagane.',
+    c_reason_alarm: 'aktywny alarm', c_reason_excursion: 'odchylenie HACCP', c_reason_hint: 'otwarta wskazówka serwisowa', c_reason_offline: 'urządzenie nadal offline', c_reason_wo: 'niezakończone zlecenie',
+    c_auto: 'Wniosek wygenerowano automatycznie z danych urządzenia; nie ocenia on stanu produktu i nie zastępuje przeglądu technika.',
     min_short: 'min', h_short: 'h', d_short: 'dn', s_short: 's', pct: '%',
-    verify: 'Weryfikacja autentyczności', verify_text: 'Kod weryfikacyjny i SHA-256 danych raportu są przechowywane przez platformę. Sprawdź:',
+    verify: 'Weryfikacja autentyczności', verify_text: 'SHA-256 obliczono z danych raportu — okresu, urządzenia, każdego wiersza dziennika, alarmów, okresów offline i wskaźników sprężarki — a nie z pliku PDF. Po kodzie weryfikacyjnym platforma pokazuje, kiedy, przez kogo i za jaki okres wygenerowano raport, oraz ten sam SHA-256: zgodność oznacza, że dane nie zostały zmienione. Sprawdź:',
     page: 'Strona', of: 'z', no_data: 'Brak danych za okres',
   },
   de: {
@@ -125,20 +172,22 @@ const STRINGS = {
     organisation: 'Organisation', tax_id: 'Steuernummer', serviced_by: 'Betreut von', site: 'Standort', address: 'Adresse', timezone: 'Zeitzone',
     period: 'Zeitraum', bucket: 'Intervall', generated: 'Erstellt', by: 'von', source: 'Datenquelle', source_raw: 'Rohmessungen des Geräts', source_hourly: 'Stundenarchiv',
     not_haccp: 'Technisches Dokument für den Service; der Prüfer erhält das HACCP-Temperaturkontrollprotokoll.',
-    device: 'Anlage', device_id: 'Kennung', serial: 'Seriennummer', model: 'Modell', firmware: 'Firmware', last_seen: 'Letzte Daten', product: 'Produkt',
+    device: 'Anlage', device_id: 'Kennung', serial: 'Seriennummer', model: 'Modell', firmware: 'Firmware', last_data: 'Letzte Daten im Zeitraum', product: 'Produkt',
     settings: 'Reglereinstellungen (letzter Zustand)', no_settings: 'noch kein Zustand vom Gerät empfangen',
     keys: { 'thermostat.setpoint': 'Sollwert', 'thermostat.differential': 'Hysterese', 'protection.high_limit': 'Alarmgrenze, oben', 'protection.low_limit': 'Alarmgrenze, unten', 'protection.high_alarm_delay': 'Alarmverzögerung, oben', 'protection.low_alarm_delay': 'Alarmverzögerung, unten', 'protection.door_delay': 'Türalarm-Verzögerung', 'thermostat.min_off_time': 'Min. Verdichterpause', 'thermostat.min_on_time': 'Min. Verdichterlaufzeit', 'thermostat.night_setback': 'Nachtabsenkung', 'defrost.interval': 'Abtauintervall', 'defrost.max_duration': 'Max. Abtaudauer', 'defrost.termination': 'Abtauende', 'protection.max_starts_hour': 'Max. Starts pro Stunde', 'protection.max_continuous_run': 'Max. Dauerlauf', 'protection.pulldown_min_drop': 'Min. Abkühlung beim Anlauf', 'protection.max_rise_rate': 'Max. Anstiegsrate' },
     haccp_limit: 'Kritischer HACCP-Grenzwert', excursion_rule: 'Abweichung — länger als {0} Min. außerhalb des Grenzwerts, Abtauung ausgenommen',
     summary: 'Temperaturen im Zeitraum', channel: 'Kanal', min: 'Min °C', max: 'Max °C', avg: 'Mittel °C', samples: 'Messungen',
+    summary_note: 'Min/Max/Mittel gelten über alle Rohmessungen des Zeitraums (alle {0}); Diagramm und technisches Protokoll zeigen das Intervallmittel über {1}, kurze Spitzen sind dort daher geglättet.',
+    summary_note_hourly: 'Min/Max stammen aus dem Stundenarchiv (Min/Max jeder Stunde); Diagramm und technisches Protokoll zeigen das Intervallmittel über {0}.',
     ch: { air: 'Luft', evap: 'Verdampfer', cond: 'Verflüssiger', setpoint: 'Sollwert', comp: 'Verdichter', defrost: 'Abtauung' },
     delta_t: 'ΔT Luft − Verdampfer (Mittel)', cond_max: 'Verflüssiger, max.',
     channels_absent: 'Die Kanäle {0} fehlen für diesen Zeitraum: Entweder meldet der Regler sie nicht, oder der Zeitraum liegt vor der Aufbewahrungsfrist der technischen Kanäle (Luft und Abtauung werden länger gespeichert — das HACCP-Protokoll braucht sie).',
-    chart: 'Diagramm', chart_legend: 'blau — Luft, grün — Verdampfer, grau gestrichelt — Sollwert, rot — HACCP-Grenzwert',
+    chart: 'Diagramm (Mittel über {0})', legend_air: 'blau — Luft', legend_evap: 'grün — Verdampfer', legend_setpoint: 'grau gestrichelt — Sollwert', legend_limit: 'rot gestrichelt — HACCP-Grenzwert',
     operation: 'Betrieb der Anlage', comp_duty: 'Verdichter: Zeitanteil', comp_starts: 'Verdichterstarts', comp_longest: 'Längster Lauf ohne Pause', comp_per_hour: 'Starts/h',
     defrost_cycles: 'Abtauzyklen', defrost_total: 'Abtauzeit gesamt', defrost_avg: 'Mittlere Abtaudauer',
     door_events: 'Türalarme', door_total: 'Tür offen (gesamt, laut Alarmen)',
     offline_periods: 'Offline-Zeiträume', offline_total: 'Offline gesamt', gaps: 'Aufzeichnungslücken', gaps_total: 'Lücken gesamt',
-    excursions: 'HACCP-Abweichungen', excursions_total: 'Abweichungen gesamt', none: 'keine', nd: 'k. A.',
+    excursions: 'HACCP-Abweichungen', excursions_total: 'Abweichungen gesamt', none: 'keine', nd: 'k. A.', nd_no_limit: 'k. A. — kein Grenzwert festgelegt',
     alarms: 'Alarme im Zeitraum', no_alarms: 'Keine Alarme im Zeitraum.',
     time: 'Zeit', event: 'Ereignis', severity: 'Schwere', value: 'Wert', limit: 'Grenze', cleared: 'Beendet', active: 'Aktiv', ack: 'Bestätigt', note: 'Notiz', work_order: 'Auftrag',
     sev: { critical: 'kritisch', warning: 'Warnung', info: 'Info' },
@@ -148,8 +197,19 @@ const STRINGS = {
     work: 'Aufträge und Serviceeinträge', no_work: 'Keine Aufträge und Serviceeinträge im Zeitraum.', col_kind: 'Art', col_what: 'Erledigt / Titel', col_who: 'Wer', service_record: 'Serviceeintrag', parts: 'Teile', duration: 'Dauer',
     wo: { new: 'neu', assigned: 'zugewiesen', in_progress: 'in Arbeit', done: 'erledigt', cancelled: 'storniert' },
     log: 'Technisches Protokoll', col_time: 'Zeit', col_comp: 'Verd. %', col_defrost: 'Abtau.', col_note: 'Bemerkung', note_offline: 'offline', note_gap: 'Lücke', note_door: 'Tür', yes: 'ja',
+    note_from: 'ab {0}', note_to: 'bis {0}', partial_note: 'Ein Intervall, das der Zeitraum nur teilweise abdeckt, ist in der Bemerkung gekennzeichnet („ab …“, „bis …“); sein Wert ist aus dem abgedeckten Teil berechnet.',
+    conclusion: 'Fazit für den Zeitraum',
+    c_peak: 'Höchste Lufttemperatur im Protokoll — {0} °C ({1}, Intervallmittel): {2}.',
+    c_peak_defrost: 'während der Abtauung', c_peak_door: 'während eines Türalarms', c_peak_offline: 'in einem Offline-Zeitraum', c_peak_excursion: 'innerhalb einer HACCP-Abweichung', c_peak_plain: 'außerhalb von Abtauung, Tür- und Verbindungsereignissen — aus den Daten ist keine Ursache ersichtlich',
+    c_next: 'Nächstes Intervall: {0} °C.',
+    c_excursions: 'HACCP-Abweichungen: {0} ({1}).', c_excursions_none: 'Keine HACCP-Abweichungen festgestellt.', c_excursions_no_limit: 'HACCP-Abweichungen sind nicht bewertbar — kein kritischer Grenzwert festgelegt; legen Sie ihn in der Anlagenkarte fest.',
+    c_events: 'Alarme: {0} (am Ende des Zeitraums aktiv: {1}) · Türalarme: {2} · Offline-Zeiträume: {3} · Aufzeichnungslücken: {4}.',
+    c_events_none: 'Keine Alarme, Offline-Zeiträume oder Aufzeichnungslücken im Zeitraum.',
+    c_action_needed: 'Handlungsbedarf: {0}.', c_action_check: 'Nach Ermessen des Technikers: Die Ereignisse des Zeitraums endeten von selbst, ihre Ursache ist aber einen Blick wert.', c_action_none: 'Nach den Daten des Zeitraums kein Handlungsbedarf.',
+    c_reason_alarm: 'ein aktiver Alarm', c_reason_excursion: 'eine HACCP-Abweichung', c_reason_hint: 'ein offener Wartungshinweis', c_reason_offline: 'das Gerät ist noch offline', c_reason_wo: 'ein nicht abgeschlossener Auftrag',
+    c_auto: 'Das Fazit wird automatisch aus den Gerätedaten erstellt; es bewertet nicht den Zustand der Ware und ersetzt keine Prüfung durch den Techniker.',
     min_short: 'Min.', h_short: 'Std.', d_short: 'Tg.', s_short: 's', pct: '%',
-    verify: 'Echtheitsprüfung', verify_text: 'Prüfcode und SHA-256 der Berichtsdaten werden von der Plattform gespeichert. Prüfen unter:',
+    verify: 'Echtheitsprüfung', verify_text: 'Der SHA-256 wird aus den Berichtsdaten berechnet — Zeitraum, Anlage, jede Protokollzeile, Alarme, Offline-Zeiträume und Verdichterkennzahlen —, nicht aus der PDF-Datei. Über den Prüfcode zeigt die Plattform, wann, von wem und für welchen Zeitraum der Bericht erstellt wurde, sowie denselben SHA-256: Übereinstimmung bedeutet, dass die Daten unverändert sind. Prüfen unter:',
     page: 'Seite', of: 'von', no_data: 'Keine Daten für den Zeitraum',
   },
 };
@@ -287,6 +347,9 @@ async function collectDevice({ query, device, tenantId, from, to, bucketSec, sou
   const tolerance = toleranceOf(device);
   const defrost = defrostIntervals(raw.series.defrost, stepMs, raw.hourly);
   const airPts = raw.series.air;
+  // The newest measurement inside the period, for the header: a fact of this
+  // document rather than a `devices` column the caller may not have loaded.
+  const lastData = airPts.length ? airPts[airPts.length - 1].t + (raw.hourly ? 3600e3 : 0) : null;
   const excursions = detectExcursions({ points: airPts, limits, tolerance, excursionMin, defrost, stepMs, hourly: raw.hourly });
   const gaps = rows.length ? detectGaps({ points: airPts, from, to, stepMs, hourly: raw.hourly }) : [];
   const comp = compressorStats(raw.series.comp, stepMs, raw.hourly);
@@ -298,7 +361,7 @@ async function collectDevice({ query, device, tenantId, from, to, bucketSec, sou
     fetchDoorIntervals({ query, tenantId, deviceId: device.mqtt_device_id, from, to }),
   ]);
   return { device, rows, buckets, summary, stepSec: Math.round(stepMs / 1000), hourly: raw.hourly, limits, tolerance, excursionMin,
-           defrost, excursions, gaps, comp, offline, alarms, hints, work, doors };
+           defrost, excursions, gaps, comp, offline, alarms, hints, work, doors, lastData };
 }
 
 function canonicalData({ kind, tenant, site, devices, from, to, bucketKey, source, generatedAt }) {
@@ -405,6 +468,55 @@ function settingsRows(S, state) {
   return out;
 }
 
+/**
+ * A short reading of the period for the technician, built only from facts the
+ * report already holds: the warmest interval and what coincided with it, the
+ * HACCP verdict (or that none is possible without a limit), the event counts,
+ * and whether anything is still open. It speaks about the air the sensor
+ * measured, never about the product, and says it was generated automatically.
+ */
+function conclusionBlock({ S, d, tz, bucketSec, hasLimits }) {
+  const lines = [];
+  const stepMs = bucketSec * 1000;
+  const airBuckets = d.buckets.filter(b => b.air);
+  if (airBuckets.length) {
+    let peak = 0;
+    airBuckets.forEach((b, i) => { if (b.air.avg > airBuckets[peak].air.avg) peak = i; });
+    const b = airBuckets[peak];
+    const t0 = new Date(b.time).getTime(), t1 = t0 + stepMs;
+    const ctx = [];
+    if (overlaps(t0, t1, d.defrost)) ctx.push(S.c_peak_defrost);
+    if (overlaps(t0, t1, d.doors)) ctx.push(S.c_peak_door);
+    if (overlaps(t0, t1, d.offline.map(o => [o.from, o.to]))) ctx.push(S.c_peak_offline);
+    if (overlaps(t0, t1, d.excursions.map(e => [e.start, e.end]))) ctx.push(S.c_peak_excursion);
+    const next = airBuckets[peak + 1];
+    lines.push(`${tpl(S.c_peak, fmt1(b.air.avg), localFmt(b.time, tz), ctx.length ? ctx.join(', ') : S.c_peak_plain)}${next ? ' ' + tpl(S.c_next, fmt1(next.air.avg)) : ''}`);
+  }
+  const exMin = d.excursions.reduce((a, e) => a + e.minutes, 0);
+  lines.push(!hasLimits ? S.c_excursions_no_limit : d.excursions.length ? tpl(S.c_excursions, d.excursions.length, fmtDuration(exMin, S)) : S.c_excursions_none);
+  const activeAlarms = d.alarms.filter(a => !a.cleared_at).length;
+  const anyEvents = d.alarms.length + d.doors.length + d.offline.length + d.gaps.length > 0;
+  lines.push(anyEvents ? tpl(S.c_events, d.alarms.length, activeAlarms, d.doors.length, d.offline.length, d.gaps.length) : S.c_events_none);
+
+  // «Action needed» only for what is still open; events that ended on their
+  // own are left to the technician's judgement, never called a danger.
+  const reasons = [];
+  if (activeAlarms) reasons.push(S.c_reason_alarm);
+  if (hasLimits && d.excursions.length) reasons.push(S.c_reason_excursion);
+  if (d.hints.some(h => !h.closed_at)) reasons.push(S.c_reason_hint);
+  if (d.offline.some(o => o.open)) reasons.push(S.c_reason_offline);
+  if (d.work.orders.some(w => w.status !== 'done' && w.status !== 'cancelled')) reasons.push(S.c_reason_wo);
+  const action = reasons.length
+    ? { text: tpl(S.c_action_needed, reasons.join(', ')), color: RED }
+    : { text: anyEvents ? S.c_action_check : S.c_action_none };
+  return [
+    { text: S.conclusion, style: 'subHeader' },
+    { ul: lines, fontSize: 8.5, margin: [0, 2, 0, 3] },
+    { ...action, bold: true, fontSize: 8.5, margin: [0, 0, 0, 3] },
+    { text: S.c_auto, fontSize: 7.5, color: GREY, italics: true, margin: [0, 0, 0, 8] },
+  ];
+}
+
 function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single, doorMin, eventsRetained }) {
   const dev = d.device;
   const state = dev.last_state && typeof dev.last_state === 'object' ? dev.last_state : null;
@@ -419,9 +531,9 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
         body: [
           [{ text: `${S.device}:`, bold: true }, `${dev.name || dev.mqtt_device_id}`, { text: `${S.device_id}:`, bold: true }, `${dev.mqtt_device_id}`],
           [{ text: `${S.serial}:`, bold: true }, `${dev.serial_number || '—'}`, { text: `${S.model}:`, bold: true }, `${dev.model || '—'}`],
-          [{ text: `${S.firmware}:`, bold: true }, `${dev.firmware_version || '—'}${dev.proto_version ? ' · v' + dev.proto_version : ''}`, { text: `${S.last_seen}:`, bold: true }, `${dev.last_seen ? localFmt(dev.last_seen, tz) : '—'}`],
+          [{ text: `${S.firmware}:`, bold: true }, `${dev.firmware_version || '—'}${dev.proto_version ? ' · v' + dev.proto_version : ''}`, { text: `${S.last_data}:`, bold: true }, `${d.lastData ? localFmt(d.lastData, tz) : '—'}`],
           [{ text: `${S.product}:`, bold: true }, `${dev.haccp_product || '—'}`, { text: `${S.haccp_limit}:`, bold: true },
-           { text: hasLimits ? `${limitSentence(haccp.strings(lang), d.limits, d.tolerance)}; ${tpl(S.excursion_rule, d.excursionMin)}` : S.nd }],
+           hasLimits ? { text: `${limitSentence(haccp.strings(lang), d.limits, d.tolerance)}; ${tpl(S.excursion_rule, d.excursionMin)}` } : { text: S.nd_no_limit, color: RED }],
         ],
       },
       layout: 'noBorders', fontSize: 8.5, margin: [0, 0, 0, 8],
@@ -454,7 +566,9 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
   const derived = [];
   if (d.summary.air && d.summary.evap) derived.push(`${S.delta_t}: ${fmt1(Number(d.summary.air.avg) - Number(d.summary.evap.avg))} °C`);
   if (d.summary.cond) derived.push(`${S.cond_max}: ${fmt1(Number(d.summary.cond.max))} °C`);
-  const derivedLine = derived.length ? { text: derived.join('   ·   '), fontSize: 8, color: GREY, margin: [0, 0, 0, 8] } : { text: '', margin: [0, 0, 0, 4] };
+  const derivedLine = derived.length ? { text: derived.join('   ·   '), fontSize: 8, color: GREY, margin: [0, 0, 0, 4] } : { text: '', margin: [0, 0, 0, 2] };
+  // Raw min/max above every plotted point is two statistics, not a chart with holes.
+  const summaryNote = { text: d.hourly ? tpl(S.summary_note_hourly, bucketKey) : tpl(S.summary_note, fmtStep(d.stepSec, S), bucketKey), fontSize: 7.5, color: GREY, italics: true, margin: [0, 0, 0, 8] };
 
   // Empty engineering columns are a fact worth explaining: a technician reading
   // dashes should not conclude the sensors failed.
@@ -465,7 +579,11 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
     : [];
 
   const svg = chartSvg({ buckets: d.buckets, from, to, tz, limits: d.limits, tolerance: d.tolerance });
-  const chartBlock = svg ? [{ svg, width: CHART.w, margin: [0, 2, 0, 2] }, { text: S.chart_legend, fontSize: 7, color: GREY, margin: [0, 0, 0, 10] }] : [];
+  const legend = [S.legend_air, d.summary.evap ? S.legend_evap : null, d.summary.setpoint ? S.legend_setpoint : null, hasLimits ? S.legend_limit : null].filter(Boolean).join(', ');
+  // Title, chart and legend stay on one page: a legend at the top of the next page explains nothing.
+  const chartBlock = svg
+    ? [{ unbreakable: true, stack: [{ text: tpl(S.chart, bucketKey), style: 'subHeader' }, { svg, width: CHART.w, margin: [0, 2, 0, 2] }, { text: legend, fontSize: 7, color: GREY, margin: [0, 0, 0, 10] }] }]
+    : [];
 
   // ── operation stats ──
   const dur = (m) => (m ? fmtDuration(m, S) : S.none);
@@ -489,7 +607,7 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
     stat(S.offline_total, dur(offlineMin)),
     stat(S.gaps, String(d.gaps.length)),
     stat(S.gaps_total, dur(gapMin)),
-    stat(S.excursions, hasLimits ? String(d.excursions.length) : S.nd),
+    stat(S.excursions, hasLimits ? String(d.excursions.length) : S.nd_no_limit),
     stat(S.excursions_total, hasLimits ? dur(exMin) : S.nd),
   ];
   const opBlock = {
@@ -566,7 +684,7 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
       }
     : { text: S.no_work, italics: true, margin: [0, 4, 0, 10] };
 
-  // ── engineering log ──
+  // ── engineering log: one table per calendar day, 8 pt so it reads on paper ──
   const byTime = new Map(d.buckets.map(b => [b.time, b]));
   const stepMs = bucketSec * 1000;
   const start = Math.floor(from.getTime() / stepMs) * stepMs;
@@ -574,44 +692,51 @@ function deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single,
   const gapIv = d.gaps.map(g => [g.from, g.to]);
   const exIv = d.excursions.map(e => [e.start, e.end]);
   const cols = [S.col_time, `${S.ch.air} °C`, `${S.ch.evap} °C`, `${S.ch.cond} °C`, `${S.ch.setpoint} °C`, S.col_comp, S.col_defrost, S.col_note];
-  const body = [cols.map(t => ({ text: t, bold: true, fontSize: 7.5 }))];
   const days = new Map();
+  let anyPartial = false;
   for (let t = start; t < to.getTime(); t += stepMs) {
     const b = byTime.get(new Date(t).toISOString());
     const { day, time } = localParts(t, tz);
     const v = (ch) => (b && b[ch] ? fmt1(b[ch].avg) : '—');
-    const notes = [];
+    const edges = edgeNotes({ t, stepMs, from, to, tz, S });
+    if (edges.length) anyPartial = true;
+    const notes = [...edges];
     if (overlaps(t, t + stepMs, offlineIv)) notes.push(S.note_offline);
     if (!b || overlaps(t, t + stepMs, gapIv)) notes.push(S.note_gap);
     if (overlaps(t, t + stepMs, d.doors)) notes.push(S.note_door);
     const dev = overlaps(t, t + stepMs, exIv);
-    if (!days.has(day)) { days.set(day, true); body.push([{ text: localFmt(day + 'T12:00:00Z', 'UTC', false), colSpan: 8, bold: true, fillColor: DAY_BG, fontSize: 8 }, {}, {}, {}, {}, {}, {}, {}]); }
+    if (!days.has(day)) days.set(day, []);
     const fill = dev ? RED_BG : (!b ? GREY_BG : undefined);
     const cell = (text, extra = {}) => ({ text, fillColor: fill, ...extra });
-    body.push([
+    days.get(day).push([
       cell(time), cell(v('air'), dev ? { bold: true, color: RED } : {}), cell(v('evap'), { color: GREY }), cell(v('cond'), { color: GREY }), cell(v('setpoint'), { color: GREY }),
       cell(b && b.comp ? String(Math.round(b.comp.avg * 100)) : '—', { color: GREY }),
       cell(b && b.defrost && b.defrost.avg > 0 ? S.yes : '', { color: GREY }),
       cell(notes.join(', '), { color: GREY, italics: true }),
     ]);
   }
-  const logTable = {
-    table: { headerRows: 1, widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*'], body, dontBreakRows: true },
-    layout: { hLineWidth: (i, node) => (i === 0 || i === 1 || i === node.table.body.length ? 0.8 : 0.3), vLineWidth: () => 0, hLineColor: () => '#9ca3af', paddingTop: () => 2, paddingBottom: () => 2 },
-    fontSize: 7.5, margin: [0, 4, 0, 10],
-  };
+  const logTables = [...days.entries()].map(([day, rows]) => dayTable({
+    body: [
+      cols.map(t => ({ text: t, bold: true, fontSize: 8 })),
+      [{ text: localFmt(day + 'T12:00:00Z', 'UTC', false), colSpan: 8, bold: true, fillColor: DAY_BG, fontSize: 8.5 }, {}, {}, {}, {}, {}, {}, {}],
+      ...rows,
+    ],
+    headerRows: 2, widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*'], fontSize: 8, rows: rows.length,
+  }));
+  const partialNote = anyPartial ? [{ text: S.partial_note, fontSize: 7.5, color: GREY, margin: [0, 2, 0, 0] }] : [];
 
   return [
     ...head,
+    ...conclusionBlock({ S, d, tz, bucketSec, hasLimits }),
     { text: S.settings, style: 'subHeader' }, settingsBlock,
-    { text: S.summary, style: 'subHeader' }, summaryTable, derivedLine, ...absentLine,
-    ...(svg ? [{ text: S.chart, style: 'subHeader' }] : []), ...chartBlock,
+    { text: S.summary, style: 'subHeader' }, summaryTable, derivedLine, summaryNote, ...absentLine,
+    ...chartBlock,
     { text: S.operation, style: 'subHeader' }, opBlock,
     { text: S.alarms, style: 'subHeader' }, alarmsBlock,
     { text: S.connectivity, style: 'subHeader' }, offlineBlock,
     { text: S.hints, style: 'subHeader' }, hintsBlock,
     { text: S.work, style: 'subHeader' }, workBlock,
-    { text: `${S.log} (${bucketKey})`, style: 'subHeader' }, logTable,
+    { text: `${S.log} (${bucketKey})`, style: 'subHeader' }, ...partialNote, ...logTables,
   ];
 }
 
@@ -638,20 +763,21 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
         { text: `${S.source}: `, bold: true }, `${source === 'hourly' ? S.source_hourly : S.source_raw}\n`,
         { text: `${S.generated}: `, bold: true }, `${localFmt(generatedAt, tz)} ${S.by} ${generatedBy}`,
       ] },
+      // The QR code sits in the header: a working document has no signature
+      // block to follow, and a verification block kept whole at the end
+      // regularly landed alone on a last page.
+      { width: 56, qr: verifyUrl, fit: 56, alignment: 'right', margin: [10, 0, 0, 0] },
     ],
     margin: [0, 0, 0, 6],
   };
   const verifyBlock = {
-    unbreakable: true,
-    columns: [
-      { width: '*', text: [{ text: `${S.verify}: `, bold: true }, `${S.verify_text} ${verifyUrl}\n`, { text: `${fmtCode(code)}   SHA-256 ${hash}`, fontSize: 7, color: '#555555' }], fontSize: 8, margin: [0, 6, 8, 0] },
-      { width: 64, qr: verifyUrl, fit: 64, alignment: 'right' },
-    ],
-    margin: [0, 8, 0, 0],
+    text: [{ text: `${S.verify}: `, bold: true }, `${S.verify_text} ${verifyUrl}\n`, { text: `${fmtCode(code)}   SHA-256 ${hash}`, fontSize: 7, color: '#555555' }],
+    fontSize: 7.5, color: '#444444', margin: [0, 0, 0, 10],
   };
   return {
     docDefinition: {
       info: { title: `${title} — ${orgName}`, author: 'ModESP Cloud', subject: `${orgName} · ${localFmt(from, tz, false)} – ${localFmt(to, tz, false)}`, creator: 'ModESP Cloud', keywords: `service, ${code}` },
+      ...haccp.documentOptions(lang),
       defaultStyle: { font: 'Roboto', fontSize: 9 },
       pageSize: 'A4', pageMargins: [36, 46, 36, 64],
       header: { text: `${orgName} — ${title}`, alignment: 'center', margin: [0, 16, 0, 0], fontSize: 8, bold: true, color: '#555555' },
@@ -665,9 +791,9 @@ function buildDocument({ kind, lang, tz, tenant, site, devices, from, to, bucket
       content: [
         { text: title, style: 'title' },
         meta,
-        { text: S.not_haccp, fontSize: 8, color: GREY, italics: true, margin: [0, 0, 0, 10] },
-        ...devices.flatMap(d => deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single: kind === 'device', doorMin, eventsRetained })),
+        { text: S.not_haccp, fontSize: 8, color: GREY, italics: true, margin: [0, 0, 0, 4] },
         verifyBlock,
+        ...devices.flatMap(d => deviceSection({ S, lang, tz, d, bucketKey, bucketSec, from, to, single: kind === 'device', doorMin, eventsRetained })),
       ],
       styles: {
         title: { fontSize: 15, bold: true, margin: [0, 0, 0, 10] },
@@ -706,10 +832,10 @@ async function generate({ query, kind, tenant, site, devices, from, to, bucketKe
     query, code, kind, tenantId: tenant.id, deviceId: kind === 'device' ? devices[0].mqtt_device_id : null,
     siteId: site ? site.id : null, from, to, bucketKey: plan.bucketKey, source: plan.source, lang, hash, generatedBy, reportType: 'service', scheduleId,
   });
-  return { buffer, code, hash, source: plan.source, bucketKey: plan.bucketKey, empty: false };
+  return { buffer, code, hash, source: plan.source, bucketKey: plan.bucketKey, empty: false, tz };
 }
 
 module.exports = {
   generate, strings, STRINGS,
-  __test: { collectDevice, buildDocument, compressorStats, fetchOfflinePeriods, chartSvg, settingsRows, unitOf },
+  __test: { collectDevice, buildDocument, compressorStats, fetchOfflinePeriods, chartSvg, settingsRows, unitOf, conclusionBlock },
 };

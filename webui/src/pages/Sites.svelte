@@ -263,7 +263,9 @@
   let reportBusy = false
   let reportType = 'haccp'   // haccp | service
 
-  function isoDay(d) { return d.toISOString().slice(0, 10) }
+  // The calendar day where the person is, not the UTC one: at 01:46 Kyiv time
+  // «today» is already the next date.
+  function isoDay(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
   function openReport(site) {
     reportSite = site
@@ -276,7 +278,11 @@
     reportBusy = true
     try {
       const from = new Date(reportFrom + 'T00:00:00').toISOString()
-      const to = new Date(reportTo + 'T23:59:59').toISOString()
+      // Exclusive end at the next midnight: the last hour of the last day is
+      // then a whole row, and the file is still named after the chosen days.
+      const end = new Date(reportTo + 'T00:00:00')
+      end.setDate(end.getDate() + 1)
+      const to = end.toISOString()
       const meta = reportType === 'service'
         ? await exportSiteServicePdf(reportSite.id, from, to, '1h', $locale)
         : await exportSitePdf(reportSite.id, from, to, '1h', $locale)
