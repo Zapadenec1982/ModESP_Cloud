@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-28
+
 ### Додано
 - **Перший запуск і ролі** (аудит продукту, пункт 8). Панель була однаковою для всіх: технік бачив
   той самий екран, що й власник, superadmin — парк без черги контролерів і організацій на схвалення;
@@ -766,6 +768,7 @@
 030 (ціни планів, `pilot_requests`), 031 (функції `weather`/`routing`).
 Застосувати `migrate.js` як власник схеми, потім `infra/sql/app-grants.sql`.
 
-[Unreleased]: https://github.com/Zapadenec1982/ModESP_Cloud/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Zapadenec1982/ModESP_Cloud/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Zapadenec1982/ModESP_Cloud/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Zapadenec1982/ModESP_Cloud/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Zapadenec1982/ModESP_Cloud/releases/tag/v1.0.0
