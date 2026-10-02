@@ -1,15 +1,9 @@
-// Landing page settings that differ between servers. Edit on the server if
-// needed (the file is plain JS, no build step); empty strings hide the
-// corresponding buttons.
+// Landing page settings that differ between servers. Lives in shared/landing-config.js
+// on the server (deploy.sh links it into every release); plain JS, no build step.
+// An empty string hides the corresponding link.
 window.MODESP_LANDING = {
-  // Public status page of the demo site, printed once by seed-demo.js on the demo server
-  demoStatusUrl: '',
-  // Demo login (viewer demo@modesp.com.ua, password handed out on request)
-  // Empty until the demo server exists: demo.modesp.com.ua does not resolve yet,
-  // and app.js hides the button only for an empty value.
-  demoAppUrl: '',
   // External platform status page (UptimeRobot / Better Stack), same as VITE_STATUS_PAGE_URL
   statusPageUrl: '',
+  // Contact address shown on the pages and used by the form's error message
   contactEmail: 'hello@modesp.com.ua',
-  github: 'https://github.com/Zapadenec1982/ModESP_Cloud',
 };

@@ -604,7 +604,7 @@ Production-ready deployment with TLS, backups, and monitoring.
 - Weather and the service-round planner are plan features (`weather`, `routing`) of the network, enterprise and partner plans
 
 ### Landing page and public pages
-- `landing/` (static, no build, own CSP) at `/`: what the controller does, three customer segments, a 30-day chart, a fine-vs-subscription calculator, prices read live from `plan_limits` (`GET /api/public/plans`), a partner page, legal pages generated from `docs/legal`, `robots.txt` and `sitemap.xml`
+- `landing/` (static, no build, own CSP) at `/`: a commercial page written for chain owners, managers and service companies — who it is for, the outcome for the company, how it works, capabilities, documented HACCP control, data security, rollout (consultation → pilot → scale-up), a "request a demo" form and a FAQ; real screenshots of the web UI (`landing/img/`) and a platform-generated HACCP log instead of CSS mock-ups; no prices on the page — a quote follows the consultation (`GET /api/public/plans` stays for the catalogue). Separate pages: `partners.html` (partner programme), `technology.html` (technical specifications for IT), legal pages generated from `docs/legal`, `robots.txt` and `sitemap.xml`
 - Pilot request form → `POST /api/public/pilot-request` (stored in `pilot_requests`, e-mailed to the founder, honeypot-protected); superadmin reads leads at `GET /api/pilot-requests`
 - The WebUI moved to `/cloud/`; old `#/…` links are redirected by the landing; the login page links to the terms, privacy policy and platform status; public site pages show the organisation, "Powered by ModESP Cloud", a warning a week before the link expires and a "I want this for my sites" call to action
 

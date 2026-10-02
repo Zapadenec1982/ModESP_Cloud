@@ -129,8 +129,9 @@ Ubuntu 24.04
 
 | Шлях | Що | Звідки |
 |---|---|---|
-| `/` | Лендінг: продукт, «одна ніч однієї вітрини», учасники, HACCP, обладнання, ціни з `plan_limits`, пілот, FAQ; шрифти в `landing/fonts/` (CSP `font-src 'self'`) | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
-| `/partners.html` | Партнерська програма | `landing/` |
+| `/` | Лендінг: для кого, результат для компанії, як працює, можливості, HACCP, безпека, впровадження, форма «Запросити демонстрацію», FAQ; без цін; скриншоти в `landing/img/`, шрифт Onest у `landing/fonts/` (CSP `font-src 'self'`, `img-src 'self'`) | `landing/` (статичні файли, без збірки) → `/var/www/modesp/landing` |
+| `/partners.html` | Партнерська програма для сервісних компаній | `landing/` |
+| `/technology.html` | Технічна інформація (контролер, зв'язок і дані, безпека, інтеграції) | `landing/` |
 | `/legal/offer`, `/legal/privacy`, `/legal/service`, `/legal/dpa`, `/legal/partner` | Юридичні документи | `landing/legal/*.html`, генерує `infra/scripts/build-legal.js` з `docs/legal/*.md` |
 | `/cloud/` | WebUI (Svelte SPA, hash-маршрути `#/…`) | `webui/dist` → `/var/www/modesp/webui`; `vite.config.js` `base: '/cloud/'` |
 | `/app/` | Мобільний PWA (окремий проєкт ModESP_PWA) | `/var/www/modesp/pwa` |

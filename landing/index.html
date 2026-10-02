@@ -1,319 +1,420 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ModESP Cloud — холодильне обладнання під наглядом: аварії за хвилини, журнал HACCP для інспектора</title>
-  <meta name="description" content="Керувальний контролер ModESP_v4 і хмара: аварія в Telegram за хвилини, причина з даних агрегату, наряди для техніків, журнал температур у формі для інспектора з кодом перевірки. Для сервісних компаній, мереж магазинів, HoReCa та аптек.">
-  <link rel="canonical" href="https://modesp.com.ua/">
-  <meta property="og:title" content="ModESP Cloud — холод під наглядом">
-  <meta property="og:description" content="Аварію видно за хвилини, причину — з даних контролера, роботу — в журналі. Контролер ModESP_v4 і хмара для холодильного обладнання.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://modesp.com.ua/">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="preload" href="/fonts/piazzolla-500-normal-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/fonts/ibm-plex-sans-400-normal-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/fonts.css">
-  <link rel="stylesheet" href="/styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModESP Cloud — моніторинг і керування холодильним обладнанням</title>
+<meta name="description" content="Платформа централізованого контролю холодильного обладнання для торгових мереж, закладів харчування, аптек, складів і сервісних компаній: сповіщення про відхилення, журнал HACCP, керований сервіс.">
+<link rel="canonical" href="https://modesp.com.ua/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ModESP Cloud — моніторинг і керування холодильним обладнанням">
+<meta property="og:description" content="Централізований контроль холодильного обладнання на всіх об’єктах компанії: сповіщення про відхилення, журнал HACCP, керований сервіс.">
+<meta property="og:url" content="https://modesp.com.ua/">
+<meta property="og:locale" content="uk_UA">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/onest-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/onest-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <a class="skip" href="#main">До змісту</a>
-<header class="top">
-  <div class="wrap">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2v20M4 6l16 12M4 18L20 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>ModESP Cloud</a>
-    <nav class="nav" aria-label="Розділи">
+
+<header class="top" id="top">
+  <div class="wrap top-row">
+    <a class="brand" href="/" aria-label="ModESP Cloud — на головну">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M8 23V9h3.2l4.8 8.1L20.8 9H24v14h-3V14.6l-3.9 6.4h-2.2L11 14.6V23H8z" fill="#fff"/></svg>
+      <span class="brand-name">ModESP Cloud</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav">Меню</button>
+    <nav class="nav" id="nav" aria-label="Розділи сторінки">
+      <a href="#industries">Для кого</a>
       <a href="#how">Як працює</a>
-      <a href="#roles">Учасники</a>
-      <a href="#haccp">HACCP</a>
-      <a href="#hardware">Обладнання</a>
-      <a href="#pricing">Ціни</a>
+      <a href="#features">Можливості</a>
+      <a href="#compliance">HACCP</a>
+      <a href="#start">Впровадження</a>
       <a href="/partners.html">Партнерам</a>
-      <a class="btn btn-ghost" href="/cloud/">Увійти</a>
-      <a class="btn btn-primary" href="#pilot">Пілот</a>
+      <a class="nav-login" href="/cloud/">Увійти</a>
+      <a class="btn btn-primary btn-sm" href="#contact">Запросити демонстрацію</a>
     </nav>
   </div>
 </header>
 
 <main id="main">
-  <!-- ── Hero ─────────────────────────────────────────── -->
-  <section class="hero" aria-labelledby="hero-title">
-    <div class="wrap hero-grid">
-      <div class="hero-text">
-        <p class="eyebrow rise">Хмара для холодильного обладнання · керувальний контролер ModESP_v4</p>
-        <h1 id="hero-title" class="rise">Холод під наглядом. Аварію видно за хвилини, причину — <em>з даних контролера</em>, роботу — в журналі.</h1>
-        <p class="lead rise">ModESP_v4 стає у вітрину чи камеру замість штатного контролера і сам керує агрегатом. Хмара показує кожну камеру мережі, надсилає аварії в Telegram, на пошту чи push і веде журнал температур у формі для перевірки. Для сервісних компаній, мереж магазинів, HoReCa та аптек.</p>
-        <div class="hero-actions rise">
-          <a class="btn btn-primary btn-lg" href="#pilot">Попросити пілот</a>
-          <a class="btn btn-ghost btn-lg" href="/cloud/">Увійти в кабінет</a>
-          <a class="btn btn-link" href="#" data-cfg="demoStatusUrl" target="_blank" rel="noopener">Жива демо-точка ↗</a>
-          <a class="btn btn-link" href="#" data-cfg="demoAppUrl" target="_blank" rel="noopener">Демо-кабінет ↗</a>
-        </div>
-        <dl class="facts rise">
-          <div><dt>≤ 60 с</dt><dd>від події на контролері до сповіщення — ціль рівня сервісу</dd></div>
-          <div><dt>≈ 4 хв</dt><dd>щоб втрата зв'язку стала аварією, а не тишею</dd></div>
-          <div><dt>90 днів</dt><dd>журналу контролер досилає після відновлення зв'язку</dd></div>
-          <div><dt>3 роки</dt><dd>погодинного архіву температур кожної камери</dd></div>
-        </dl>
+
+<!-- ───────────────────────── Hero ───────────────────────── -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-text">
+      <p class="eyebrow eyebrow-light">Платформа моніторингу та керування холодильним обладнанням</p>
+      <h1>Централізований контроль холодильного обладнання на всіх об’єктах компанії</h1>
+      <p class="lead">ModESP Cloud об’єднує холодильні камери, вітрини та склади торгових мереж, закладів харчування, аптек і логістичних компаній в єдину систему. Платформа фіксує відхилення температурного режиму, сповіщає відповідальних, організовує роботу сервісу та формує документацію для перевірок.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="#contact">Запросити демонстрацію</a>
+        <a class="btn btn-outline-light btn-lg" href="/partners.html">Для сервісних компаній</a>
       </div>
-      <figure class="sheet hero-figure rise">
-        <figcaption class="sheet-head">
-          <span class="sheet-title">Морозильна бонета · магазин №102</span>
-          <span class="sheet-meta mono">одна ніч · повітря, °C</span>
-        </figcaption>
-        <div id="story-chart" class="chart" role="img" aria-label="Графік температури повітря за одну добу: відчинені двері о 01:12, аварія о 01:14, технік о 01:38, повернення до −18 °C о 02:05, далі планові відтайки"></div>
-        <div class="legend mono">
-          <span><i class="lg lg-air"></i>повітря</span>
-          <span><i class="lg lg-set"></i>уставка −18</span>
-          <span><i class="lg lg-limit"></i>межа HACCP −15</span>
-          <span><i class="lg lg-alarm"></i>аварія</span>
-          <span><i class="lg lg-defrost"></i>відтайка</span>
-        </div>
+    </div>
+    <figure class="window hero-window">
+      <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+      <img src="/img/dashboard.webp" width="2200" height="1409" alt="Панель керування ModESP Cloud: стан обладнання по об’єктах, перелік ситуацій, що потребують уваги, і показники сервісу" fetchpriority="high">
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Industries ───────────────────────── -->
+<section class="section" id="industries">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Для кого</p>
+      <h2>Для компаній, у яких холодильне обладнання працює на багатьох об’єктах</h2>
+      <p class="section-lead">Платформа розрахована на мережі, де кожна одиниця обладнання має власника, відповідального за температурний режим і сервісну службу, і де втрата продукції або зауваження перевірки мають відчутну ціну.</p>
+    </div>
+    <div class="grid grid-4">
+      <article class="card">
+        <h3>Торгові мережі</h3>
+        <p>Десятки магазинів і сотні одиниць обладнання в одному кабінеті. Стан кожного об’єкта, аварії з відповідальним, планові звіти для керівництва.</p>
+      </article>
+      <article class="card">
+        <h3>Заклади харчування та готелі</h3>
+        <p>Холодильні камери кухні, вітрини та бари. Документальний контроль температурного режиму за вимогами HACCP без ручного заповнення журналів.</p>
+      </article>
+      <article class="card">
+        <h3>Аптеки та медичні заклади</h3>
+        <p>Холодильники для лікарських засобів із вузьким температурним діапазоном. Безперервний запис температури та архів, готовий до перевірки.</p>
+      </article>
+      <article class="card">
+        <h3>Склади та логістика</h3>
+        <p>Низькотемпературні камери великого об’єму. Контроль роботи агрегатів та планове обслуговування на підставі історії роботи обладнання.</p>
+      </article>
+    </div>
+    <p class="note-row">Сервісним компаніям з обслуговування холодильного обладнання платформа надає окремий робочий кабінет для роботи з усіма клієнтами. <a href="/partners.html">Докладніше про партнерську програму</a></p>
+  </div>
+</section>
+
+<!-- ───────────────────────── Benefits ───────────────────────── -->
+<section class="section section-alt" id="benefits">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Результат для компанії</p>
+      <h2>Що змінюється після підключення</h2>
+    </div>
+    <div class="grid grid-2 benefits">
+      <article class="benefit">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <h3>Збереження продукції</h3>
+        <p>Відхилення температурного режиму виявляється за хвилини, а не під час ранкової перевірки. Відповідальні отримують сповіщення у Telegram, електронною поштою або push-повідомленням, і аварія залишається відкритою, доки її не підтверджено.</p>
+      </article>
+      <article class="benefit">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/><path d="M9.5 13h5M9.5 16.5h5"/></svg></span>
+        <h3>Відповідність вимогам HACCP</h3>
+        <p>Журнал контролю температурного режиму формується автоматично за даними обладнання: критичні межі, відхилення, коригувальні дії та відповідальні. Документ має код перевірки справжності, архів зберігається три роки.</p>
+      </article>
+      <article class="benefit">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.5 5.5a4 4 0 0 0 5 5l-9 9a2.1 2.1 0 0 1-3-3l9-9z"/><path d="M15 9l-1-1"/></svg></span>
+        <h3>Керований сервіс</h3>
+        <p>Кожна аварія стає нарядом із відповідальним, строком і результатом. Історія обслуговування кожної одиниці обладнання доступна власнику, керівнику сервісу та технікові, тому рішення про ремонт або заміну ухвалюються за фактами.</p>
+      </article>
+      <article class="benefit">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 17V11M11 17V7M16 17v-4M21 17V9"/></svg></span>
+        <h3>Прозорість для керівництва</h3>
+        <p>Стан усіх об’єктів на одній панелі та карті. Планові звіти надходять на електронну пошту щотижня або щомісяця без входу до системи, а показники реакції сервісу видно по кожному об’єкту.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── How it works ───────────────────────── -->
+<section class="section" id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Як це працює</p>
+      <h2>Три складові: обладнання, платформа, команда</h2>
+    </div>
+    <ol class="steps">
+      <li>
+        <span class="step-num">1</span>
+        <h3>Підключення обладнання</h3>
+        <p>На холодильне обладнання встановлюється контролер ModESP. Він керує агрегатом замість штатного контролера і передає дані до платформи. Заміна агрегату не потрібна, монтаж виконується під час планового технічного обслуговування.</p>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <h3>Контроль у реальному часі</h3>
+        <p>Платформа отримує температуру, стан компресора, цикли відтавання та стан дверей кожної одиниці обладнання. Відхилення та несправності фіксуються автоматично і стають аварією з повідомленням відповідальним.</p>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <h3>Реакція та облік</h3>
+        <p>Відповідальний підтверджує аварію, керівник призначає наряд, технік закриває його записом про виконані роботи. Результат відображається у звітах керівництву та в журналі HACCP.</p>
+      </li>
+    </ol>
+    <figure class="window">
+      <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+      <img src="/img/device.webp" width="2200" height="1409" alt="Картка морозильної камери в ModESP Cloud: поточна температура, уставка, стан компресора і відтавання, графік за добу" loading="lazy">
+      <figcaption>Картка одиниці обладнання: поточний стан і графік за добу з циклами відтавання та періодом відкритих дверей.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Features ───────────────────────── -->
+<section class="section section-alt" id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Можливості платформи</p>
+      <h2>Усе, що потрібно для контролю холодильного обладнання, в одній системі</h2>
+    </div>
+    <div class="grid grid-3 features">
+      <article class="feature">
+        <h3>Моніторинг у реальному часі</h3>
+        <p>Температура, стан компресора, цикли відтавання, двері та зв’язок по кожній одиниці обладнання. Історія вимірювань за три роки.</p>
+      </article>
+      <article class="feature">
+        <h3>Сповіщення про аварії</h3>
+        <p>Telegram, електронна пошта та push-повідомлення. Маршрутизація за об’єктами і ролями, ескалація керівникові, якщо аварію не підтверджено вчасно.</p>
+      </article>
+      <article class="feature">
+        <h3>Журнал HACCP і планові звіти</h3>
+        <p>Документ по одиниці обладнання або по об’єкту в цілому. Щотижневі та щомісячні звіти на електронну пошту, архів документів три роки.</p>
+      </article>
+      <article class="feature">
+        <h3>Сервісні наряди</h3>
+        <p>Від аварії до запису про виконані роботи. Маршрут до об’єкта, найближчий вільний технік, показники часу реакції та закриття.</p>
+      </article>
+      <article class="feature">
+        <h3>Дистанційне налаштування</h3>
+        <p>Уставка, гістерезис і розклад відтавання змінюються з кабінету. Кожна зміна вимагає підтвердження і фіксується в журналі дій.</p>
+      </article>
+      <article class="feature">
+        <h3>Об’єкти на карті</h3>
+        <p>Стан обладнання за адресами, фільтри за об’єктами та відповідальними. Публічна сторінка стану об’єкта для замовника або орендодавця.</p>
+      </article>
+      <article class="feature">
+        <h3>Робота при втраті зв’язку</h3>
+        <p>Обладнання керується автономно. Журнал ведеться локально і передається до платформи після відновлення зв’язку, за період до 90 днів.</p>
+      </article>
+      <article class="feature">
+        <h3>Ролі та розмежування доступу</h3>
+        <p>Власник, керівник сервісу, технік, спостерігач. Доступ на рівні окремих об’єктів, двофакторна автентифікація, журнал дій користувачів.</p>
+      </article>
+      <article class="feature">
+        <h3>Дані належать компанії</h3>
+        <p>Експорт вимірювань і журналів у CSV, повний архів даних організації за запитом, доступ до API для внутрішніх систем.</p>
+      </article>
+    </div>
+    <div class="shots-row">
+      <figure class="window">
+        <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span></div>
+        <img src="/img/alarms.webp" width="1800" height="1153" alt="Сторінка аварій ModESP Cloud: активна аварія з кнопками підтвердження і призначення наряду, історія вирішених аварій" loading="lazy">
+        <figcaption>Аварії: активні ситуації з відповідальним і історія з тривалістю та нарядом.</figcaption>
+      </figure>
+      <figure class="phone">
+        <div class="phone-screen"><img src="/img/mobile.webp" width="780" height="1328" alt="Мобільний вигляд кабінету техніка: стан обладнання і призначені наряди" loading="lazy"></div>
+        <figcaption>Кабінет техніка працює у браузері телефона: наряди, графіки, підтвердження аварій.</figcaption>
       </figure>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ── How: one night ────────────────────────────────── -->
-  <section id="how" class="section">
-    <div class="wrap">
-      <p class="kicker mono reveal">01 · Як це працює</p>
-      <div class="split">
-        <div class="split-lead reveal">
-          <h2>Одна ніч однієї вітрини</h2>
-          <p class="muted">Що саме відбувається між «щось не так» і рядком у журналі — і хто це бачить. Демонстраційний сценарій, числа умовні.</p>
-        </div>
-        <ol class="timeline reveal">
-          <li class="tl-door"><span class="tl-time mono">01:12</span><div><strong>Двері лишилися відчиненими.</strong> Температура повітря пішла вгору. Контролер бачить це раніше за термометр на склі — і бачить, що компресор працює без зупинки.</div></li>
-          <li class="tl-alarm"><span class="tl-time mono">01:14</span><div><strong>Аварія «Двері відкриті» після витримки.</strong> Її піднімає сам контролер. Хмара розсилає: черговому техніку в Telegram, власнику — на пошту. Некритичне в тихі години не турбує.</div></li>
-          <li class="tl-tech"><span class="tl-time mono">01:38</span><div><strong>Технік підтверджує аварію і бере наряд.</strong> У наряді — адреса, маршрут, історія саме цієї вітрини. Власник бачить, хто відповідає, а не переказ у месенджері.</div></li>
-          <li class="tl-ok"><span class="tl-time mono">02:05</span><div><strong>−18 °C. Аварію знято обладнанням.</strong> Технік закриває наряд сервісним записом: що зроблено, скільки часу, запчастини. Це дві різні події — і обидві в історії.</div></li>
-          <li class="tl-report"><span class="tl-time mono">06:00</span><div><strong>У журналі HACCP — рядок.</strong> Відхилення з початком, кінцем, крайнім значенням, коригувальною дією і відповідальним. Готовий для перевірки, з кодом і відбитком даних.</div></li>
-        </ol>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Roles ──────────────────────────────────────────── -->
-  <section id="roles" class="section section-tint">
-    <div class="wrap">
-      <p class="kicker mono reveal">02 · Учасники</p>
-      <h2 class="reveal">Одне робоче місце для всіх, хто відповідає за холод</h2>
-      <p class="muted lead-sm reveal">У кожного — свій початковий екран і свої права. Дані, історія та документи — спільні, тож наступний бачить зроблене попереднім.</p>
-      <div class="grid grid-4 reveal">
-        <article class="card role">
-          <h3>Власник або керівник точки</h3>
-          <p>Які об'єкти потребують уваги зараз, чому і хто цим уже займається. Планові звіти на пошту — без входу в кабінет.</p>
-          <ul class="ticks"><li>об'єкти й обладнання на карті</li><li>аварії з відповідальним</li><li>звіти щотижня чи щомісяця</li></ul>
-        </article>
-        <article class="card role">
-          <h3>Технік</h3>
-          <p>Аварія → наряд → маршрут → сервісний запис. Усе з телефона. Параметри вітрини можна змінити дистанційно, з підтвердженням і журналом команд.</p>
-          <ul class="ticks"><li>мої наряди і найближчі виклики</li><li>графіки повітря, випарника, компресора</li><li>історія обслуговування кожної вітрини</li></ul>
-        </article>
-        <article class="card role">
-          <h3>Керівник сервісу</h3>
-          <p>Хто відповідає, у які строки, чи підтверджено результат. Усі клієнти на одній карті, найближчий вільний технік до аварії.</p>
-          <ul class="ticks"><li>наряди й сервісні записи по клієнтах</li><li>повторювані аварії як привід для візиту</li><li>один зведений рахунок</li></ul>
-        </article>
-        <article class="card role">
-          <h3>Відповідальний за HACCP</h3>
-          <p>Журнал температур у формі для перевірки: критична межа, відхилення, коригувальні дії, підписи. Справжність підтверджується кодом онлайн.</p>
-          <ul class="ticks"><li>PDF по вітрині або по всій точці</li><li>код перевірки і SHA-256 даних</li><li>архів звітів три роки</li></ul>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Controller vs sensor ───────────────────────────── -->
-  <section id="controller" class="section">
-    <div class="wrap split">
-      <div class="reveal">
-        <p class="kicker mono">03 · Контролер</p>
-        <h2>Контролер, а не накладний датчик</h2>
-        <p>Накладний реєстратор знає лише температуру. ModESP_v4 керує агрегатом, тому знає, <em>чому</em> вона така: працює компресор чи стоїть, іде відтайка чи ні, відчинені двері чи зачинені. Це різниця між «щось не так» і «двері відчинені 18 хвилин».</p>
-        <p>Захисти працюють на самому контролері — висока чи низька температура з витримкою, обрив датчика, часті пуски, безперервна робота, невдала відтайка. Хмара додає те, чого не видно з однієї вітрини: повторювані аварії за тиждень стають приводом для планового візиту.</p>
-        <p class="muted">Уставку, гістерезис і розклад відтайки можна змінити з хмари. Кожна команда — з підтвердженням і в журналі: хто, коли, що.</p>
-      </div>
-      <div class="sheet data-sheet reveal">
-        <div class="sheet-head"><span class="sheet-title">Що приходить у хмару</span><span class="sheet-meta mono">кожні 60 с · MQTT/TLS</span></div>
-        <table class="datatable mono">
-          <tbody>
-            <tr><th scope="row">повітря</th><td>−17.6 °C</td><td class="muted">зона продукту</td></tr>
-            <tr><th scope="row">випарник</th><td>−24.1 °C</td><td class="muted">ΔT до повітря 6.5</td></tr>
-            <tr><th scope="row">конденсатор</th><td>+33.4 °C</td><td class="muted">норма для +24 в залі</td></tr>
-            <tr><th scope="row">уставка</th><td>−18.0 °C</td><td class="muted">гістерезис 2.0</td></tr>
-            <tr><th scope="row">компресор</th><td>працює</td><td class="muted">37 % часу, 1.5 пуск/год</td></tr>
-            <tr><th scope="row">відтайка</th><td>ні</td><td class="muted">наступна о 05:00</td></tr>
-            <tr><th scope="row">двері</th><td>зачинені</td><td class="muted">аварія після 10 хв</td></tr>
-            <tr><th scope="row">зв'язок</th><td>онлайн</td><td class="muted">heartbeat 30 с</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Offline ────────────────────────────────────────── -->
-  <section id="offline" class="section section-dark">
-    <div class="wrap">
-      <p class="kicker mono reveal">04 · Без Інтернету</p>
-      <h2 class="reveal">Коли зникає зв'язок</h2>
-      <div class="grid grid-3 reveal">
-        <article class="card card-dark"><h3>Контролер працює автономно</h3><p>Термостат, відтайка і всі захисти виконуються на самому контролері. Хмара потрібна, щоб бачити і повідомляти, а не щоб холодити.</p></article>
-        <article class="card card-dark"><h3>Журнал не зупиняється</h3><p>Вимірювання накопичуються локально і досилаються в хмару після відновлення зв'язку — до 90 днів. У журналі HACCP такий період не стає розривом: рядки на місці.</p></article>
-        <article class="card card-dark"><h3>Тиша — теж сигнал</h3><p>Якщо контролер мовчить довше ніж півтори хвилини, за кілька хвилин це стає аварією «пристрій офлайн» — з тими самими сповіщеннями, що й температура.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── HACCP ──────────────────────────────────────────── -->
-  <section id="haccp" class="section">
-    <div class="wrap">
-      <p class="kicker mono reveal">05 · HACCP</p>
-      <div class="split">
-        <figure class="sheet journal reveal">
-          <figcaption class="sheet-head"><span class="sheet-title">Журнал контролю температурного режиму</span><span class="sheet-meta mono">магазин №102 · 2026-09-27</span></figcaption>
-          <p class="journal-rule">Критична межа: не вище −18 °C, допустиме відхилення 3 °C. Відхиленням вважається температура повітря за межею довше ніж 30 хв; інтервали відтайки не враховуються.</p>
-          <table class="journal-table">
-            <thead><tr><th>Час</th><th>Повітря °C</th><th>Межа</th><th>Відхилення</th><th>Примітка</th></tr></thead>
-            <tbody>
-              <tr><td class="mono">00:00</td><td class="mono">−18.2</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
-              <tr class="row-dev"><td class="mono">01:00</td><td class="mono">−13.4</td><td class="mono muted">≤ −18 (+3)</td><td><strong>Так</strong></td><td>двері &gt; 10 хв</td></tr>
-              <tr class="row-dev"><td class="mono">02:00</td><td class="mono">−16.9</td><td class="mono muted">≤ −18 (+3)</td><td><strong>Так</strong></td><td>до 02:05</td></tr>
-              <tr><td class="mono">03:00</td><td class="mono">−18.1</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
-              <tr><td class="mono">05:00</td><td class="mono">−15.3</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td class="muted">відтайка</td></tr>
-              <tr><td class="mono">06:00</td><td class="mono">−18.3</td><td class="mono muted">≤ −18 (+3)</td><td>Ні</td><td></td></tr>
-            </tbody>
-          </table>
-          <div class="journal-foot">
-            <div class="journal-ex"><span class="mono">01:14 — 02:05 · 51 хв · крайнє −11.8 °C</span><span>Коригувальна дія: двері зачинено, ущільнювач замінено · Відповідальний: черговий технік</span></div>
-            <div class="stamp mono">код перевірки D7S4-PPDP-LCXY<br>SHA-256 c01102bc…2be959</div>
-          </div>
-        </figure>
-        <div class="reveal">
-          <h2>Журнал у формі для інспектора, а не зошит</h2>
-          <ul class="ticks ticks-lg">
-            <li>Лише температура повітря в зоні продукту, по днях, у місцевому часі точки. Критична межа з допустимим відхиленням і правило відхилення надруковані в шапці.</li>
-            <li>Кожне відхилення — з початком, кінцем, крайнім значенням, коригувальною дією і відповідальним із наряду. Розриви запису — окремою таблицею.</li>
-            <li>Без заданої межі журнал так і каже: «оцінити неможливо» — а не «відхилень: 0».</li>
-            <li>Блоки підписів, код перевірки, SHA-256 даних і QR. Інспектор перевіряє справжність онлайн, без входу в кабінет.</li>
-            <li>Планові звіти щотижня чи щомісяця на пошту, архів три роки. Експорт CSV і всіх даних організації одним архівом — дані ваші.</li>
-          </ul>
-          <div class="notice">
-            <strong>Чого платформа не робить.</strong> Вона не є системою безпеки і не замінює процедури контролю температури, передбачені вашою програмою HACCP. Межі, уставки й реакцію визначаєте ви; ми даємо дані, сповіщення і документ, який це підтверджує.
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Hardware ───────────────────────────────────────── -->
-  <section id="hardware" class="section section-tint">
-    <div class="wrap">
-      <p class="kicker mono reveal">06 · Обладнання і встановлення</p>
-      <h2 class="reveal">Що потрібно, щоб це запрацювало</h2>
-      <div class="grid grid-2 reveal">
-        <article class="card"><h3>Контролер ModESP_v4</h3><p>ESP32, зв'язок MQTT через TLS, керування вітриною чи камерою: компресор, відтайка, вентилятори, двері, датчики. Стає замість штатного контролера; сам агрегат не змінюється.</p><p class="muted">Хмара розуміє протокол ModESP_v4. Сумісності з іншими контролерами поки що немає — адаптери в планах, строків не обіцяємо.</p></article>
-        <article class="card"><h3>Підключення за кодом</h3><p>Контролер з наклейкою-кодом сам з'являється в черзі очікування хмари. Ви призначаєте його організації — унікальні облікові дані видаються по повітрю. Мережу на сотні контролерів можна завести одним CSV.</p><p class="muted">Прошивки оновлюються з хмари хвилями, з автопаузою при першій помилці.</p></article>
-        <article class="card"><h3>Хто встановлює</h3><p>На пілоті — ми або партнерська сервісна компанія: монтаж під час планового ТО, підключення сповіщень, перший звіт. Далі — партнер або ваша служба за інструкцією.</p></article>
-        <article class="card"><h3>Скільки це коштує</h3><p>Підписка — лише за хмару, за контролер на місяць. Контролер і монтаж оплачуються окремо, за запитом: залежить від кількості й обладнання. На пілоті — безкоштовно.</p></article>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Pricing ────────────────────────────────────────── -->
-  <section id="pricing" class="section">
-    <div class="wrap">
-      <p class="kicker mono reveal">07 · Ціни</p>
-      <h2 class="reveal">Підписка на хмару</h2>
-      <p class="muted lead-sm reveal">Ціни без ПДВ, з того самого каталогу, за яким працює платформа. Ліміти планів — у кабінеті та в <a href="/legal/offer">оферті</a>. Самореєстрація дає 14 днів плану «Старт» без картки.</p>
-      <div id="plans" class="plans reveal">
-        <article class="card plan"><span class="tag">Безкоштовний старт</span><h3>Старт</h3><div class="price">0 грн</div><div class="note">Панель, аварії, Telegram і push, CSV</div><a class="btn btn-ghost" href="/cloud/#/register">Зареєструватися</a></article>
-        <article class="card plan plan-featured"><span class="tag">Аптека, кафе, магазин</span><h3>Об'єкт</h3><div class="price">150 грн<small>/контролер/міс</small></div><div class="note">річна передоплата −15 %</div><ul><li>HACCP PDF і планові звіти</li><li>Точки і карта, енергія</li><li>Рекомендації з обслуговування</li></ul><a class="btn btn-primary" href="#pilot">Попросити пілот</a></article>
-        <article class="card plan"><span class="tag">Мережі магазинів і HoReCa</span><h3>Мережа</h3><div class="price">250 грн<small>/точка</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 контролерів — 80 грн, від 500 — 60 грн</div><ul><li>Усе з «Об'єкта»</li><li>OTA-ролаути, API-ключі, вебхуки</li><li>Погода на точках, планувальник об'їзду</li></ul><a class="btn btn-ghost" href="#pilot">Попросити пілот</a></article>
-        <article class="card plan"><span class="tag">Сервісна компанія</span><h3>Партнер</h3><div class="price">2 000 грн<small>/міс</small> + 100 грн<small>/контролер</small></div><div class="note">від 100 — 80 грн, від 300 — 70 грн</div><ul><li>Клієнти як окремі організації</li><li>Один зведений рахунок</li><li>Ваш бренд на сторінках і PDF</li></ul><a class="btn btn-ghost" href="/partners.html">Партнерська програма</a></article>
-        <article class="card plan"><span class="tag">Великі мережі, держустанови</span><h3>Enterprise</h3><div class="price">за запитом</div><div class="note">окрема інсталяція, SLA, API</div><a class="btn btn-ghost" href="#pilot">Обговорити</a></article>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Pilot ──────────────────────────────────────────── -->
-  <section id="pilot" class="section section-pilot">
-    <div class="wrap split">
-      <div class="reveal">
-        <p class="kicker mono">08 · Пілот</p>
-        <h2>Пілот: 90 днів, 10–30 контролерів</h2>
-        <p>Для перших партнерів — безкоштовно, в обмін на відвертий кейс: скільки виїздів, який час реакції, які несправності знайшли. Ми встановлюємо контролери, підключаємо сповіщення і показуємо перший HACCP-звіт.</p>
-        <ul class="ticks">
-          <li>сервісна компанія — на власних клієнтах</li>
-          <li>мережа або HoReCa — на одному-двох об'єктах</li>
-          <li>аптека — на холодильниках для ліків</li>
-        </ul>
-        <p class="muted">Відповідаємо протягом робочого дня. Дані форми зберігаються лише для відповіді на запит.</p>
-      </div>
-      <form id="pilot-form" class="form reveal" data-source="landing" novalidate>
-        <label><span>Ім'я *</span><input name="name" required maxlength="120" autocomplete="name"></label>
-        <label><span>Компанія</span><input name="company" maxlength="160" autocomplete="organization"></label>
-        <label><span>E-mail *</span><input name="email" type="email" required maxlength="254" autocomplete="email"></label>
-        <label><span>Телефон</span><input name="phone" maxlength="40" autocomplete="tel"></label>
-        <label><span>Хто ви</span><select name="segment"><option value="service">Сервісна компанія</option><option value="retail">Мережа магазинів</option><option value="horeca">Кафе, ресторан, готель</option><option value="pharma">Аптека, медзаклад</option><option value="other">Інше</option></select></label>
-        <label><span>Скільки точок</span><input name="sites" type="number" min="0" max="100000" placeholder="1"></label>
-        <label class="full"><span>Тариф, що цікавить</span><select name="plan"><option value="">Ще не знаю</option><option value="free">Старт</option><option value="basic">Об'єкт</option><option value="pro">Мережа</option><option value="partner">Партнер</option><option value="enterprise">Enterprise</option></select></label>
-        <label class="full"><span>Що у вас стоїть зараз і що болить</span><textarea name="message" rows="4" maxlength="4000"></textarea></label>
-        <label class="hp" aria-hidden="true">Не заповнюйте<input name="website" tabindex="-1" autocomplete="off"></label>
-        <label class="full consent"><input type="checkbox" name="consent" required> <span>Погоджуюся з <a href="/legal/privacy" target="_blank" rel="noopener">політикою конфіденційності</a>; дані використовуються лише для відповіді на цей запит.</span></label>
-        <div class="full form-actions"><button class="btn btn-primary btn-lg" type="submit">Надіслати запит</button><div id="pilot-msg" class="form-msg" role="status" aria-live="polite"></div></div>
-      </form>
-    </div>
-  </section>
-
-  <!-- ── FAQ ────────────────────────────────────────────── -->
-  <section id="faq" class="section section-tint">
-    <div class="wrap wrap-narrow">
-      <p class="kicker mono reveal">09 · Питання</p>
-      <h2 class="reveal">Що питають перед пілотом</h2>
-      <div class="faq reveal">
-        <details><summary>Чи треба міняти холодильний агрегат?</summary><p>Ні. ModESP_v4 стає замість штатного контролера керування; компресор, датчики, реле і сам агрегат лишаються. Монтаж зазвичай роблять під час планового ТО.</p></details>
-        <details><summary>Чи працює хмара з нашими контролерами Carel, Eliwell або Dixell?</summary><p>Поки що ні: хмара розуміє протокол ModESP_v4. Адаптери для чужих контролерів — у планах; строків не обіцяємо, щоб не обіцяти зайвого.</p></details>
-        <details><summary>Що з даними, коли пропадає Інтернет?</summary><p>Контролер продовжує керувати і веде журнал локально; після відновлення зв'язку досилає до 90 днів вимірювань. Якщо контролер мовчить, хмара за кілька хвилин піднімає аварію «пристрій офлайн».</p></details>
-        <details><summary>Хто бачить наші дані?</summary><p>Кожна організація ізольована на рівні бази даних і черги повідомлень. Сервісна компанія бачить лише тих клієнтів, які їй довірені. Сервери — у Європейському Союзі, резервні копії щодня, журнал дій незмінний.</p></details>
-        <details><summary>Чи можна забрати дані?</summary><p>Так: CSV з кабінету будь-коли, повний архів організації одним zip-файлом за запитом, і 30 днів на вивантаження після припинення договору.</p></details>
-        <details><summary>Скільки коштує контролер і монтаж?</summary><p>Окремо від підписки, за запитом — залежить від кількості й обладнання. На пілоті контролери та монтаж — безкоштовно.</p></details>
-        <details><summary>Чи є мобільний застосунок?</summary><p>Сповіщення приходять у Telegram, на пошту і як push. Кабінет працює у браузері телефона: наряди, графіки й підтвердження аварій — з рук техніка.</p></details>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Trust ──────────────────────────────────────────── -->
-  <section id="trust" class="section section-trust">
-    <div class="wrap">
-      <ul class="trust reveal">
-        <li><strong>TLS</strong><span>для контролерів і людей</span></li>
-        <li><strong>Ізоляція</strong><span>організацій на рівні бази даних</span></li>
-        <li><strong>2FA</strong><span>і сесії під контролем</span></li>
-        <li><strong>Аудит</strong><span>незмінний журнал усіх дій</span></li>
-        <li><strong>Копії</strong><span>щодня, поза сервером</span></li>
-        <li><strong>ЄС</strong><span>дані на серверах у Європі</span></li>
+<!-- ───────────────────────── Compliance ───────────────────────── -->
+<section class="section" id="compliance">
+  <div class="wrap split">
+    <div class="split-text">
+      <p class="eyebrow">Відповідність вимогам</p>
+      <h2>Документальний контроль температурного режиму</h2>
+      <p class="section-lead">Для операторів ринку харчових продуктів в Україні процедури на основі принципів HACCP є обов’язковими. Платформа веде журнал контролю температурного режиму за даними обладнання і формує його у вигляді документа, готового до перевірки.</p>
+      <ul class="checks">
+        <li>Критична межа та допустиме відхилення вказані в шапці документа, правило визначення відхилення надруковане поряд.</li>
+        <li>Кожне відхилення має початок, кінець, крайнє значення, коригувальну дію та відповідального з наряду.</li>
+        <li>Періоди відтавання та втрати зв’язку позначені окремо і не трактуються як порушення режиму.</li>
+        <li>Код перевірки та контрольна сума даних дозволяють інспектору підтвердити справжність документа онлайн.</li>
+        <li>Журнали, звіти та вимірювання залишаються власністю компанії і доступні для вивантаження в будь-який момент.</li>
       </ul>
-      <p class="muted small reveal">Цілі рівня сервісу — в <a href="/legal/service">описі рівня сервісу</a>. <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Статус платформи ↗</a></p>
+      <p class="fine">Платформа є засобом контролю та документування. Критичні межі, уставки та порядок реагування визначає програма HACCP підприємства.</p>
     </div>
-  </section>
+    <figure class="sheet">
+      <img src="/img/haccp.webp" width="1400" height="1980" alt="Перша сторінка журналу контролю температурного режиму (HACCP), сформованого платформою: реквізити підприємства й обладнання, критична межа, погодинна таблиця з позначеним відхиленням" loading="lazy">
+      <figcaption>Журнал контролю температурного режиму, сформований платформою.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ───────────────────────── Service companies ───────────────────────── -->
+<section class="band">
+  <div class="wrap band-row">
+    <div>
+      <p class="eyebrow eyebrow-light">Сервісним компаніям</p>
+      <h2>Робочий кабінет для обслуговування холодильного обладнання клієнтів</h2>
+      <p>Клієнти як окремі організації в одному кабінеті, єдина карта об’єктів, розподіл нарядів між техніками, облік виконаних робіт і звітність перед замовником. Партнерська програма передбачає брендування звітів і сторінок стану, спільний рахунок та другу лінію підтримки.</p>
+    </div>
+    <div class="band-cta">
+      <a class="btn btn-light btn-lg" href="/partners.html">Партнерська програма</a>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Security ───────────────────────── -->
+<section class="section" id="security">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Надійність і безпека даних</p>
+      <h2>Дані компанії захищені на кожному етапі</h2>
+    </div>
+    <dl class="facts">
+      <div><dt>Розміщення</dt><dd>Сервери та резервні копії в Європейському Союзі.</dd></div>
+      <div><dt>Ізоляція</dt><dd>Дані кожної компанії відокремлені на рівні бази даних; сервісна компанія бачить лише довірених їй клієнтів.</dd></div>
+      <div><dt>Шифрування</dt><dd>Захищені канали зв’язку з обладнанням і користувачами, унікальні облікові дані для кожного контролера.</dd></div>
+      <div><dt>Доступ</dt><dd>Двофакторна автентифікація, контроль активних сесій, права за ролями та об’єктами.</dd></div>
+      <div><dt>Журнал дій</dt><dd>Незмінний запис усіх дій користувачів і команд обладнанню: хто, коли, що змінив.</dd></div>
+      <div><dt>Резервні копії</dt><dd>Щоденне резервне копіювання з зберіганням поза основним сервером.</dd></div>
+    </dl>
+    <p class="note-row">Опис рівня сервісу, угода про обробку даних та публічна оферта доступні в розділі документів: <a href="/legal/service">рівень сервісу</a>, <a href="/legal/dpa">обробка даних</a>, <a href="/legal/offer">оферта</a>. Технічні характеристики для ІТ-служби та інженерів — на <a href="/technology.html">окремій сторінці</a>.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── Getting started ───────────────────────── -->
+<section class="section section-alt" id="start">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Впровадження</p>
+      <h2>Від консультації до роботи на всій мережі</h2>
+    </div>
+    <ol class="steps steps-plain">
+      <li>
+        <span class="step-num">1</span>
+        <h3>Консультація</h3>
+        <p>Обговорюємо об’єкти, обладнання та завдання компанії, узгоджуємо перелік обладнання для підключення і порядок робіт.</p>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <h3>Пілотний проєкт</h3>
+        <p>До 90 днів на 10–30 одиницях обладнання. Встановлення контролерів, налаштування сповіщень, перший звіт. За підсумками компанія отримує показники реакції та перелік виявлених несправностей.</p>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <h3>Масштабування</h3>
+        <p>Підключення решти об’єктів власною службою або сервісною компанією-партнером за нашою інструкцією та за підтримки другої лінії.</p>
+      </li>
+    </ol>
+    <div class="pricing-note">
+      <h3>Вартість</h3>
+      <p>Вартість підписки залежить від кількості об’єктів та одиниць обладнання. Контролери та монтаж постачаються за окремим договором. Комерційну пропозицію надаємо після консультації, умови пілотного проєкту узгоджуються індивідуально.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Contact ───────────────────────── -->
+<section class="section" id="contact">
+  <div class="wrap split split-form">
+    <div class="split-text">
+      <p class="eyebrow">Зв’язок</p>
+      <h2>Запросити демонстрацію</h2>
+      <p class="section-lead">Покажемо платформу на прикладі вашого типу об’єктів, відповімо на питання щодо обладнання та впровадження і підготуємо комерційну пропозицію.</p>
+      <p>Відповідаємо протягом одного робочого дня. Запитання також можна надіслати на <a href="#" data-cfg="contactEmail" data-cfg-text>електронну пошту</a>.</p>
+    </div>
+    <form class="form" id="pilot-form" data-source="landing" novalidate>
+      <div class="form-grid">
+        <label><span>Ім’я та прізвище <abbr title="обов’язково">*</abbr></span><input name="name" type="text" autocomplete="name" required maxlength="120"></label>
+        <label><span>Компанія</span><input name="company" type="text" autocomplete="organization" maxlength="160"></label>
+        <label><span>Електронна пошта <abbr title="обов’язково">*</abbr></span><input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+        <label><span>Телефон</span><input name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
+        <label><span>Тип компанії</span>
+          <select name="segment">
+            <option value="">Оберіть</option>
+            <option value="retail">Торгова мережа</option>
+            <option value="horeca">Заклад харчування, готель</option>
+            <option value="pharma">Аптека, медичний заклад</option>
+            <option value="service">Сервісна компанія</option>
+            <option value="other">Інше</option>
+          </select>
+        </label>
+        <label><span>Кількість об’єктів</span><input name="sites" type="number" min="0" max="100000" inputmode="numeric"></label>
+        <label class="form-full"><span>Коментар</span><textarea name="message" rows="4" maxlength="4000" placeholder="Яке обладнання експлуатуєте і які завдання хочете вирішити"></textarea></label>
+        <label class="hp" aria-hidden="true"><span>Залиште порожнім</span><input name="website" type="text" tabindex="-1" autocomplete="off"></label>
+        <label class="form-full consent"><input name="consent" type="checkbox" required><span>Погоджуюся з <a href="/legal/privacy">політикою конфіденційності</a>. Дані використовуються лише для відповіді на цей запит.</span></label>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary btn-lg" type="submit">Надіслати запит</button>
+        <p class="form-msg" id="pilot-msg" role="status" aria-live="polite"></p>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- ───────────────────────── FAQ ───────────────────────── -->
+<section class="section section-alt" id="faq">
+  <div class="wrap wrap-narrow">
+    <div class="section-head">
+      <p class="eyebrow">Питання та відповіді</p>
+      <h2>Що зазвичай уточнюють перед впровадженням</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Чи потрібно замінювати холодильне обладнання?</summary>
+        <p>Ні. Контролер ModESP встановлюється замість штатного контролера керування; компресор, датчики та сам агрегат залишаються. Монтаж зазвичай поєднують із плановим технічним обслуговуванням.</p>
+      </details>
+      <details>
+        <summary>Чи працює платформа з контролерами інших виробників?</summary>
+        <p>Платформа працює з контролерами ModESP. Підтримка обладнання інших виробників передбачена планом розвитку; строки повідомимо після підтвердження сумісності.</p>
+      </details>
+      <details>
+        <summary>Що відбувається під час втрати зв’язку з Інтернетом?</summary>
+        <p>Обладнання продовжує працювати автономно: термостат, відтавання та захисти виконуються на самому контролері. Журнал ведеться локально і передається до платформи після відновлення зв’язку. Якщо контролер не виходить на зв’язок, платформа за кілька хвилин реєструє аварію «обладнання офлайн».</p>
+      </details>
+      <details>
+        <summary>Хто має доступ до даних компанії?</summary>
+        <p>Лише користувачі, яких компанія додала до свого кабінету, в межах наданих ролей і об’єктів. Сервісна компанія бачить тільки тих клієнтів, які їй довірені. Усі дії фіксуються в журналі.</p>
+      </details>
+      <details>
+        <summary>Чи можна вивантажити дані?</summary>
+        <p>Так. Вимірювання, аварії та інвентар обладнання експортуються у CSV з кабінету, повний архів даних організації надається за запитом. Після припинення договору на вивантаження відводиться 30 днів.</p>
+      </details>
+      <details>
+        <summary>Чи є мобільний застосунок?</summary>
+        <p>Кабінет працює у браузері телефона без встановлення: наряди, графіки та підтвердження аварій доступні технікові на об’єкті. Сповіщення надходять у Telegram, на електронну пошту та як push-повідомлення.</p>
+      </details>
+      <details>
+        <summary>Скільки триває впровадження?</summary>
+        <p>Підключення одного об’єкта займає один робочий день разом із плановим технічним обслуговуванням. Пілотний проєкт на 10–30 одиницях обладнання триває до 90 днів, після чого мережа підключається поетапно.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
 </main>
 
 <footer class="foot">
-  <div class="wrap">
-    <div class="foot-links">
-      <a href="/legal/offer">Публічна оферта</a>
-      <a href="/legal/privacy">Конфіденційність</a>
-      <a href="/legal/service">Рівень сервісу</a>
-      <a href="/legal/dpa">Обробка даних</a>
-      <a href="/partners.html">Партнерам</a>
-      <a href="#" data-cfg="github" target="_blank" rel="noopener">GitHub</a>
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <span class="brand-name">ModESP Cloud</span>
+      <p>Платформа моніторингу та керування холодильним обладнанням.</p>
+      <p><a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a></p>
     </div>
-    <div class="foot-meta">
-      <a href="#" data-cfg="contactEmail" data-cfg-text>hello@modesp.com.ua</a>
-      <span>© <span data-year>2026</span> ModESP</span>
+    <div>
+      <h4>Рішення</h4>
+      <a href="#industries">Для кого</a>
+      <a href="#features">Можливості</a>
+      <a href="#compliance">HACCP</a>
+      <a href="/partners.html">Партнерська програма</a>
+      <a href="/technology.html">Технічна інформація</a>
+    </div>
+    <div>
+      <h4>Документи</h4>
+      <a href="/legal/offer">Публічна оферта</a>
+      <a href="/legal/privacy">Політика конфіденційності</a>
+      <a href="/legal/service">Опис рівня сервісу</a>
+      <a href="/legal/dpa">Угода про обробку даних</a>
+      <a href="/legal/partner">Партнерська угода</a>
+    </div>
+    <div>
+      <h4>Клієнтам</h4>
+      <a href="/cloud/">Вхід до кабінету</a>
+      <a href="#" data-cfg="statusPageUrl" target="_blank" rel="noopener">Стан платформи</a>
+      <a href="#contact">Запросити демонстрацію</a>
     </div>
   </div>
+  <div class="wrap foot-meta">
+    <span>© <span data-year>2026</span> ModESP</span>
+  </div>
 </footer>
+
 <script src="/config.js"></script>
 <script src="/app.js"></script>
 </body>
