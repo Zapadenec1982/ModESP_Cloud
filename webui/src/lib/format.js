@@ -51,6 +51,7 @@ export function formatTemp(value, decimals = 1) {
  */
 export function formatDuration(seconds) {
   if (seconds == null || isNaN(seconds)) return '—'
+  seconds = Math.round(seconds)  // a live alarm's age is a float: 6.014999 s is not a duration anyone reads
   const tr = get(t)
   const suf_s = tr('time.s')
   const suf_m = tr('time.min')
