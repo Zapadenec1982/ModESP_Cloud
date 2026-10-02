@@ -2111,8 +2111,9 @@ API. `meta.ungeocoded_devices` живить лічильник «Без коор
   "segment": "pharma", "sites": 3, "message": "…", "source": "landing", "lang": "uk", "website": "" }
 ```
 
-`name` і коректний `email` обов'язкові (`400 validation_failed`); `segment` — `service | retail |
-horeca | pharma | other` (інше → `other`). `website` — honeypot: заповнений відповідає `200`
+`name` і коректний `email` обов'язкові (`400 validation_failed`); `segment` — `fleet | outlet | service | retail |
+horeca | pharma | other` (`fleet` — виробник або дистриб'ютор з парком обладнання на чужих точках, `outlet` — торгова
+точка з наданим обладнанням; інше → `other`). `website` — honeypot: заповнений відповідає `200`
 і нічого не зберігає. Запит спершу пишеться в `pilot_requests`, потім надсилається на
 `PILOT_REQUEST_EMAIL`; відповідь `201 { "received": true, "emailed": true|false }`.
 
@@ -3600,4 +3601,4 @@ Superadmin. `{ status: new|open|closed }`; `closed` ставить `closed_at`. 
 - 2026-09-09 — Масове задання критичних меж HACCP: `GET /devices/haccp-presets` (типові межі за призначенням: freezer, ice_cream, chilled, meat, fish, dairy, produce, pharma, підписи uk/en/pl/de), `PATCH /devices/haccp` (пресет і/або явні поля для списку пристроїв, `only_empty` за замовчуванням, аудит `device.haccp_bulk`), колонки `haccp_preset`/`haccp_min`/`haccp_max`/`haccp_tolerance`/`haccp_product` у CSV-імпорті й шаблоні; пресет у картці пристрою і масова дія «HACCP-межі» на панелі.
 - 2026-09-09 — Аудит цілісності, блок безпеки: `POST /users/:id/password-reset` тепер вимагає, щоб організація була **домашньою** для користувача (як у `PUT /users/:id`) — адмін організації, де людина лише учасник, отримує `404`; `/api/notifications` змонтовано з `authorize('admin')`; `DELETE /devices/:id/service-records/:recordId` привʼязано до пристрою; аудит фіксує будь-яке читання, яке обробник позначив `req.auditContext` — архів організації, CSV з обліковими даними імпорту і завантаження звіту з архіву (`report.download`).
 - 2026-09-28 — Перший запуск і ролі (аудит, п. 8): чек-ліст `GET /onboarding` має сім кроків (`data`, `responsible`, `notify` замість `telegram`) і поле `next`; `POST /onboarding/restore` повертає сховану картку.
-- 2026-10-02 — Лендінг переписано як комерційну сторінку без цін: `GET /api/public/plans` лендінг більше не читає (ендпоінт лишається для каталогу планів), форма «Запросити демонстрацію» надсилає той самий `POST /api/public/pilot-request` без поля плану в `message`; `?segment=service` у посиланні з партнерської сторінки попередньо обирає тип компанії.
+- 2026-10-02 — Лендінг переписано як комерційну сторінку без цін: `GET /api/public/plans` лендінг більше не читає (ендпоінт лишається для каталогу планів), форма «Запросити демонстрацію» надсилає той самий `POST /api/public/pilot-request` без поля плану в `message`; `?segment=service` у посиланні з партнерської сторінки попередньо обирає тип компанії; `segment` приймає нові значення `fleet` (власник парку обладнання) і `outlet` (точка з наданим обладнанням).

@@ -278,7 +278,9 @@ router.get('/plans', async (req, res) => {
 // Stored first (no lead is lost when e-mail is not configured), then mailed
 // to PILOT_REQUEST_EMAIL. `website` is a honeypot: bots fill it, people never
 // see it; a filled honeypot answers 200 and stores nothing.
-const SEGMENTS = new Set(['service', 'retail', 'horeca', 'pharma', 'other']);
+// fleet — a producer or distributor whose coolers stand at other people's outlets; outlet — a shop
+// or café that runs equipment provided that way; retail/horeca — own equipment; service — a service company.
+const SEGMENTS = new Set(['fleet', 'outlet', 'service', 'retail', 'horeca', 'pharma', 'other']);
 
 function clean(v, max) {
   if (typeof v !== 'string') return null;
