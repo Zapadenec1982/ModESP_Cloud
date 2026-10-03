@@ -48,10 +48,11 @@
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.value.trim())) { say('err', 'Перевірте адресу електронної пошти.'); return; }
       if (!f.consent.checked) { say('err', 'Потрібна згода з політикою конфіденційності.'); return; }
       var btn = $('button[type=submit]', f); btn.disabled = true;
+      var val = function (name) { return f.elements[name] ? f.elements[name].value : ''; };
       var body = {
-        name: f.name.value, company: f.company.value, email: f.email.value, phone: f.phone.value,
-        segment: f.segment.value, sites: f.sites.value, message: f.message.value,
-        website: f.website.value, source: f.getAttribute('data-source') || 'landing', lang: 'uk',
+        name: val('name'), company: val('company'), email: val('email'), phone: val('phone'),
+        segment: val('segment'), sites: val('sites'), message: val('message'),
+        website: val('website'), source: f.getAttribute('data-source') || 'landing', lang: 'uk',
       };
       fetch('/api/public/pilot-request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
